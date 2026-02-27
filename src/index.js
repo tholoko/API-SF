@@ -5,6 +5,21 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Adicione no início do index.js (depois app = express())
+app.get('/health', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT 1 as test');
+    res.json({ 
+      status: 'OK', 
+      mysql: 'Connected!', 
+      test: rows[0].test 
+    });
+  } catch (err) {
+    console.error('MySQL erro:', err.message);
+    res.status(500).json({ error: 'MySQL falhou', details: err.message });
+  }
+});
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -51,3 +66,4 @@ app.post('/api/login', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`API rodando na porta ${PORT}`);
 });
+
