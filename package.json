@@ -1,0 +1,28 @@
+{
+  "name": "api-login-sf-usuario",
+  "version": "1.0.0",
+  "description": "API Node.js para validar SF_USUARIO no MySQL Railway",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["login", "mysql", "railway", "express"],
+  "author": "Lázaro Kallebe",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^4.19.2",
+    "mysql2": "^3.11.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
