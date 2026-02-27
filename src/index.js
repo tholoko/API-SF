@@ -5,7 +5,19 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Adicione no início do index.js (depois app = express())
+const app = express();  // ← PRIMEIRO: declara app
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors({ origin: true }));  // Permite todos para teste
+app.use(express.json());
+
+// Rotas de saúde e debug (DEPOIS do app)
+app.get('/', (req, res) => {
+  res.json({ ok: true, message: 'API online' });
+});
+
+// Health check MySQL
 app.get('/health', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT 1 as test');
@@ -16,22 +28,33 @@ app.get('/health', async (req, res) => {
     });
   } catch (err) {
     console.error('MySQL erro:', err.message);
-    res.status(500).json({ error: 'MySQL falhou', details: err.message });
+    res.status(500).json({ 
+      error: 'MySQL falhou', 
+      details: err.message,
+      vars: {
+        host: !!process.env.MYSQLHOST,
+        port: !!process.env.MYSQLPORT,
+        user: !!process.env.MYSQLUSER,
+        db: !!process.env.MYSQLDATABASE
+      }
+    });
   }
 });
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.use(cors());
-app.use(express.json());
-
-// Rota de saúde
-app.get('/', (req, res) => {
-  res.json({ ok: true, message: 'API online' });
+// Debug vars MySQL
+app.get('/debug', (req, res) => {
+  res.json({
+    mysqlVars: {
+      host: process.env.MYSQLHOST ? 'OK' : 'MISSING',
+      port: process.env.MYSQLPORT,
+      user: process.env.MYSQLUSER ? 'OK' : 'MISSING',
+      pass: process.env.MYSQLPASSWORD ? 'OK' : 'MISSING',
+      db: process.env.MYSQLDATABASE ? 'OK' : 'MISSING'
+    }
+  });
 });
 
-// Rota de login: valida SF_USUARIO (email + senha)
+// API Login
 app.post('/api/login', async (req, res) => {
   try {
     const { email, senha } = req.body;
@@ -59,11 +82,12 @@ app.post('/api/login', async (req, res) => {
     }
   } catch (err) {
     console.error('Erro na rota /api/login:', err);
-    res.status(500).json({ success: false, message: 'Erro interno no servidor.' });
+    res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
   }
 });
 
+// Inicia servidor
 app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
+  console.log(`🚀 API rodando na porta ${PORT}`);
+  console.log('✅ Teste: https://sua-url/health');
 });
-
