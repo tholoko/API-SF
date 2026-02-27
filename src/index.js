@@ -64,7 +64,7 @@ app.post('/api/login', async (req, res) => {
     }
 
     const [rows] = await pool.query(
-      'SELECT email FROM SF_USUARIO WHERE email = ? AND senha = ? LIMIT 1',
+      'SELECT email, nome FROM SF_USUARIO WHERE email = ? AND senha = ? LIMIT 1',
       [email, senha]
     );
 
@@ -73,6 +73,7 @@ app.post('/api/login', async (req, res) => {
         success: true,
         message: 'Usuário confirmado com sucesso.',
         email: rows[0].email,
+        nome: rows[0].nome,
       });
     } else {
       return res.status(401).json({
@@ -83,27 +84,6 @@ app.post('/api/login', async (req, res) => {
   } catch (err) {
     console.error('Erro na rota /api/login:', err);
     res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
-  }
-});
-
-app.post('/api/check-email', async (req, res) => {
-  try {
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ ok:false, message:'Email é obrigatório' });
-
-    const [rows] = await pool.query(
-      'SELECT email FROM SF_USUARIO WHERE email = ? LIMIT 1',
-      [email]
-    );
-
-    if (rows.length === 0) {
-      return res.status(404).json({ ok:false, message:'Email não cadastrado' });
-    }
-
-    return res.json({ ok:true, email: rows[0].email });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ ok:false, message:'Erro interno', error: err.message });
   }
 });
 
