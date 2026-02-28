@@ -12,6 +12,15 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: true }));  // Permite todos para teste
 app.use(express.json());
 
+(async () => {
+  try {
+    await pool.query("SET time_zone = '-03:00'"); // ajusta a sessão [web:209]
+    console.log('MySQL time_zone ajustado para -03:00');
+  } catch (e) {
+    console.error('Falha ao setar time_zone:', e);
+  }
+})();
+
 // Rotas de saúde e debug (DEPOIS do app)
 app.get('/', (req, res) => {
   res.json({ ok: true, message: 'API online' });
