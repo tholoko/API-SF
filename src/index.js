@@ -3,6 +3,8 @@ import cors from 'cors';
 import { pool } from './db.js';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
+import dns from 'node:dns';
+dns.setDefaultResultOrder('ipv4first');
 
 dotenv.config();
 
@@ -418,11 +420,14 @@ app.get('/api/usuarios', async (req, res) => {
 
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // STARTTLS na 587
   auth: {
-    user: process.env.GMAIL_USER,      // seuemail@gmail.com
-    pass: process.env.GMAIL_APP_PASS   // app password (não é a senha normal) [web:445]
-  }
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASS
+  },
+  tls: { servername: 'smtp.gmail.com' }
 });
 
 function toICSDateUTC(date) {
