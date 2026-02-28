@@ -2,9 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import { pool } from './db.js';
 import dotenv from 'dotenv';
-import nodemailer from 'nodemailer';
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
+import { MailerSend, EmailParams, Sender, Recipient, Attachment } from "mailersend";
 
 dotenv.config();
 
@@ -288,34 +288,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
   }
 });
 
-
-app.get('/debug-mail', (req, res) => {
-  res.json({
-    GMAIL_USER: process.env.GMAIL_USER ? 'OK' : 'MISSING',
-    GMAIL_APP_PASS: process.env.GMAIL_APP_PASS ? 'OK' : 'MISSING'
-  });
-});
-
-
-app.get('/api/test-email-startup', async (req, res) => {
-  try {
-    const to = 'lazaro.santos@sociedadefranciosi.com.br';
-
-    await transporter.verify(); // valida SMTP antes [web:484]
-
-    const info = await transporter.sendMail({
-      from: `"Sociedade Franciosi" <${process.env.GMAIL_USER}>`,
-      to,
-      subject: 'Teste Nodemailer (GET)',
-      text: 'Teste de envio acionado por GET. Se chegou, SMTP está OK.'
-    });
-
-    return res.json({ success: true, to, messageId: info.messageId });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e.message });
-  }
-});
-
 app.get('/api/agendamentos/sala/dia', async (req, res) => {
   try {
     const { data } = req.query; // opcional: '2026-02-28'
@@ -356,11 +328,6 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Usuário solicitante é obrigatório.' });
     }
 
-    // Cancela SOMENTE se:
-    // - existir
-    // - status = Agendado
-    // - o usuário solicitante for o mesmo do usuario_agendamento
-    // E grava usuário/data do cancelamento
     const [result] = await pool.query(
       `UPDATE SF_AGENDAMENTO
           SET status = 'Cancelado',
@@ -417,34 +384,23 @@ app.get('/api/usuarios', async (req, res) => {
   }
 });
 
-
-
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // STARTTLS na 587
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASS
-  },
-  tls: { servername: 'smtp.gmail.com' }
+const mailerSend = new MailerSend({
+  apiKey: process.env.MAILERSEND_API_KEY,
 });
 
 function toICSDateUTC(date) {
-  // date é um Date em UTC; formato YYYYMMDDTHHMMSSZ
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = (n) => String(n).padStart(2, "0");
   return (
     date.getUTCFullYear() +
     pad(date.getUTCMonth() + 1) +
-    pad(date.getUTCDate()) + 'T' +
+    pad(date.getUTCDate()) + "T" +
     pad(date.getUTCHours()) +
     pad(date.getUTCMinutes()) +
-    pad(date.getUTCSeconds()) + 'Z'
+    pad(date.getUTCSeconds()) + "Z"
   );
 }
 
 function buildICS({ uid, dtstartUtc, dtendUtc, summary, description, location, organizerEmail, attendeeEmail, attendeeName }) {
-  // básico e compatível com a maioria dos clientes
   return `BEGIN:VCALENDAR
   VERSION:2.0
   CALSCALE:GREGORIAN
@@ -463,6 +419,66 @@ function buildICS({ uid, dtstartUtc, dtendUtc, summary, description, location, o
   END:VEVENT
   END:VCALENDAR`;
 }
+
+// (Opcional) rota debug das envs
+app.get("/debug-mail", (req, res) => {
+  res.json({
+    MAILERSEND_API_KEY: process.env.MAILERSEND_API_KEY ? "OK" : "MISSING",
+    MAIL_FROM_EMAIL: process.env.MAIL_FROM_EMAIL ? "OK" : "MISSING",
+    MAIL_FROM_NAME: process.env.MAIL_FROM_NAME ? "OK" : "MISSING",
+  });
+});
+
+// Teste de envio com invite ICS
+app.get("/api/test-email-startup", async (req, res) => {
+  try {
+    const toEmail = "lazaro.santos@sociedadefranciosi.com.br";
+    const toName = "Lázaro";
+
+    const from = new Sender(
+      process.env.MAIL_FROM_EMAIL,
+      process.env.MAIL_FROM_NAME || "Sociedade Franciosi"
+    );
+
+    const uid = `teste-${Date.now()}@sociedadefranciosi.com.br`;
+    const inicio = new Date(Date.now() + 60 * 60 * 1000); // +1h
+    const fim = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h
+
+    const icsText = buildICS({
+      uid,
+      dtstartUtc: inicio,
+      dtendUtc: fim,
+      summary: "Teste convite (MailerSend)",
+      description: "Convite de teste enviado via MailerSend.",
+      location: "Sala 01",
+      organizerEmail: process.env.MAIL_FROM_EMAIL,
+      attendeeEmail: toEmail,
+      attendeeName: toName,
+    });
+
+    const attachment = new Attachment(
+      Buffer.from(icsText, "utf-8").toString("base64"),
+      "invite.ics",
+      "text/calendar; method=REQUEST; charset=UTF-8"
+    );
+
+    const recipients = [new Recipient(toEmail, toName)];
+
+    const emailParams = new EmailParams()
+      .setFrom(from)
+      .setTo(recipients)
+      .setSubject("Teste MailerSend (invite ICS)")
+      .setText("Segue convite em anexo (.ics).")
+      .setHtml("<p>Segue convite em anexo (<b>.ics</b>).</p>")
+      .setAttachments([attachment]);
+
+    const resp = await mailerSend.email.send(emailParams); // envio via API [web:683]
+
+    return res.json({ success: true, to: toEmail, response: resp });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
+  }
+});
 
 app.get('/api/setores', async (req, res) => {
   try {
