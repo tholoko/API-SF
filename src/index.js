@@ -406,7 +406,7 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
 app.get('/api/usuarios', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, nome, email
+      `SELECT id, nome, email, setor
          FROM SF_USUARIO
         WHERE email IS NOT NULL AND email <> ''
         ORDER BY nome ASC`
@@ -463,6 +463,21 @@ function buildICS({ uid, dtstartUtc, dtendUtc, summary, description, location, o
   END:VEVENT
   END:VCALENDAR`;
 }
+
+app.get('/api/setores', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT nome 
+         FROM SF_SETOR 
+        WHERE nome IS NOT NULL AND nome <> ''
+        ORDER BY nome ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar setores.', error: err.message });
+  }
+});
+
 
 // Inicia servidor
 app.listen(PORT, () => {
