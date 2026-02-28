@@ -294,6 +294,26 @@ app.get('/debug-mail', (req, res) => {
   });
 });
 
+
+app.get('/api/test-email-startup', async (req, res) => {
+  try {
+    const to = 'lazaro.santos@sociedadefranciosi.com.br';
+
+    await transporter.verify(); // valida SMTP antes [web:484]
+
+    const info = await transporter.sendMail({
+      from: `"Sociedade Franciosi" <${process.env.GMAIL_USER}>`,
+      to,
+      subject: 'Teste Nodemailer (GET)',
+      text: 'Teste de envio acionado por GET. Se chegou, SMTP está OK.'
+    });
+
+    return res.json({ success: true, to, messageId: info.messageId });
+  } catch (e) {
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 app.get('/api/agendamentos/sala/dia', async (req, res) => {
   try {
     const { data } = req.query; // opcional: '2026-02-28'
