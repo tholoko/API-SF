@@ -87,6 +87,117 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+app.post('/api/agendamentos/sala/verificar', async (req, res) => {
+  try {
+    const { sala, inicio, fim } = req.body;
+
+    if (!sala || !inicio || !fim) {
+      return res.status(400).json({ success: false, message: 'sala, inicio e fim são obrigatórios.' });
+    }
+
+    const ini = new Date(inicio);
+    const end = new Date(fim);
+    if (!(end > ini)) {
+      return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
+    }
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        sala,
+        inicio,
+        fim,
+        motivo,
+        usuario_agendamento,
+        data_agendamento
+      FROM SF_AGENDAMENTO
+      WHERE sala = ?
+        AND status = 'Agendado'
+        AND inicio < ?
+        AND fim > ?
+      ORDER BY inicio ASC
+      LIMIT 1
+      `,
+      [sala, fim, inicio]
+    );
+
+    if (rows.length > 0) {
+      return res.json({
+        success: true,
+        conflito: true,
+        message: 'Existe conflito de agendamento.',
+        conflitoDetalhe: rows[0]
+      });
+    }
+
+    return res.json({ success: true, conflito: false, message: 'Sem conflito.' });
+  } catch (err) {
+    console.error('Erro /api/agendamentos/sala/verificar:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  }
+});
+
+app.post('/api/agendamentos/sala', async (req, res) => {
+  try {
+    const { sala, inicio, fim, motivo, usuario } = req.body;
+
+    if (!sala || !inicio || !fim || !motivo || !usuario) {
+      return res.status(400).json({ success: false, message: 'sala, inicio, fim, motivo e usuario são obrigatórios.' });
+    }
+
+    const ini = new Date(inicio);
+    const end = new Date(fim);
+    if (!(end > ini)) {
+      return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
+    }
+
+    // Verifica conflito novamente (segurança)
+    const [conflitos] = await pool.query(
+      `
+      SELECT
+        usuario_agendamento, motivo, inicio, fim, data_agendamento
+      FROM SF_AGENDAMENTO
+      WHERE sala = ?
+        AND status = 'Agendado'
+        AND inicio < ?
+        AND fim > ?
+      ORDER BY inicio ASC
+      LIMIT 1
+      `,
+      [sala, fim, inicio]
+    );
+
+    if (conflitos.length > 0) {
+      return res.status(409).json({
+        success: false,
+        message: 'Conflito de agendamento.',
+        conflitoDetalhe: conflitos[0]
+      });
+    }
+
+    // Insere (data_agendamento vem do BANCO)
+    const [result] = await pool.query(
+      `
+      INSERT INTO SF_AGENDAMENTO
+        (sala, inicio, fim, motivo, usuario_agendamento, data_agendamento, status)
+      VALUES
+        (?, ?, ?, ?, ?, NOW(), 'Agendado')
+      `,
+      [sala, inicio, fim, motivo, usuario]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Agendamento salvo com sucesso.',
+      id: result.insertId
+    });
+  } catch (err) {
+    console.error('Erro /api/agendamentos/sala:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  }
+});
+
+
 
 // Inicia servidor
 app.listen(PORT, () => {
