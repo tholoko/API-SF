@@ -206,6 +206,54 @@ app.post('/api/agendamentos/sala', async (req, res) => {
   }
 });
 
+app.get('/api/agendamentos/sala/dia', async (req, res) => {
+  try {
+    const { data } = req.query; // opcional: '2026-02-28'
+    // se não vier, pega hoje no banco (server time)
+    const [rows] = await pool.query(
+      `
+      SELECT
+        id,
+        sala,
+        inicio,
+        fim,
+        motivo,
+        usuario_agendamento,
+        data_agendamento
+      FROM SF_AGENDAMENTO
+      WHERE status = 'Agendado'
+        AND DATE(inicio) = COALESCE(?, CURDATE())
+      ORDER BY inicio ASC
+      `,
+      [data || null]
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    console.error('Erro /api/agendamentos/sala/dia:', err);
+    res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  }
+});
+
+app.delete('/api/agendamentos/sala/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [result] = await pool.query(
+      `UPDATE SF_AGENDAMENTO SET status = 'Cancelado' WHERE id = ?`,
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Agendamento não encontrado.' });
+    }
+
+    return res.json({ success: true, message: 'Agendamento cancelado com sucesso.' });
+  } catch (err) {
+    console.error('Erro DELETE /api/agendamentos/sala/:id:', err);
+    res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  }
+});
 
 
 // Inicia servidor
