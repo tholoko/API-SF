@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { pool } from './db.js';
 import dotenv from 'dotenv';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -151,12 +152,25 @@ app.post('/api/agendamentos/sala', async (req, res) => {
   try {
     const { sala, inicio, fim, motivo, usuario, participantes } = req.body;
 
-    // participantes: array de { id } OU array de ids. (você escolhe no front)
-    const ids = Array.isArray(participantes) ? participantes : [];
+    if (!sala || !inicio || !fim || !motivo || !usuario) {
+      return res.status(400).json({
+        success: false,
+        message: 'sala, inicio, fim, motivo e usuario são obrigatórios.'
+      });
+    }
+
+    const ini = new Date(inicio);
+    const end = new Date(fim);
+    if (!(end > ini)) {
+      return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
+    }
+
+    // participantes: array de ids (front está mandando [1,2,3])
+    const ids = Array.isArray(participantes) ? participantes.map(Number).filter(Number.isFinite) : [];
 
     await conn.beginTransaction();
 
-    // 1) insert agendamento (ajuste colunas conforme seu schema)
+    // 1) Insere agendamento
     const [ins] = await conn.query(
       `INSERT INTO SF_AGENDAMENTO (sala, inicio, fim, motivo, usuario_agendamento, status, data_agendamento)
        VALUES (?, ?, ?, ?, ?, 'Agendado', NOW())`,
@@ -165,17 +179,20 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     const idAgendamento = ins.insertId;
 
-    // 2) carrega usuários convidados
+    // 2) Carrega usuários convidados (com email válido)
     let convidados = [];
     if (ids.length) {
       const [u] = await conn.query(
-        `SELECT id, nome, email FROM SF_USUARIO WHERE id IN (?)`,
+        `SELECT id, nome, email
+           FROM SF_USUARIO
+          WHERE id IN (?)
+            AND email IS NOT NULL AND email <> ''`,
         [ids]
       );
       convidados = u;
     }
 
-    // 3) salva participantes
+    // 3) Salva participantes (evita duplicar pelo mesmo id_usuario no mesmo agendamento)
     for (const p of convidados) {
       await conn.query(
         `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
@@ -186,40 +203,81 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     await conn.commit();
 
-    // 4) enviar convites (fora da transaction)
-    // ATENÇÃO: inicio/fim chegam como datetime-local ("YYYY-MM-DDTHH:mm"), trate como hora local do Brasil.
-    // Aqui fica simples: converter para Date e depois UTC (depende da sua regra de timezone).
+    // 4) Envia convites por email (fora da transaction)
+    const enviados = [];
+    const falhas = [];
+
+    // Se não tem credenciais de email, não quebra o agendamento — só retorna aviso
+    const hasMailCreds = !!process.env.GMAIL_USER && !!process.env.GMAIL_APP_PASS;
+
+    if (!convidados.length) {
+      return res.json({
+        success: true,
+        message: 'Agendamento salvo (sem participantes selecionados).',
+        id: idAgendamento,
+        emails: { total: 0, enviados: [], falhas: [] }
+      });
+    }
+
+    if (!hasMailCreds) {
+      return res.json({
+        success: true,
+        message: 'Agendamento salvo, mas envio de convites não configurado (GMAIL_USER/GMAIL_APP_PASS ausentes).',
+        id: idAgendamento,
+        emails: { total: convidados.length, enviados: [], falhas: convidados.map(p => ({ id: p.id, email: p.email, error: 'Credenciais de email ausentes' })) }
+      });
+    }
+
     const dtStart = new Date(inicio);
     const dtEnd = new Date(fim);
 
     for (const p of convidados) {
-      const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
-      const ics = buildICS({
-        uid,
-        dtstartUtc: new Date(dtStart.toISOString()),
-        dtendUtc: new Date(dtEnd.toISOString()),
-        summary: `Reunião - ${sala}`,
-        description: motivo || '',
-        location: sala,
-        organizerEmail: process.env.GMAIL_USER,
-        attendeeEmail: p.email,
-        attendeeName: p.nome
-      });
+      try {
+        const uid = `${idAgendamento}-${p.id}@sociedadefrancios(i)`.replace('(i)', 'i');
 
-      await transporter.sendMail({
-        from: `"Sociedade Franciosi" <${process.env.GMAIL_USER}>`,
-        to: p.email,
-        subject: `Convite: Reunião (${sala})`,
-        text: `Você foi convidado para uma reunião.\nSala: ${sala}\nInício: ${inicio}\nFim: ${fim}\nMotivo: ${motivo}`,
-        icalEvent: {
-          filename: 'convite.ics',
-          method: 'REQUEST',
-          content: ics
-        }
-      });
+        const ics = buildICS({
+          uid,
+          dtstartUtc: new Date(dtStart.toISOString()),
+          dtendUtc: new Date(dtEnd.toISOString()),
+          summary: `Reunião - ${sala}`,
+          description: motivo || '',
+          location: sala,
+          organizerEmail: process.env.GMAIL_USER,
+          attendeeEmail: p.email,
+          attendeeName: p.nome
+        });
+
+        const info = await transporter.sendMail({
+          from: `"Sociedade Franciosi" <${process.env.GMAIL_USER}>`,
+          to: p.email,
+          subject: `Convite: Reunião (${sala})`,
+          text: `Você foi convidado para uma reunião.\nSala: ${sala}\nInício: ${inicio}\nFim: ${fim}\nMotivo: ${motivo}`,
+          icalEvent: {
+            filename: 'convite.ics',
+            method: 'REQUEST',
+            content: ics
+          }
+        });
+
+        // info geralmente inclui messageId/accepted/rejected em SMTP transports [web:483]
+        enviados.push({
+          id: p.id,
+          email: p.email,
+          messageId: info?.messageId,
+          accepted: info?.accepted || [],
+          rejected: info?.rejected || []
+        });
+      } catch (e) {
+        falhas.push({ id: p.id, email: p.email, error: e?.message || String(e) });
+      }
     }
 
-    return res.json({ success: true, message: 'Agendamento salvo e convites enviados.', id: idAgendamento });
+    return res.json({
+      success: true,
+      message: 'Agendamento salvo. Processado envio de convites.',
+      id: idAgendamento,
+      emails: { total: convidados.length, enviados, falhas }
+    });
   } catch (err) {
     try { await conn.rollback(); } catch {}
     return res.status(500).json({ success: false, message: 'Erro ao salvar agendamento.', error: err.message });
@@ -228,6 +286,13 @@ app.post('/api/agendamentos/sala', async (req, res) => {
   }
 });
 
+
+app.get('/debug-mail', (req, res) => {
+  res.json({
+    GMAIL_USER: process.env.GMAIL_USER ? 'OK' : 'MISSING',
+    GMAIL_APP_PASS: process.env.GMAIL_APP_PASS ? 'OK' : 'MISSING'
+  });
+});
 
 app.get('/api/agendamentos/sala/dia', async (req, res) => {
   try {
@@ -330,7 +395,7 @@ app.get('/api/usuarios', async (req, res) => {
   }
 });
 
-import nodemailer from 'nodemailer';
+
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
