@@ -239,21 +239,55 @@ app.delete('/api/agendamentos/sala/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
+    const usuarioSolicitante =
+      req.headers['x-usuario'] || req.headers['x-user'] || ''; // escolha 1 padrão no seu front
+
+    if (!usuarioSolicitante) {
+      return res.status(400).json({ success: false, message: 'Usuário solicitante é obrigatório.' });
+    }
+
+    // Tenta cancelar SOMENTE se o usuário for o dono
     const [result] = await pool.query(
-      `UPDATE SF_AGENDAMENTO SET status = 'Cancelado' WHERE id = ?`,
+      `UPDATE SF_AGENDAMENTO
+         SET status = 'Cancelado'
+       WHERE id = ?
+         AND status = 'Agendado'
+         AND usuario_agendamento = ?`,
+      [id, usuarioSolicitante]
+    );
+
+    if (result.affectedRows > 0) {
+      return res.json({ success: true, message: 'Agendamento cancelado com sucesso.' });
+    }
+
+    // Se não alterou, descobrir se existe e se é de outro usuário
+    const [rows] = await pool.query(
+      `SELECT id, usuario_agendamento, status
+         FROM SF_AGENDAMENTO
+        WHERE id = ?
+        LIMIT 1`,
       [id]
     );
 
-    if (result.affectedRows === 0) {
+    if (rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Agendamento não encontrado.' });
     }
 
-    return res.json({ success: true, message: 'Agendamento cancelado com sucesso.' });
+    if (rows[0].status !== 'Agendado') {
+      return res.status(409).json({ success: false, message: 'Este agendamento não está mais como Agendado.' });
+    }
+
+    // existe, está agendado, mas não pertence ao usuário
+    return res.status(403).json({
+      success: false,
+      message: 'Você não tem permissão para excluir um agendamento de outro usuário.'
+    });
   } catch (err) {
     console.error('Erro DELETE /api/agendamentos/sala/:id:', err);
-    res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
   }
 });
+
 
 
 // Inicia servidor
