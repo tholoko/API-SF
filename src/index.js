@@ -431,7 +431,7 @@ app.get("/debug-mail", (req, res) => {
 
 app.get("/api/test-email-startup", async (req, res) => {
   try {
-    const toEmail = "lazaro.santos@sociedadefranciosi.com.br";
+    const toEmail = "lazaro290493@outlook.com";
     const toName = "Lázaro";
 
     if (!process.env.MAILERSEND_API_KEY) throw new Error("MAILERSEND_API_KEY ausente");
