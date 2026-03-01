@@ -442,7 +442,7 @@ app.get("/api/test-email-startup", async (req, res) => {
       process.env.MAIL_FROM_NAME || "Sociedade Franciosi"
     );
 
-    const uid = `teste-${Date.now()}@${String(process.env.MAIL_FROM_EMAIL).split("@")[1] || "local"}`;
+    const uid = `teste-${Date.now()}@${String(process.env.MAIL_FROM_EMAIL).split("@")[1]}`;
     const inicio = new Date(Date.now() + 60 * 60 * 1000);
     const fim = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
@@ -458,11 +458,12 @@ app.get("/api/test-email-startup", async (req, res) => {
       attendeeName: toName,
     });
 
-    const attachment = new Attachment(
-      Buffer.from(icsText, "utf-8").toString("base64"),
-      "invite.ics",
-      "text/calendar; method=REQUEST; charset=UTF-8"
-    );
+    const attachments = [{
+      content: Buffer.from(icsText, "utf-8").toString("base64"),
+      filename: "invite.ics",
+      type: "text/calendar; method=REQUEST; charset=UTF-8",
+      disposition: "attachment"
+    }];
 
     const emailParams = new EmailParams()
       .setFrom(from)
@@ -470,26 +471,14 @@ app.get("/api/test-email-startup", async (req, res) => {
       .setSubject("Teste MailerSend (invite ICS)")
       .setText("Segue convite em anexo (.ics).")
       .setHtml("<p>Segue convite em anexo (<b>.ics</b>).</p>")
-      .setAttachments([attachment]);
+      .setAttachments(attachments);
 
     const resp = await mailerSend.email.send(emailParams); // [web:683]
 
     return res.json({ success: true, to: toEmail, response: resp });
   } catch (e) {
-    console.error("MailerSend error raw:", e);
-    if (e?.body) console.error("MailerSend error body:", e.body);
-
-    const details =
-      e?.body ? e.body :
-      e?.response?.data ? e.response.data :
-      e?.message ? { message: e.message } :
-      e;
-
-    return res.status(500).json({
-      success: false,
-      error: (e?.message || "MailerSend error"),
-      details
-    });
+    const details = e?.body || e?.response?.data || { message: e?.message || String(e) };
+    return res.status(500).json({ success: false, error: "MailerSend error", details });
   }
 });
 
