@@ -151,6 +151,7 @@ app.post('/api/agendamentos/sala/verificar', async (req, res) => {
 
 app.post('/api/agendamentos/sala', async (req, res) => {
   const conn = await pool.getConnection();
+
   try {
     const { sala, inicio, fim, motivo, usuario, participantes } = req.body;
 
@@ -167,8 +168,10 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
     }
 
-    // participantes: array de ids (front está mandando [1,2,3])
-    const ids = Array.isArray(participantes) ? participantes.map(Number).filter(Number.isFinite) : [];
+    // participantes: array de ids (front manda [1,2,3])
+    const ids = Array.isArray(participantes)
+      ? participantes.map(Number).filter(Number.isFinite)
+      : [];
 
     await conn.beginTransaction();
 
@@ -194,7 +197,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       convidados = u;
     }
 
-    // 3) Salva participantes (evita duplicar pelo mesmo id_usuario no mesmo agendamento)
+    // 3) Salva participantes
     for (const p of convidados) {
       await conn.query(
         `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
@@ -203,90 +206,59 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       );
     }
 
+    // 4) Enfileira emails para envio pelo worker local
+    //    (não envia aqui; apenas cria jobs PENDENTE)
+    for (const p of convidados) {
+      const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
+
+      await conn.query(
+        `INSERT INTO SF_EMAIL_QUEUE
+          (tipo, status, tentativas, max_tentativas,
+           id_agendamento, id_usuario, email, nome,
+           sala, inicio, fim, motivo, uid,
+           created_at)
+         VALUES
+          ('CONVITE_SALA', 'PENDENTE', 0, 5,
+           ?, ?, ?, ?,
+           ?, ?, ?, ?, ?,
+           NOW())`,
+        [
+          idAgendamento, p.id, p.email, p.nome,
+          sala, inicio, fim, motivo, uid
+        ]
+      );
+    }
+
     await conn.commit();
 
-    // 4) Envia convites por email (fora da transaction)
-    const enviados = [];
-    const falhas = [];
-
-    // Se não tem credenciais de email, não quebra o agendamento — só retorna aviso
-    const hasMailCreds = !!process.env.GMAIL_USER && !!process.env.GMAIL_APP_PASS;
-
+    // Retorno para o front: agendamento salvo e emails enfileirados
     if (!convidados.length) {
       return res.json({
         success: true,
         message: 'Agendamento salvo (sem participantes selecionados).',
         id: idAgendamento,
-        emails: { total: 0, enviados: [], falhas: [] }
+        filaEmail: { total: 0, enfileirados: 0 }
       });
-    }
-
-    if (!hasMailCreds) {
-      return res.json({
-        success: true,
-        message: 'Agendamento salvo, mas envio de convites não configurado (GMAIL_USER/GMAIL_APP_PASS ausentes).',
-        id: idAgendamento,
-        emails: { total: convidados.length, enviados: [], falhas: convidados.map(p => ({ id: p.id, email: p.email, error: 'Credenciais de email ausentes' })) }
-      });
-    }
-
-    const dtStart = new Date(inicio);
-    const dtEnd = new Date(fim);
-
-    for (const p of convidados) {
-      try {
-        const uid = `${idAgendamento}-${p.id}@sociedadefrancios(i)`.replace('(i)', 'i');
-
-        const ics = buildICS({
-          uid,
-          dtstartUtc: new Date(dtStart.toISOString()),
-          dtendUtc: new Date(dtEnd.toISOString()),
-          summary: `Reunião - ${sala}`,
-          description: motivo || '',
-          location: sala,
-          organizerEmail: process.env.GMAIL_USER,
-          attendeeEmail: p.email,
-          attendeeName: p.nome
-        });
-
-        const info = await transporter.sendMail({
-          from: `"Sociedade Franciosi" <${process.env.GMAIL_USER}>`,
-          to: p.email,
-          subject: `Convite: Reunião (${sala})`,
-          text: `Você foi convidado para uma reunião.\nSala: ${sala}\nInício: ${inicio}\nFim: ${fim}\nMotivo: ${motivo}`,
-          icalEvent: {
-            filename: 'convite.ics',
-            method: 'REQUEST',
-            content: ics
-          }
-        });
-
-        // info geralmente inclui messageId/accepted/rejected em SMTP transports [web:483]
-        enviados.push({
-          id: p.id,
-          email: p.email,
-          messageId: info?.messageId,
-          accepted: info?.accepted || [],
-          rejected: info?.rejected || []
-        });
-      } catch (e) {
-        falhas.push({ id: p.id, email: p.email, error: e?.message || String(e) });
-      }
     }
 
     return res.json({
       success: true,
-      message: 'Agendamento salvo. Processado envio de convites.',
+      message: 'Agendamento salvo. Convites enfileirados para envio.',
       id: idAgendamento,
-      emails: { total: convidados.length, enviados, falhas }
+      filaEmail: { total: convidados.length, enfileirados: convidados.length }
     });
   } catch (err) {
     try { await conn.rollback(); } catch {}
-    return res.status(500).json({ success: false, message: 'Erro ao salvar agendamento.', error: err.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao salvar agendamento.',
+      error: err.message
+    });
   } finally {
     conn.release();
   }
 });
+
 
 app.get('/api/agendamentos/sala/dia', async (req, res) => {
   try {
