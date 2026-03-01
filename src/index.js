@@ -530,6 +530,131 @@ app.get('/api/setores', async (req, res) => {
   }
 });
 
+app.post('/api/gestao/usuarios', async (req, res) => {
+  const nome = titleCaseNome(req.body?.nome);
+  const email = normalizarEmail(req.body?.email);
+  const senha = (req.body?.senha || '').toString();
+  const telefone = somenteNumeros(req.body?.telefone);
+  const perfil = (req.body?.perfil || '').toString().trim(); // nome do perfil
+  const setor = (req.body?.setor || '').toString().trim();   // nome do setor
+  const status = (req.body?.status || 'Ativo').toString().trim();
+
+  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
+  if (!email) return res.status(400).json({ error: 'Email é obrigatório.' });
+  if (!senha || senha.length < 6) return res.status(400).json({ error: 'Senha inválida (mínimo 6).' });
+  if (!perfil) return res.status(400).json({ error: 'Perfil é obrigatório.' });
+  if (!setor) return res.status(400).json({ error: 'Setor é obrigatório.' });
+
+  const saltRounds = 12;
+  const senhaHash = await bcrypt.hash(senha, saltRounds); // armazena hash na coluna SENHA [web:83]
+
+  const [r] = await db.query(
+    `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [nome, email, senhaHash, telefone, perfil, setor, status]
+  );
+
+  res.status(201).json({ id: r.insertId, nome, email, perfil, setor, status });
+});
+
+app.get('/api/gestao/usuarios', async (req, res) => {
+  const [rows] = await db.query(
+    `SELECT ID, NOME, EMAIL, SETOR, STATUS
+     FROM SF_USUARIO
+     ORDER BY NOME`
+  );
+
+  res.json(rows.map(r => ({
+    id: r.ID,
+    nome: r.NOME,
+    email: r.EMAIL,
+    setor: r.SETOR,
+    status: r.STATUS,
+  })));
+});
+
+app.get('/api/gestao/usuarios/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido.' });
+
+  const [rows] = await db.query(
+    `SELECT ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, STATUS
+     FROM SF_USUARIO
+     WHERE ID = ?`,
+    [id]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  res.json(rows[0]);
+});
+
+app.put('/api/gestao/usuarios/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido.' });
+
+  const nome = titleCaseNome(req.body?.nome);
+  const email = normalizarEmail(req.body?.email);
+  const telefone = somenteNumeros(req.body?.telefone);
+  const perfil = (req.body?.perfil || '').toString().trim();
+  const setor = (req.body?.setor || '').toString().trim();
+  const status = (req.body?.status || '').toString().trim();
+
+  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
+  if (!email) return res.status(400).json({ error: 'Email é obrigatório.' });
+  if (!perfil) return res.status(400).json({ error: 'Perfil é obrigatório.' });
+  if (!setor) return res.status(400).json({ error: 'Setor é obrigatório.' });
+  if (!status) return res.status(400).json({ error: 'Status é obrigatório.' });
+
+  const [r] = await db.query(
+    `UPDATE SF_USUARIO
+     SET NOME = ?, EMAIL = ?, TELEFONE = ?, PERFIL = ?, SETOR = ?, STATUS = ?
+     WHERE ID = ?`,
+    [nome, email, telefone, perfil, setor, status, id]
+  );
+
+  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  res.json({ ok: true });
+});
+
+app.patch('/api/gestao/usuarios/:id/status', async (req, res) => {
+  const id = Number(req.params.id);
+  const status = (req.body?.status || '').toString().trim();
+  if (!id) return res.status(400).json({ error: 'ID inválido.' });
+  if (!status) return res.status(400).json({ error: 'Status é obrigatório.' });
+
+  const [r] = await db.query(`UPDATE SF_USUARIO SET STATUS = ? WHERE ID = ?`, [status, id]);
+  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  res.json({ ok: true });
+});
+
+app.delete('/api/gestao/usuarios/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!id) return res.status(400).json({ error: 'ID inválido.' });
+
+  const [r] = await db.query(`DELETE FROM SF_USUARIO WHERE ID = ?`, [id]);
+  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  res.json({ ok: true });
+});
+
+app.get('/api/gestao/usuarios/perfis', async (req, res) => {
+  const [rows] = await db.query(`SELECT ID, NOME FROM SF_PERFIL ORDER BY NOME`);
+  res.json(rows);
+});
+
+app.get('/api/gestao/usuarios/setores', async (req, res) => {
+  const [rows] = await db.query(`SELECT ID, NOME FROM SF_SETOR ORDER BY NOME`);
+  res.json(rows);
+});
+
+app.post('/api/gestao/usuarios/setores', async (req, res) => {
+  const nome = titleCaseNome(req.body?.nome);
+  if (!nome) return res.status(400).json({ error: 'Nome do setor é obrigatório.' });
+
+  const [r] = await db.query(`INSERT INTO SF_SETOR (NOME) VALUES (?)`, [nome]);
+  res.status(201).json({ id: r.insertId, nome });
+});
 
 // Inicia servidor
 app.listen(PORT, () => {
