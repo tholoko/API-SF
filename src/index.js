@@ -77,29 +77,41 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Email e senha são obrigatórios.' });
     }
 
+    const emailNorm = normalizarEmail(email);
+
     const [rows] = await pool.query(
-      'SELECT email, nome FROM SF_USUARIO WHERE email = ? AND senha = ? LIMIT 1',
-      [email, senha]
+      'SELECT ID, EMAIL, NOME, SENHA, STATUS FROM SF_USUARIO WHERE EMAIL = ? LIMIT 1',
+      [emailNorm]
     );
 
-    if (rows.length > 0) {
-      return res.json({
-        success: true,
-        message: 'Usuário confirmado com sucesso.',
-        email: rows[0].email,
-        nome: rows[0].nome,
-      });
-    } else {
-      return res.status(401).json({
-        success: false,
-        message: 'Email ou senha inválidos.',
-      });
+    if (!rows.length) {
+      return res.status(401).json({ success: false, message: 'Email ou senha inválidos.' });
     }
+
+    const u = rows[0];
+
+    if ((u.STATUS || '').toString().trim() === 'Desativado') {
+      return res.status(403).json({ success: false, message: 'Usuário desativado.' });
+    }
+
+    const ok = await bcrypt.compare(senha, u.SENHA);
+    if (!ok) {
+      return res.status(401).json({ success: false, message: 'Email ou senha inválidos.' });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Usuário confirmado com sucesso.',
+      email: u.EMAIL,
+      nome: u.NOME,
+      id: u.ID,
+    });
   } catch (err) {
     console.error('Erro na rota /api/login:', err);
-    res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
   }
 });
+
 
 app.post('/api/agendamentos/sala/verificar', async (req, res) => {
   try {
