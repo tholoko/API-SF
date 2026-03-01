@@ -115,7 +115,29 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+app.post('/api/usuarios/primeiro-acesso/senha', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const newPassword = (req.body?.newPassword || '').toString();
 
+    if (!email || !newPassword) return res.status(400).json({ success: false, message: 'Dados incompletos.' });
+    if (newPassword.length < 6) return res.status(400).json({ success: false, message: 'Senha mínima: 6 caracteres.' });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+
+    await pool.query(
+      `UPDATE SF_USUARIO
+          SET SENHA = ?, MUST_CHANGE_PASSWORD = 0
+        WHERE EMAIL = ?`,
+      [hash, email]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Erro primeiro acesso senha:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar senha.', error: err.message });
+  }
+});
 
 app.post('/api/agendamentos/sala/verificar', async (req, res) => {
   try {
