@@ -72,17 +72,19 @@ app.get('/debug', (req, res) => {
 // API Login
 app.post('/api/login', async (req, res) => {
   try {
-    const { email, senha } = req.body;
+    const email = normalizarEmail(req.body?.email);
+    const senha = (req.body?.senha || '').toString();
 
     if (!email || !senha) {
       return res.status(400).json({ success: false, message: 'Email e senha são obrigatórios.' });
     }
 
-    const emailNorm = normalizarEmail(email);
-
     const [rows] = await pool.query(
-      'SELECT ID, EMAIL, NOME, SENHA, STATUS FROM SF_USUARIO WHERE EMAIL = ? LIMIT 1',
-      [emailNorm]
+      `SELECT ID, EMAIL, NOME, SENHA, STATUS, MUST_CHANGE_PASSWORD
+         FROM SF_USUARIO
+        WHERE EMAIL = ?
+        LIMIT 1`,
+      [email]
     );
 
     if (!rows.length) {
@@ -91,8 +93,8 @@ app.post('/api/login', async (req, res) => {
 
     const u = rows[0];
 
-    if ((u.STATUS || '').toString().trim() === 'Desativado') {
-      return res.status(403).json({ success: false, message: 'Usuário desativado. Contate setor administrativo.' });
+    if ((u.STATUS || '').toString().trim() !== 'Ativo') {
+      return res.status(403).json({ success: false, message: 'Usuário desativado.' });
     }
 
     const ok = await bcrypt.compare(senha, u.SENHA);
@@ -102,16 +104,17 @@ app.post('/api/login', async (req, res) => {
 
     return res.json({
       success: true,
-      message: 'Usuário confirmado com sucesso.',
       email: u.EMAIL,
       nome: u.NOME,
       id: u.ID,
+      mustChangePassword: Number(u.MUST_CHANGE_PASSWORD) === 1
     });
   } catch (err) {
-    console.error('Erro na rota /api/login:', err);
-    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+    console.error('Erro /api/login:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno.', error: err.message });
   }
 });
+
 
 
 app.post('/api/agendamentos/sala/verificar', async (req, res) => {
@@ -425,112 +428,6 @@ app.get('/api/usuarios', async (req, res) => {
 });
 
 
-
-// Gmail SMTP (587 STARTTLS)
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASS },
-  tls: { servername: "smtp.gmail.com" },
-  // força lookup IPv4
-  lookup: (hostname, options, callback) => dns.lookup(hostname, { family: 4 }, callback),
-});
-
-// ---------- ICS helpers (os seus, só ajustei CRLF) ----------
-function toICSDateUTC(date) {
-  const pad = (n) => String(n).padStart(2, "0");
-  return (
-    date.getUTCFullYear() +
-    pad(date.getUTCMonth() + 1) +
-    pad(date.getUTCDate()) + "T" +
-    pad(date.getUTCHours()) +
-    pad(date.getUTCMinutes()) +
-    pad(date.getUTCSeconds()) + "Z"
-  );
-}
-
-function buildICS({ uid, dtstartUtc, dtendUtc, summary, description, location, organizerEmail, attendeeEmail, attendeeName }) {
-  // iCal costuma ser mais compatível com CRLF (\r\n)
-  const nl = "\r\n";
-  return [
-    "BEGIN:VCALENDAR",
-    "VERSION:2.0",
-    "CALSCALE:GREGORIAN",
-    "METHOD:REQUEST",
-    "PRODID:-//Sociedade Franciosi//Agendamentos//PT-BR",
-    "BEGIN:VEVENT",
-    `UID:${uid}`,
-    `DTSTAMP:${toICSDateUTC(new Date())}`,
-    `DTSTART:${toICSDateUTC(dtstartUtc)}`,
-    `DTEND:${toICSDateUTC(dtendUtc)}`,
-    `SUMMARY:${summary}`,
-    `DESCRIPTION:${description}`,
-    `LOCATION:${location}`,
-    `ORGANIZER:mailto:${organizerEmail}`,
-    `ATTENDEE;CN=${attendeeName};RSVP=TRUE:mailto:${attendeeEmail}`,
-    "END:VEVENT",
-    "END:VCALENDAR",
-    "" // final newline
-  ].join(nl);
-}
-
-// debug env
-app.get("/debug-mail", (req, res) => {
-  res.json({
-    GMAIL_USER: process.env.GMAIL_USER ? "OK" : "MISSING",
-    GMAIL_APP_PASS: process.env.GMAIL_APP_PASS ? "OK" : "MISSING",
-    MAIL_FROM_NAME: process.env.MAIL_FROM_NAME ? "OK" : "MISSING",
-  });
-});
-
-// Teste: envia convite
-app.get("/api/test-email-startup", async (req, res) => {
-  try {
-    const toEmail = "lazaro290493@outlook.com";
-    const toName = "Lázaro";
-
-    if (!process.env.GMAIL_USER) throw new Error("GMAIL_USER ausente");
-    if (!process.env.GMAIL_APP_PASS) throw new Error("GMAIL_APP_PASS ausente");
-
-    await transporter.verify(); // valida credenciais/SMTP
-
-    const uid = `teste-${Date.now()}@gmail.com`;
-    const inicio = new Date(Date.now() + 60 * 60 * 1000);
-    const fim = new Date(Date.now() + 2 * 60 * 60 * 1000);
-
-    const icsText = buildICS({
-      uid,
-      dtstartUtc: inicio,
-      dtendUtc: fim,
-      summary: "Teste convite (Gmail SMTP)",
-      description: "Convite de teste enviado via Nodemailer + Gmail.",
-      location: "Sala 01",
-      organizerEmail: process.env.GMAIL_USER,
-      attendeeEmail: toEmail,
-      attendeeName: toName,
-    });
-
-    const info = await transporter.sendMail({
-      from: `"${process.env.MAIL_FROM_NAME || "Sociedade Franciosi"}" <${process.env.GMAIL_USER}>`,
-      to: `"${toName}" <${toEmail}>`,
-      subject: "Teste convite (ICS via Gmail)",
-      text: "Segue convite de calendário.",
-      html: "<p>Segue convite de calendário.</p>",
-      icalEvent: {
-        filename: "invitation.ics",
-        method: "REQUEST",
-        content: icsText,
-      },
-    });
-
-    return res.json({ success: true, to: toEmail, messageId: info.messageId, accepted: info.accepted });
-  } catch (e) {
-    return res.status(500).json({ success: false, error: e?.message || String(e) });
-  }
-});
-
-
 app.get('/api/setores', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -635,8 +532,8 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const senhaHash = await bcrypt.hash(senha, saltRounds);
 
     const [r] = await pool.query(
-      `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS, MUST_CHANGE_PASSWORD)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       [nome, email, senhaHash, telefone, perfil, setor, status]
     );
 
