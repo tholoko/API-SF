@@ -92,7 +92,7 @@ app.post('/api/login', async (req, res) => {
     const u = rows[0];
 
     if ((u.STATUS || '').toString().trim() === 'Desativado') {
-      return res.status(403).json({ success: false, message: 'Usuário desativado.' });
+      return res.status(403).json({ success: false, message: 'Usuário desativado. Contate setor administrativo.' });
     }
 
     const ok = await bcrypt.compare(senha, u.SENHA);
