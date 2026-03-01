@@ -759,3 +759,11 @@ app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
     res.status(500).json({ success: false, message: 'Erro ao resetar senha.', error: err.message });
   }
 });
+
+
+// Inicia servidor
+app.listen(PORT, () => {
+  console.log(`🚀 API rodando na porta ${PORT}`);
+  console.log('✅ Teste: https://sua-url/health');
+});
+
