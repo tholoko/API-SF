@@ -4,7 +4,7 @@ import { pool } from './db.js';
 import dotenv from 'dotenv';
 import nodemailer from "nodemailer";
 import dns from "node:dns";
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 dns.setDefaultResultOrder("ipv4first");
 
