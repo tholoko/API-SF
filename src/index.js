@@ -168,7 +168,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
     }
 
-    // participantes: array de ids (front manda [1,2,3])
     const ids = Array.isArray(participantes)
       ? participantes.map(Number).filter(Number.isFinite)
       : [];
@@ -184,7 +183,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     const idAgendamento = ins.insertId;
 
-    // 2) Carrega usuários convidados (com email válido)
+    // 2) Carrega usuários convidados
     let convidados = [];
     if (ids.length) {
       const [u] = await conn.query(
@@ -206,8 +205,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       );
     }
 
-    // 4) Enfileira emails para envio pelo worker local
-    //    (não envia aqui; apenas cria jobs PENDENTE)
+    // 4) Enfileira convites (sequence=0)
     for (const p of convidados) {
       const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
 
@@ -215,12 +213,12 @@ app.post('/api/agendamentos/sala', async (req, res) => {
         `INSERT INTO SF_EMAIL_QUEUE
           (tipo, status, tentativas, max_tentativas,
            id_agendamento, id_usuario, email, nome,
-           sala, inicio, fim, motivo, uid,
+           sala, inicio, fim, motivo, uid, sequence,
            created_at)
          VALUES
           ('CONVITE_SALA', 'PENDENTE', 0, 5,
            ?, ?, ?, ?,
-           ?, ?, ?, ?, ?,
+           ?, ?, ?, ?, ?, 0,
            NOW())`,
         [
           idAgendamento, p.id, p.email, p.nome,
@@ -231,7 +229,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     await conn.commit();
 
-    // Retorno para o front: agendamento salvo e emails enfileirados
     if (!convidados.length) {
       return res.json({
         success: true,
@@ -304,7 +301,7 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
 
     await conn.beginTransaction();
 
-    // 1) Buscar agendamento (para ter sala/inicio/fim/motivo e validar dono/status)
+    // 1) Buscar agendamento
     const [agRows] = await conn.query(
       `SELECT id, sala, inicio, fim, motivo, usuario_agendamento, status
          FROM SF_AGENDAMENTO
@@ -327,7 +324,10 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
 
     if (ag.usuario_agendamento !== usuarioSolicitante) {
       await conn.rollback();
-      return res.status(403).json({ success: false, message: 'Você não tem permissão para excluir um agendamento de outro usuário.' });
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para excluir um agendamento de outro usuário.'
+      });
     }
 
     // 2) Cancelar agendamento
@@ -343,12 +343,11 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
     );
 
     if (upd.affectedRows === 0) {
-      // condição mudou entre select e update
       await conn.rollback();
       return res.status(409).json({ success: false, message: 'Não foi possível cancelar (agendamento já alterado).' });
     }
 
-    // 3) Buscar participantes para enviar cancelamento
+    // 3) Buscar participantes
     const [parts] = await conn.query(
       `SELECT id_usuario, nome, email
          FROM SF_AGENDAMENTO_PARTICIPANTE
@@ -357,7 +356,7 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
       [id]
     );
 
-    // 4) Enfileirar cancelamentos (um por participante)
+    // 4) Enfileirar cancelamentos (sequence=1) — iTIP pede incremento em CANCEL [web:161]
     for (const p of parts) {
       const uid = `${ag.id}-${p.id_usuario}@sociedadefranciosi`;
 
@@ -365,12 +364,12 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
         `INSERT INTO SF_EMAIL_QUEUE
           (tipo, status, tentativas, max_tentativas,
            id_agendamento, id_usuario, email, nome,
-           sala, inicio, fim, motivo, uid,
+           sala, inicio, fim, motivo, uid, sequence,
            created_at)
          VALUES
           ('CANCELAR_SALA', 'PENDENTE', 0, 5,
            ?, ?, ?, ?,
-           ?, ?, ?, ?, ?,
+           ?, ?, ?, ?, ?, 1,
            NOW())`,
         [
           ag.id, p.id_usuario, p.email, p.nome,
@@ -394,6 +393,7 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
     conn.release();
   }
 });
+
 
 app.get('/api/usuarios', async (req, res) => {
   try {
