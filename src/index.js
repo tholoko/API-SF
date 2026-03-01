@@ -630,6 +630,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
       item: { id: r.insertId, nome, email, telefone, perfil, setor, status },
     });
   } catch (err) {
+    console.error('ERRO /api/gestao-usuarios-adicionar:', err); // log completo
     res.status(500).json({ success: false, message: 'Erro ao criar usuário.', error: err.message });
   }
 });
