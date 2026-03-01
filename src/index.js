@@ -2,9 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import { pool } from './db.js';
 import dotenv from 'dotenv';
-import dns from 'node:dns';
-dns.setDefaultResultOrder('ipv4first');
 import nodemailer from "nodemailer";
+import dns from "node:dns";
+dns.setDefaultResultOrder("ipv4first");
 
 dotenv.config();
 
@@ -391,10 +391,10 @@ const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
   port: 587,
   secure: false,
-  auth: {
-    user: process.env.GMAIL_USER,
-    pass: process.env.GMAIL_APP_PASS,
-  },
+  auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASS },
+  tls: { servername: "smtp.gmail.com" },
+  // força lookup IPv4
+  lookup: (hostname, options, callback) => dns.lookup(hostname, { family: 4 }, callback),
 });
 
 // ---------- ICS helpers (os seus, só ajustei CRLF) ----------
