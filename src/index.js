@@ -683,7 +683,7 @@ app.patch('/api/gestao/usuarios/:id/senha', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.patch('/api/gestão/usuarios/:id/senha-reset', async (req, res) => {
+app.patch('/api/gestao/usuarios/:id/senha-reset', async (req, res) => {
   const id = Number(req.params.id);
   const novaSenha = (req.body?.novaSenha || '').toString();
 
