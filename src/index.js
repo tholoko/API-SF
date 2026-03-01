@@ -535,7 +535,7 @@ app.get('/api/setores', async (req, res) => {
 // ===========================
 
 // PERFIS (rota fixa)
-app.get('/api/gestao/usuarios/perfis', async (req, res) => {
+app.get('/api-gestao-usuarios/perfis', async (req, res) => {
   const [rows] = await db.query(`SELECT ID, NOME FROM SF_PERFIL ORDER BY NOME`);
   res.json(rows);
 });
