@@ -18,6 +18,7 @@
   "author": "Lázaro Kallebe",
   "license": "ISC",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^4.19.2",

@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import nodemailer from "nodemailer";
 import dns from "node:dns";
 import bcrypt from 'bcrypt';
+import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 dns.setDefaultResultOrder("ipv4first");
 
 dotenv.config();
