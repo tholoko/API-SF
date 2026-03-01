@@ -639,7 +639,7 @@ app.delete('/api/gestao/usuarios/:id', async (req, res) => {
 });
 
 app.get('/api/gestao/usuarios/perfis', async (req, res) => {
-  const [rows] = await db.query(`SELECT ID, NOME FROM SF_PERFIL ORDER BY NOME`);
+  const [rows] = await db.query(`SELECT id, nome FROM SF_PERFIL ORDER BY NOME`);
   res.json(rows);
 });
 
