@@ -4,7 +4,7 @@ import { pool } from './db.js';
 import dotenv from 'dotenv';
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
-import { MailerSend, EmailParams, Sender, Recipient, Attachment } from "mailersend";
+import nodemailer from "nodemailer";
 
 dotenv.config();
 
@@ -384,10 +384,20 @@ app.get('/api/usuarios', async (req, res) => {
   }
 });
 
-const mailerSend = new MailerSend({
-  apiKey: process.env.MAILERSEND_API_KEY,
+
+
+// Gmail SMTP (587 STARTTLS)
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASS,
+  },
 });
 
+// ---------- ICS helpers (os seus, só ajustei CRLF) ----------
 function toICSDateUTC(date) {
   const pad = (n) => String(n).padStart(2, "0");
   return (
@@ -401,48 +411,51 @@ function toICSDateUTC(date) {
 }
 
 function buildICS({ uid, dtstartUtc, dtendUtc, summary, description, location, organizerEmail, attendeeEmail, attendeeName }) {
-  return `BEGIN:VCALENDAR
-  VERSION:2.0
-  CALSCALE:GREGORIAN
-  METHOD:REQUEST
-  PRODID:-//Sociedade Franciosi//Agendamentos//PT-BR
-  BEGIN:VEVENT
-  UID:${uid}
-  DTSTAMP:${toICSDateUTC(new Date())}
-  DTSTART:${toICSDateUTC(dtstartUtc)}
-  DTEND:${toICSDateUTC(dtendUtc)}
-  SUMMARY:${summary}
-  DESCRIPTION:${description}
-  LOCATION:${location}
-  ORGANIZER:mailto:${organizerEmail}
-  ATTENDEE;CN=${attendeeName};RSVP=TRUE:mailto:${attendeeEmail}
-  END:VEVENT
-  END:VCALENDAR`;
+  // iCal costuma ser mais compatível com CRLF (\r\n)
+  const nl = "\r\n";
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "CALSCALE:GREGORIAN",
+    "METHOD:REQUEST",
+    "PRODID:-//Sociedade Franciosi//Agendamentos//PT-BR",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${toICSDateUTC(new Date())}`,
+    `DTSTART:${toICSDateUTC(dtstartUtc)}`,
+    `DTEND:${toICSDateUTC(dtendUtc)}`,
+    `SUMMARY:${summary}`,
+    `DESCRIPTION:${description}`,
+    `LOCATION:${location}`,
+    `ORGANIZER:mailto:${organizerEmail}`,
+    `ATTENDEE;CN=${attendeeName};RSVP=TRUE:mailto:${attendeeEmail}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "" // final newline
+  ].join(nl);
 }
 
-// (Opcional) rota debug das envs
+// debug env
 app.get("/debug-mail", (req, res) => {
   res.json({
-    MAILERSEND_API_KEY: process.env.MAILERSEND_API_KEY ? "OK" : "MISSING",
-    MAIL_FROM_EMAIL: process.env.MAIL_FROM_EMAIL ? "OK" : "MISSING",
+    GMAIL_USER: process.env.GMAIL_USER ? "OK" : "MISSING",
+    GMAIL_APP_PASS: process.env.GMAIL_APP_PASS ? "OK" : "MISSING",
     MAIL_FROM_NAME: process.env.MAIL_FROM_NAME ? "OK" : "MISSING",
   });
 });
 
+// Teste: envia convite
 app.get("/api/test-email-startup", async (req, res) => {
   try {
     const toEmail = "lazaro290493@outlook.com";
     const toName = "Lázaro";
 
-    if (!process.env.MAILERSEND_API_KEY) throw new Error("MAILERSEND_API_KEY ausente");
-    if (!process.env.MAIL_FROM_EMAIL) throw new Error("MAIL_FROM_EMAIL ausente");
+    if (!process.env.GMAIL_USER) throw new Error("GMAIL_USER ausente");
+    if (!process.env.GMAIL_APP_PASS) throw new Error("GMAIL_APP_PASS ausente");
 
-    const from = new Sender(
-      process.env.MAIL_FROM_EMAIL,
-      process.env.MAIL_FROM_NAME || "Sociedade Franciosi"
-    );
+    await transporter.verify(); // valida credenciais/SMTP
 
-    const uid = `teste-${Date.now()}@${String(process.env.MAIL_FROM_EMAIL).split("@")[1]}`;
+    const uid = `teste-${Date.now()}@gmail.com`;
     const inicio = new Date(Date.now() + 60 * 60 * 1000);
     const fim = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
@@ -450,37 +463,33 @@ app.get("/api/test-email-startup", async (req, res) => {
       uid,
       dtstartUtc: inicio,
       dtendUtc: fim,
-      summary: "Teste convite (MailerSend)",
-      description: "Convite de teste enviado via MailerSend.",
+      summary: "Teste convite (Gmail SMTP)",
+      description: "Convite de teste enviado via Nodemailer + Gmail.",
       location: "Sala 01",
-      organizerEmail: process.env.MAIL_FROM_EMAIL,
+      organizerEmail: process.env.GMAIL_USER,
       attendeeEmail: toEmail,
       attendeeName: toName,
     });
 
-    const attachments = [{
-      content: Buffer.from(icsText, "utf-8").toString("base64"),
-      filename: "invite.ics",
-      type: "text/calendar; method=REQUEST; charset=UTF-8",
-      disposition: "attachment"
-    }];
+    const info = await transporter.sendMail({
+      from: `"${process.env.MAIL_FROM_NAME || "Sociedade Franciosi"}" <${process.env.GMAIL_USER}>`,
+      to: `"${toName}" <${toEmail}>`,
+      subject: "Teste convite (ICS via Gmail)",
+      text: "Segue convite de calendário.",
+      html: "<p>Segue convite de calendário.</p>",
+      icalEvent: {
+        filename: "invitation.ics",
+        method: "REQUEST",
+        content: icsText,
+      },
+    });
 
-    const emailParams = new EmailParams()
-      .setFrom(from)
-      .setTo([new Recipient(toEmail, toName)])
-      .setSubject("Teste MailerSend (invite ICS)")
-      .setText("Segue convite em anexo (.ics).")
-      .setHtml("<p>Segue convite em anexo (<b>.ics</b>).</p>")
-      .setAttachments(attachments);
-
-    const resp = await mailerSend.email.send(emailParams); // [web:683]
-
-    return res.json({ success: true, to: toEmail, response: resp });
+    return res.json({ success: true, to: toEmail, messageId: info.messageId, accepted: info.accepted });
   } catch (e) {
-    const details = e?.body || e?.response?.data || { message: e?.message || String(e) };
-    return res.status(500).json({ success: false, error: "MailerSend error", details });
+    return res.status(500).json({ success: false, error: e?.message || String(e) });
   }
 });
+
 
 app.get('/api/setores', async (req, res) => {
   try {
