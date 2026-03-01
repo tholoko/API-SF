@@ -600,7 +600,7 @@ app.get('/api/gestao-usuarios', async (req, res) => {
 });
 
 // CRIAR USUÁRIO (rota fixa)
-app.post('/api/gestao-usuarios', async (req, res) => {
+app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
   try {
     const nome = titleCaseNome(req.body?.nome);
     const email = normalizarEmail(req.body?.email);
