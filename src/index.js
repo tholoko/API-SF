@@ -530,6 +530,24 @@ app.get('/api/setores', async (req, res) => {
   }
 });
 
+function titleCaseNome(nome) {
+  return (nome || '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(w => w[0].toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function normalizarEmail(email) {
+  return (email || '').trim().toLowerCase();
+}
+
+function somenteNumeros(v) {
+  return (v || '').toString().replace(/\D+/g, '');
+}
+
 // ===========================
 // GESTÃO USUÁRIOS - PADRÃO success/items + rotas sem conflito
 // ===========================
