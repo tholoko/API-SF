@@ -790,21 +790,35 @@ app.post('/api/password-reset/confirm', async (req, res) => {
     const token = (req.body?.token || '').toString().trim();
     const newPassword = (req.body?.newPassword || '').toString();
 
-    if (!email || !token || !newPassword) return res.status(400).json({ success: false, message: 'Dados incompletos.' });
-    if (newPassword.length < 6) return res.status(400).json({ success: false, message: 'Senha mínima: 6 caracteres.' });
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Dados incompletos.' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'Senha mínima: 6 caracteres.' });
+    }
 
     const [rows] = await pool.query(
       `SELECT id, token_hash, expires_at
          FROM SF_PASSWORD_RESET
-        WHERE email = ?
+        WHERE email = ? AND token_hash IS NOT NULL
         ORDER BY id DESC
         LIMIT 1`,
       [email]
     );
-    if (!rows.length || !rows[0].token_hash) return res.status(400).json({ success: false, message: 'Token inválido.' });
-    if (new Date(rows[0].expires_at).getTime() < Date.now()) return res.status(400).json({ success: false, message: 'Token expirado.' });
 
-    const ok = await bcrypt.compare(token, rows[0].token_hash);
+    if (!rows.length) return res.status(400).json({ success: false, message: 'Token inválido.' });
+
+    const r = rows[0];
+
+    const [exp] = await pool.query(
+      `SELECT (UTC_TIMESTAMP() <= ?) AS ok`,
+      [r.expires_at]
+    );
+    if (!exp?.length || exp[0].ok !== 1) {
+      return res.status(400).json({ success: false, message: 'Token expirado.' });
+    }
+
+    const ok = await bcrypt.compare(token, r.token_hash);
     if (!ok) return res.status(400).json({ success: false, message: 'Token inválido.' });
 
     const senhaHash = await bcrypt.hash(newPassword, 12);
@@ -824,18 +838,25 @@ app.post('/api/password-reset/verify', async (req, res) => {
     if (!email || !code) return res.status(400).json({ success: false, message: 'Email e código são obrigatórios.' });
 
     const [rows] = await pool.query(
-      `SELECT id, code_hash, expires_at, attempts, used
+      `SELECT id, code_hash, expires_at, attempts
          FROM SF_PASSWORD_RESET
-        WHERE email = ?
+        WHERE email = ? AND used = 0
         ORDER BY id DESC
         LIMIT 1`,
       [email]
     );
-    if (!rows.length) return res.status(400).json({ success: false, message: 'Código inválido.' });
+
+    if (!rows.length) return res.status(400).json({ success: false, message: 'Código inválido ou já utilizado.' });
 
     const r = rows[0];
-    if (r.used) return res.status(400).json({ success: false, message: 'Código já utilizado.' });
-    if (new Date(r.expires_at).getTime() < Date.now()) return res.status(400).json({ success: false, message: 'Código expirado.' });
+
+    const [exp] = await pool.query(
+      `SELECT (UTC_TIMESTAMP() <= ?) AS ok`,
+      [r.expires_at]
+    );
+    if (!exp?.length || exp[0].ok !== 1) {
+      return res.status(400).json({ success: false, message: 'Código expirado.' });
+    }
 
     const ok = await bcrypt.compare(code, r.code_hash);
     if (!ok) {
@@ -860,7 +881,6 @@ app.post('/api/password-reset/verify', async (req, res) => {
   }
 });
 
-
 app.post('/api/password-reset/request', async (req, res) => {
   try {
     const email = normalizarEmail(req.body?.email);
@@ -870,19 +890,27 @@ app.post('/api/password-reset/request', async (req, res) => {
       'SELECT ID, EMAIL, NOME FROM SF_USUARIO WHERE EMAIL = ? LIMIT 1',
       [email]
     );
+
+    // Se quiser evitar enumeração de email, troque por success:true sempre.
     if (!u.length) return res.status(404).json({ success: false, message: 'Email não cadastrado.' });
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const codeHash = await bcrypt.hash(code, 10);
     const expiresMinutes = 10;
 
+    // Invalida pedidos anteriores (evita ter vários códigos ativos)
     await pool.query(
-      `INSERT INTO SF_PASSWORD_RESET (email, code_hash, expires_at, used)
-       VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 0)`,
+      `UPDATE SF_PASSWORD_RESET SET used = 1
+        WHERE email = ? AND used = 0`,
+      [email]
+    );
+
+    await pool.query(
+      `INSERT INTO SF_PASSWORD_RESET (email, code_hash, expires_at, used, attempts, token_hash)
+       VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE), 0, 0, NULL)`,
       [email, codeHash, expiresMinutes]
     );
 
-    // Enfileira email para o worker
     const uid = `reset-${crypto.randomBytes(12).toString('hex')}@sociedadefranciosi`;
 
     await pool.query(
@@ -893,7 +921,7 @@ app.post('/api/password-reset/request', async (req, res) => {
        VALUES
         ('RESET_SENHA', 'PENDENTE', 0, 5,
          NULL, NULL, ?, ?,
-         NULL, NULL, NULL, ?, ?, 0, NOW())`,
+         NULL, NULL, NULL, ?, ?, 0, UTC_TIMESTAMP())`,
       [
         email,
         u[0].NOME || email,
@@ -908,3 +936,4 @@ app.post('/api/password-reset/request', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Erro ao solicitar redefinição.', error: err.message });
   }
 });
+
