@@ -290,6 +290,8 @@ app.get('/api/agendamentos/sala/dia', async (req, res) => {
 });
 
 app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
   try {
     const { id } = req.params;
 
@@ -300,7 +302,36 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Usuário solicitante é obrigatório.' });
     }
 
-    const [result] = await pool.query(
+    await conn.beginTransaction();
+
+    // 1) Buscar agendamento (para ter sala/inicio/fim/motivo e validar dono/status)
+    const [agRows] = await conn.query(
+      `SELECT id, sala, inicio, fim, motivo, usuario_agendamento, status
+         FROM SF_AGENDAMENTO
+        WHERE id = ?
+        LIMIT 1`,
+      [id]
+    );
+
+    if (!agRows.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Agendamento não encontrado.' });
+    }
+
+    const ag = agRows[0];
+
+    if (ag.status !== 'Agendado') {
+      await conn.rollback();
+      return res.status(409).json({ success: false, message: 'Este agendamento não está mais como Agendado.' });
+    }
+
+    if (ag.usuario_agendamento !== usuarioSolicitante) {
+      await conn.rollback();
+      return res.status(403).json({ success: false, message: 'Você não tem permissão para excluir um agendamento de outro usuário.' });
+    }
+
+    // 2) Cancelar agendamento
+    const [upd] = await conn.query(
       `UPDATE SF_AGENDAMENTO
           SET status = 'Cancelado',
               usuario_cancelamento = ?,
@@ -311,34 +342,56 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
       [usuarioSolicitante, id, usuarioSolicitante]
     );
 
-    if (result.affectedRows > 0) {
-      return res.json({ success: true, message: 'Agendamento cancelado com sucesso.' });
+    if (upd.affectedRows === 0) {
+      // condição mudou entre select e update
+      await conn.rollback();
+      return res.status(409).json({ success: false, message: 'Não foi possível cancelar (agendamento já alterado).' });
     }
 
-    // Se não alterou, descobrir se existe e se é de outro usuário
-    const [rows] = await pool.query(
-      `SELECT id, usuario_agendamento, status
-         FROM SF_AGENDAMENTO
-        WHERE id = ?
-        LIMIT 1`,
+    // 3) Buscar participantes para enviar cancelamento
+    const [parts] = await conn.query(
+      `SELECT id_usuario, nome, email
+         FROM SF_AGENDAMENTO_PARTICIPANTE
+        WHERE id_agendamento = ?
+          AND email IS NOT NULL AND email <> ''`,
       [id]
     );
 
-    if (rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Agendamento não encontrado.' });
+    // 4) Enfileirar cancelamentos (um por participante)
+    for (const p of parts) {
+      const uid = `${ag.id}-${p.id_usuario}@sociedadefranciosi`;
+
+      await conn.query(
+        `INSERT INTO SF_EMAIL_QUEUE
+          (tipo, status, tentativas, max_tentativas,
+           id_agendamento, id_usuario, email, nome,
+           sala, inicio, fim, motivo, uid,
+           created_at)
+         VALUES
+          ('CANCELAR_SALA', 'PENDENTE', 0, 5,
+           ?, ?, ?, ?,
+           ?, ?, ?, ?, ?,
+           NOW())`,
+        [
+          ag.id, p.id_usuario, p.email, p.nome,
+          ag.sala, ag.inicio, ag.fim, ag.motivo, uid
+        ]
+      );
     }
 
-    if (rows[0].status !== 'Agendado') {
-      return res.status(409).json({ success: false, message: 'Este agendamento não está mais como Agendado.' });
-    }
+    await conn.commit();
 
-    return res.status(403).json({
-      success: false,
-      message: 'Você não tem permissão para excluir um agendamento de outro usuário.'
+    return res.json({
+      success: true,
+      message: 'Agendamento cancelado com sucesso. Cancelamentos enfileirados para envio.',
+      cancelEmails: { total: parts.length, enfileirados: parts.length }
     });
   } catch (err) {
+    try { await conn.rollback(); } catch {}
     console.error('Erro DELETE /api/cancelar-agendamentos/sala/:id:', err);
     return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  } finally {
+    conn.release();
   }
 });
 
