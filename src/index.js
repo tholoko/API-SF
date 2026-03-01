@@ -530,33 +530,31 @@ app.get('/api/setores', async (req, res) => {
   }
 });
 
-app.post('/api/gestao/usuarios', async (req, res) => {
-  const nome = titleCaseNome(req.body?.nome);
-  const email = normalizarEmail(req.body?.email);
-  const senha = (req.body?.senha || '').toString();
-  const telefone = somenteNumeros(req.body?.telefone);
-  const perfil = (req.body?.perfil || '').toString().trim(); // nome do perfil
-  const setor = (req.body?.setor || '').toString().trim();   // nome do setor
-  const status = (req.body?.status || 'Ativo').toString().trim();
+// ===========================
+// GESTÃO - ROTAS FIXAS PRIMEIRO
+// ===========================
 
-  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
-  if (!email) return res.status(400).json({ error: 'Email é obrigatório.' });
-  if (!senha || senha.length < 6) return res.status(400).json({ error: 'Senha inválida (mínimo 6).' });
-  if (!perfil) return res.status(400).json({ error: 'Perfil é obrigatório.' });
-  if (!setor) return res.status(400).json({ error: 'Setor é obrigatório.' });
-
-  const saltRounds = 12;
-  const senhaHash = await bcrypt.hash(senha, saltRounds); // armazena hash na coluna SENHA [web:83]
-
-  const [r] = await db.query(
-    `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [nome, email, senhaHash, telefone, perfil, setor, status]
-  );
-
-  res.status(201).json({ id: r.insertId, nome, email, perfil, setor, status });
+// PERFIS (rota fixa)
+app.get('/api/gestao/usuarios/perfis', async (req, res) => {
+  const [rows] = await db.query(`SELECT ID, NOME FROM SF_PERFIL ORDER BY NOME`);
+  res.json(rows);
 });
 
+// SETORES (rotas fixas)
+app.get('/api/gestao/usuarios/setores', async (req, res) => {
+  const [rows] = await db.query(`SELECT ID, NOME FROM SF_SETOR ORDER BY NOME`);
+  res.json(rows);
+});
+
+app.post('/api/gestao/usuarios/setores', async (req, res) => {
+  const nome = titleCaseNome(req.body?.nome);
+  if (!nome) return res.status(400).json({ error: 'Nome do setor é obrigatório.' });
+
+  const [r] = await db.query(`INSERT INTO SF_SETOR (NOME) VALUES (?)`, [nome]);
+  res.status(201).json({ id: r.insertId, nome });
+});
+
+// LISTA usuários (rota fixa)
 app.get('/api/gestao/usuarios', async (req, res) => {
   const [rows] = await db.query(
     `SELECT ID, NOME, EMAIL, SETOR, STATUS
@@ -573,9 +571,41 @@ app.get('/api/gestao/usuarios', async (req, res) => {
   })));
 });
 
-app.get('/api/gestao/usuarios/:id', async (req, res) => {
+// CRIAR usuário (rota fixa)
+app.post('/api/gestao/usuarios', async (req, res) => {
+  const nome = titleCaseNome(req.body?.nome);
+  const email = normalizarEmail(req.body?.email);
+  const senha = (req.body?.senha || '').toString();
+  const telefone = somenteNumeros(req.body?.telefone);
+  const perfil = (req.body?.perfil || '').toString().trim();
+  const setor = (req.body?.setor || '').toString().trim();
+  const status = (req.body?.status || 'Ativo').toString().trim();
+
+  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
+  if (!email) return res.status(400).json({ error: 'Email é obrigatório.' });
+  if (!senha || senha.length < 6) return res.status(400).json({ error: 'Senha inválida (mínimo 6).' });
+  if (!perfil) return res.status(400).json({ error: 'Perfil é obrigatório.' });
+  if (!setor) return res.status(400).json({ error: 'Setor é obrigatório.' });
+
+  const saltRounds = 12;
+  const senhaHash = await bcrypt.hash(senha, saltRounds);
+
+  const [r] = await db.query(
+    `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [nome, email, senhaHash, telefone, perfil, setor, status]
+  );
+
+  res.status(201).json({ id: r.insertId, nome, email, perfil, setor, status });
+});
+
+// ===========================
+// ROTAS COM :id (SÓ NÚMERO)
+// ===========================
+
+// DETALHE
+app.get('/api/gestao/usuarios/:id(\\d+)', async (req, res) => {
   const id = Number(req.params.id);
-  if (!id) return res.status(400).json({ error: 'ID inválido.' });
 
   const [rows] = await db.query(
     `SELECT ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, STATUS
@@ -588,9 +618,9 @@ app.get('/api/gestao/usuarios/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.put('/api/gestao/usuarios/:id', async (req, res) => {
+// EDITAR
+app.put('/api/gestao/usuarios/:id(\\d+)', async (req, res) => {
   const id = Number(req.params.id);
-  if (!id) return res.status(400).json({ error: 'ID inválido.' });
 
   const nome = titleCaseNome(req.body?.nome);
   const email = normalizarEmail(req.body?.email);
@@ -616,10 +646,11 @@ app.put('/api/gestao/usuarios/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.patch('/api/gestao/usuarios/:id/status', async (req, res) => {
+// STATUS
+app.patch('/api/gestao/usuarios/:id(\\d+)/status', async (req, res) => {
   const id = Number(req.params.id);
   const status = (req.body?.status || '').toString().trim();
-  if (!id) return res.status(400).json({ error: 'ID inválido.' });
+
   if (!status) return res.status(400).json({ error: 'Status é obrigatório.' });
 
   const [r] = await db.query(`UPDATE SF_USUARIO SET STATUS = ? WHERE ID = ?`, [status, id]);
@@ -628,9 +659,9 @@ app.patch('/api/gestao/usuarios/:id/status', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete('/api/gestao/usuarios/:id', async (req, res) => {
+// EXCLUIR
+app.delete('/api/gestao/usuarios/:id(\\d+)', async (req, res) => {
   const id = Number(req.params.id);
-  if (!id) return res.status(400).json({ error: 'ID inválido.' });
 
   const [r] = await db.query(`DELETE FROM SF_USUARIO WHERE ID = ?`, [id]);
   if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
@@ -638,30 +669,12 @@ app.delete('/api/gestao/usuarios/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/gestao/usuarios/perfis', async (req, res) => {
-  const [rows] = await db.query(`SELECT id, nome FROM SF_PERFIL ORDER BY NOME`);
-  res.json(rows);
-});
-
-app.get('/api/gestao/usuarios/setores', async (req, res) => {
-  const [rows] = await db.query(`SELECT ID, NOME FROM SF_SETOR ORDER BY NOME`);
-  res.json(rows);
-});
-
-app.post('/api/gestao/usuarios/setores', async (req, res) => {
-  const nome = titleCaseNome(req.body?.nome);
-  if (!nome) return res.status(400).json({ error: 'Nome do setor é obrigatório.' });
-
-  const [r] = await db.query(`INSERT INTO SF_SETOR (NOME) VALUES (?)`, [nome]);
-  res.status(201).json({ id: r.insertId, nome });
-});
-
-app.patch('/api/gestao/usuarios/:id/senha', async (req, res) => {
+// TROCAR SENHA (com senha atual)
+app.patch('/api/gestao/usuarios/:id(\\d+)/senha', async (req, res) => {
   const id = Number(req.params.id);
   const senhaAtual = (req.body?.senhaAtual || '').toString();
   const novaSenha = (req.body?.novaSenha || '').toString();
 
-  if (!id) return res.status(400).json({ error: 'ID inválido.' });
   if (!senhaAtual) return res.status(400).json({ error: 'senhaAtual é obrigatória.' });
   if (!novaSenha || novaSenha.length < 6) {
     return res.status(400).json({ error: 'novaSenha inválida (mínimo 6 caracteres).' });
@@ -670,36 +683,34 @@ app.patch('/api/gestao/usuarios/:id/senha', async (req, res) => {
   const [rows] = await db.query(`SELECT SENHA FROM SF_USUARIO WHERE ID = ?`, [id]);
   if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
 
-  const hashAtual = rows[0].SENHA;
-
-  const ok = await bcrypt.compare(senhaAtual, hashAtual); // compara texto com hash [web:83]
+  const ok = await bcrypt.compare(senhaAtual, rows[0].SENHA);
   if (!ok) return res.status(401).json({ error: 'Senha atual incorreta.' });
 
   const saltRounds = 12;
-  const novoHash = await bcrypt.hash(novaSenha, saltRounds); // gera novo hash [web:83]
+  const novoHash = await bcrypt.hash(novaSenha, saltRounds);
 
   await db.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
-
   res.json({ ok: true });
 });
 
-app.patch('/api/gestao/usuarios/:id/senha-reset', async (req, res) => {
+// RESET SENHA (admin)
+app.patch('/api/gestao/usuarios/:id(\\d+)/senha-reset', async (req, res) => {
   const id = Number(req.params.id);
   const novaSenha = (req.body?.novaSenha || '').toString();
 
-  if (!id) return res.status(400).json({ error: 'ID inválido.' });
   if (!novaSenha || novaSenha.length < 6) {
     return res.status(400).json({ error: 'novaSenha inválida (mínimo 6 caracteres).' });
   }
 
   const saltRounds = 12;
-  const novoHash = await bcrypt.hash(novaSenha, saltRounds); // hash bcrypt [web:83]
+  const novoHash = await bcrypt.hash(novaSenha, saltRounds);
 
   const [r] = await db.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
   if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
 
   res.json({ ok: true });
 });
+
 
 // Inicia servidor
 app.listen(PORT, () => {
