@@ -531,190 +531,231 @@ app.get('/api/setores', async (req, res) => {
 });
 
 // ===========================
-// GESTÃO - ROTAS FIXAS PRIMEIRO
+// GESTÃO USUÁRIOS - PADRÃO success/items + rotas sem conflito
 // ===========================
 
 // PERFIS (rota fixa)
 app.get('/api/gestao-usuarios-perfis', async (req, res) => {
-  const [rows] = await db.query(`SELECT ID, NOME FROM SF_PERFIL ORDER BY NOME`);
-  res.json(rows);
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, NOME
+         FROM SF_PERFIL
+        WHERE NOME IS NOT NULL AND NOME <> ''
+        ORDER BY NOME ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar perfis.', error: err.message });
+  }
 });
 
-// SETORES (rotas fixas)
-app.get('/api/gestao/usuarios/setores', async (req, res) => {
-  const [rows] = await db.query(`SELECT ID, NOME FROM SF_SETOR ORDER BY NOME`);
-  res.json(rows);
+// SETORES (rota fixa)
+app.get('/api/gestao-usuarios-setores', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, NOME
+         FROM SF_SETOR
+        WHERE NOME IS NOT NULL AND NOME <> ''
+        ORDER BY NOME ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar setores.', error: err.message });
+  }
 });
 
-app.post('/api/gestao/usuarios/setores', async (req, res) => {
-  const nome = titleCaseNome(req.body?.nome);
-  if (!nome) return res.status(400).json({ error: 'Nome do setor é obrigatório.' });
+app.post('/api/gestao-usuarios-setores', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome do setor é obrigatório.' });
 
-  const [r] = await db.query(`INSERT INTO SF_SETOR (NOME) VALUES (?)`, [nome]);
-  res.status(201).json({ id: r.insertId, nome });
+    const [r] = await pool.query(`INSERT INTO SF_SETOR (NOME) VALUES (?)`, [nome]);
+    res.status(201).json({ success: true, item: { id: r.insertId, nome } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao adicionar setor.', error: err.message });
+  }
 });
 
-// LISTA usuários (rota fixa)
-app.get('/api/gestao/usuarios', async (req, res) => {
-  const [rows] = await db.query(
-    `SELECT ID, NOME, EMAIL, SETOR, STATUS
-     FROM SF_USUARIO
-     ORDER BY NOME`
-  );
+// LISTAR USUÁRIOS (rota fixa)
+app.get('/api/gestao-usuarios', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, NOME, EMAIL, SETOR, STATUS
+         FROM SF_USUARIO
+        ORDER BY NOME ASC`
+    );
 
-  res.json(rows.map(r => ({
-    id: r.ID,
-    nome: r.NOME,
-    email: r.EMAIL,
-    setor: r.SETOR,
-    status: r.STATUS,
-  })));
+    const items = rows.map(r => ({
+      id: r.ID,
+      nome: r.NOME,
+      email: r.EMAIL,
+      setor: r.SETOR,
+      status: r.STATUS,
+    }));
+
+    res.json({ success: true, items });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar usuários.', error: err.message });
+  }
 });
 
-// CRIAR usuário (rota fixa)
-app.post('/api/gestao/usuarios', async (req, res) => {
-  const nome = titleCaseNome(req.body?.nome);
-  const email = normalizarEmail(req.body?.email);
-  const senha = (req.body?.senha || '').toString();
-  const telefone = somenteNumeros(req.body?.telefone);
-  const perfil = (req.body?.perfil || '').toString().trim();
-  const setor = (req.body?.setor || '').toString().trim();
-  const status = (req.body?.status || 'Ativo').toString().trim();
+// CRIAR USUÁRIO (rota fixa)
+app.post('/api/gestao-usuarios', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+    const email = normalizarEmail(req.body?.email);
+    const senha = (req.body?.senha || '').toString();
+    const telefone = somenteNumeros(req.body?.telefone);
+    const perfil = (req.body?.perfil || '').toString().trim();
+    const setor = (req.body?.setor || '').toString().trim();
+    const status = (req.body?.status || 'Ativo').toString().trim();
 
-  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
-  if (!email) return res.status(400).json({ error: 'Email é obrigatório.' });
-  if (!senha || senha.length < 6) return res.status(400).json({ error: 'Senha inválida (mínimo 6).' });
-  if (!perfil) return res.status(400).json({ error: 'Perfil é obrigatório.' });
-  if (!setor) return res.status(400).json({ error: 'Setor é obrigatório.' });
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
+    if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
+    if (!senha || senha.length < 6) return res.status(400).json({ success: false, message: 'Senha inválida (mínimo 6).' });
+    if (!perfil) return res.status(400).json({ success: false, message: 'Perfil é obrigatório.' });
+    if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
 
-  const saltRounds = 12;
-  const senhaHash = await bcrypt.hash(senha, saltRounds);
+    const saltRounds = 12;
+    const senhaHash = await bcrypt.hash(senha, saltRounds);
 
-  const [r] = await db.query(
-    `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [nome, email, senhaHash, telefone, perfil, setor, status]
-  );
+    const [r] = await pool.query(
+      `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [nome, email, senhaHash, telefone, perfil, setor, status]
+    );
 
-  res.status(201).json({ id: r.insertId, nome, email, perfil, setor, status });
+    res.status(201).json({
+      success: true,
+      item: { id: r.insertId, nome, email, telefone, perfil, setor, status },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao criar usuário.', error: err.message });
+  }
 });
 
 // ===========================
-// ROTAS COM :id (SÓ NÚMERO)
+// ROTAS COM ID (somente número) => evita conflito com /perfis etc [web:158]
 // ===========================
 
-// DETALHE
-app.get('/api/gestao/usuarios/:id(\\d+)', async (req, res) => {
-  const id = Number(req.params.id);
+app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
 
-  const [rows] = await db.query(
-    `SELECT ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, STATUS
-     FROM SF_USUARIO
-     WHERE ID = ?`,
-    [id]
-  );
+    const [rows] = await pool.query(
+      `SELECT ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, STATUS
+         FROM SF_USUARIO
+        WHERE ID = ?`,
+      [id]
+    );
 
-  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
-  res.json(rows[0]);
-});
-
-// EDITAR
-app.put('/api/gestao/usuarios/:id(\\d+)', async (req, res) => {
-  const id = Number(req.params.id);
-
-  const nome = titleCaseNome(req.body?.nome);
-  const email = normalizarEmail(req.body?.email);
-  const telefone = somenteNumeros(req.body?.telefone);
-  const perfil = (req.body?.perfil || '').toString().trim();
-  const setor = (req.body?.setor || '').toString().trim();
-  const status = (req.body?.status || '').toString().trim();
-
-  if (!nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
-  if (!email) return res.status(400).json({ error: 'Email é obrigatório.' });
-  if (!perfil) return res.status(400).json({ error: 'Perfil é obrigatório.' });
-  if (!setor) return res.status(400).json({ error: 'Setor é obrigatório.' });
-  if (!status) return res.status(400).json({ error: 'Status é obrigatório.' });
-
-  const [r] = await db.query(
-    `UPDATE SF_USUARIO
-     SET NOME = ?, EMAIL = ?, TELEFONE = ?, PERFIL = ?, SETOR = ?, STATUS = ?
-     WHERE ID = ?`,
-    [nome, email, telefone, perfil, setor, status, id]
-  );
-
-  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
-  res.json({ ok: true });
-});
-
-// STATUS
-app.patch('/api/gestao/usuarios/:id(\\d+)/status', async (req, res) => {
-  const id = Number(req.params.id);
-  const status = (req.body?.status || '').toString().trim();
-
-  if (!status) return res.status(400).json({ error: 'Status é obrigatório.' });
-
-  const [r] = await db.query(`UPDATE SF_USUARIO SET STATUS = ? WHERE ID = ?`, [status, id]);
-  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
-
-  res.json({ ok: true });
-});
-
-// EXCLUIR
-app.delete('/api/gestao/usuarios/:id(\\d+)', async (req, res) => {
-  const id = Number(req.params.id);
-
-  const [r] = await db.query(`DELETE FROM SF_USUARIO WHERE ID = ?`, [id]);
-  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
-
-  res.json({ ok: true });
-});
-
-// TROCAR SENHA (com senha atual)
-app.patch('/api/gestao/usuarios/:id(\\d+)/senha', async (req, res) => {
-  const id = Number(req.params.id);
-  const senhaAtual = (req.body?.senhaAtual || '').toString();
-  const novaSenha = (req.body?.novaSenha || '').toString();
-
-  if (!senhaAtual) return res.status(400).json({ error: 'senhaAtual é obrigatória.' });
-  if (!novaSenha || novaSenha.length < 6) {
-    return res.status(400).json({ error: 'novaSenha inválida (mínimo 6 caracteres).' });
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    res.json({ success: true, item: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao buscar usuário.', error: err.message });
   }
-
-  const [rows] = await db.query(`SELECT SENHA FROM SF_USUARIO WHERE ID = ?`, [id]);
-  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
-
-  const ok = await bcrypt.compare(senhaAtual, rows[0].SENHA);
-  if (!ok) return res.status(401).json({ error: 'Senha atual incorreta.' });
-
-  const saltRounds = 12;
-  const novoHash = await bcrypt.hash(novaSenha, saltRounds);
-
-  await db.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
-  res.json({ ok: true });
 });
 
-// RESET SENHA (admin)
-app.patch('/api/gestao/usuarios/:id(\\d+)/senha-reset', async (req, res) => {
-  const id = Number(req.params.id);
-  const novaSenha = (req.body?.novaSenha || '').toString();
+app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
 
-  if (!novaSenha || novaSenha.length < 6) {
-    return res.status(400).json({ error: 'novaSenha inválida (mínimo 6 caracteres).' });
+    const nome = titleCaseNome(req.body?.nome);
+    const email = normalizarEmail(req.body?.email);
+    const telefone = somenteNumeros(req.body?.telefone);
+    const perfil = (req.body?.perfil || '').toString().trim();
+    const setor = (req.body?.setor || '').toString().trim();
+    const status = (req.body?.status || '').toString().trim();
+
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
+    if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
+    if (!perfil) return res.status(400).json({ success: false, message: 'Perfil é obrigatório.' });
+    if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
+    if (!status) return res.status(400).json({ success: false, message: 'Status é obrigatório.' });
+
+    const [r] = await pool.query(
+      `UPDATE SF_USUARIO
+          SET NOME = ?, EMAIL = ?, TELEFONE = ?, PERFIL = ?, SETOR = ?, STATUS = ?
+        WHERE ID = ?`,
+      [nome, email, telefone, perfil, setor, status, id]
+    );
+
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao atualizar usuário.', error: err.message });
   }
-
-  const saltRounds = 12;
-  const novoHash = await bcrypt.hash(novaSenha, saltRounds);
-
-  const [r] = await db.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
-  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
-
-  res.json({ ok: true });
 });
 
+app.patch('/api/gestao-usuarios/:id(\\d+)/status', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const status = (req.body?.status || '').toString().trim();
 
-// Inicia servidor
-app.listen(PORT, () => {
-  console.log(`🚀 API rodando na porta ${PORT}`);
-  console.log('✅ Teste: https://sua-url/health');
+    if (!status) return res.status(400).json({ success: false, message: 'Status é obrigatório.' });
+
+    const [r] = await pool.query(`UPDATE SF_USUARIO SET STATUS = ? WHERE ID = ?`, [status, id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao alterar status.', error: err.message });
+  }
 });
 
+app.delete('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const [r] = await pool.query(`DELETE FROM SF_USUARIO WHERE ID = ?`, [id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao excluir usuário.', error: err.message });
+  }
+});
+
+app.patch('/api/gestao-usuarios/:id(\\d+)/senha', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const senhaAtual = (req.body?.senhaAtual || '').toString();
+    const novaSenha = (req.body?.novaSenha || '').toString();
+
+    if (!senhaAtual) return res.status(400).json({ success: false, message: 'senhaAtual é obrigatória.' });
+    if (!novaSenha || novaSenha.length < 6) return res.status(400).json({ success: false, message: 'novaSenha inválida (mínimo 6).' });
+
+    const [rows] = await pool.query(`SELECT SENHA FROM SF_USUARIO WHERE ID = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    const ok = await bcrypt.compare(senhaAtual, rows[0].SENHA);
+    if (!ok) return res.status(401).json({ success: false, message: 'Senha atual incorreta.' });
+
+    const saltRounds = 12;
+    const novoHash = await bcrypt.hash(novaSenha, saltRounds);
+
+    await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao trocar senha.', error: err.message });
+  }
+});
+
+app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const novaSenha = (req.body?.novaSenha || '').toString();
+
+    if (!novaSenha || novaSenha.length < 6) return res.status(400).json({ success: false, message: 'novaSenha inválida (mínimo 6).' });
+
+    const saltRounds = 12;
+    const novoHash = await bcrypt.hash(novaSenha, saltRounds);
+
+    const [r] = await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao resetar senha.', error: err.message });
+  }
+});
