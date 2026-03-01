@@ -656,6 +656,51 @@ app.post('/api/gestao/usuarios/setores', async (req, res) => {
   res.status(201).json({ id: r.insertId, nome });
 });
 
+app.patch('/api/gestao/usuarios/:id/senha', async (req, res) => {
+  const id = Number(req.params.id);
+  const senhaAtual = (req.body?.senhaAtual || '').toString();
+  const novaSenha = (req.body?.novaSenha || '').toString();
+
+  if (!id) return res.status(400).json({ error: 'ID inválido.' });
+  if (!senhaAtual) return res.status(400).json({ error: 'senhaAtual é obrigatória.' });
+  if (!novaSenha || novaSenha.length < 6) {
+    return res.status(400).json({ error: 'novaSenha inválida (mínimo 6 caracteres).' });
+  }
+
+  const [rows] = await db.query(`SELECT SENHA FROM SF_USUARIO WHERE ID = ?`, [id]);
+  if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  const hashAtual = rows[0].SENHA;
+
+  const ok = await bcrypt.compare(senhaAtual, hashAtual); // compara texto com hash [web:83]
+  if (!ok) return res.status(401).json({ error: 'Senha atual incorreta.' });
+
+  const saltRounds = 12;
+  const novoHash = await bcrypt.hash(novaSenha, saltRounds); // gera novo hash [web:83]
+
+  await db.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
+
+  res.json({ ok: true });
+});
+
+app.patch('/api/gestão/usuarios/:id/senha-reset', async (req, res) => {
+  const id = Number(req.params.id);
+  const novaSenha = (req.body?.novaSenha || '').toString();
+
+  if (!id) return res.status(400).json({ error: 'ID inválido.' });
+  if (!novaSenha || novaSenha.length < 6) {
+    return res.status(400).json({ error: 'novaSenha inválida (mínimo 6 caracteres).' });
+  }
+
+  const saltRounds = 12;
+  const novoHash = await bcrypt.hash(novaSenha, saltRounds); // hash bcrypt [web:83]
+
+  const [r] = await db.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
+  if (r.affectedRows === 0) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  res.json({ ok: true });
+});
+
 // Inicia servidor
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
