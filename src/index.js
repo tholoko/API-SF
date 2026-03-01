@@ -429,20 +429,22 @@ app.get("/debug-mail", (req, res) => {
   });
 });
 
-// Teste de envio com invite ICS
 app.get("/api/test-email-startup", async (req, res) => {
   try {
     const toEmail = "lazaro.santos@sociedadefranciosi.com.br";
     const toName = "Lázaro";
+
+    if (!process.env.MAILERSEND_API_KEY) throw new Error("MAILERSEND_API_KEY ausente");
+    if (!process.env.MAIL_FROM_EMAIL) throw new Error("MAIL_FROM_EMAIL ausente");
 
     const from = new Sender(
       process.env.MAIL_FROM_EMAIL,
       process.env.MAIL_FROM_NAME || "Sociedade Franciosi"
     );
 
-    const uid = `teste-${Date.now()}@sociedadefranciosi.com.br`;
-    const inicio = new Date(Date.now() + 60 * 60 * 1000); // +1h
-    const fim = new Date(Date.now() + 2 * 60 * 60 * 1000); // +2h
+    const uid = `teste-${Date.now()}@${String(process.env.MAIL_FROM_EMAIL).split("@")[1] || "local"}`;
+    const inicio = new Date(Date.now() + 60 * 60 * 1000);
+    const fim = new Date(Date.now() + 2 * 60 * 60 * 1000);
 
     const icsText = buildICS({
       uid,
@@ -462,21 +464,32 @@ app.get("/api/test-email-startup", async (req, res) => {
       "text/calendar; method=REQUEST; charset=UTF-8"
     );
 
-    const recipients = [new Recipient(toEmail, toName)];
-
     const emailParams = new EmailParams()
       .setFrom(from)
-      .setTo(recipients)
+      .setTo([new Recipient(toEmail, toName)])
       .setSubject("Teste MailerSend (invite ICS)")
       .setText("Segue convite em anexo (.ics).")
       .setHtml("<p>Segue convite em anexo (<b>.ics</b>).</p>")
       .setAttachments([attachment]);
 
-    const resp = await mailerSend.email.send(emailParams); // envio via API [web:683]
+    const resp = await mailerSend.email.send(emailParams); // [web:683]
 
     return res.json({ success: true, to: toEmail, response: resp });
   } catch (e) {
-    return res.status(500).json({ success: false, error: e?.message || String(e) });
+    console.error("MailerSend error raw:", e);
+    if (e?.body) console.error("MailerSend error body:", e.body);
+
+    const details =
+      e?.body ? e.body :
+      e?.response?.data ? e.response.data :
+      e?.message ? { message: e.message } :
+      e;
+
+    return res.status(500).json({
+      success: false,
+      error: (e?.message || "MailerSend error"),
+      details
+    });
   }
 });
 
