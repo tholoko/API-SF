@@ -6,6 +6,7 @@ import nodemailer from "nodemailer";
 import dns from "node:dns";
 import bcrypt from 'bcryptjs';
 import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
+import crypto from 'node:crypto';
 dns.setDefaultResultOrder("ipv4first");
 
 dotenv.config();
@@ -776,9 +777,134 @@ app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
 });
 
 
+
 // Inicia servidor
 app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
   console.log('✅ Teste: https://sua-url/health');
 });
 
+app.post('/api/password-reset/confirm', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const token = (req.body?.token || '').toString().trim();
+    const newPassword = (req.body?.newPassword || '').toString();
+
+    if (!email || !token || !newPassword) return res.status(400).json({ success: false, message: 'Dados incompletos.' });
+    if (newPassword.length < 6) return res.status(400).json({ success: false, message: 'Senha mínima: 6 caracteres.' });
+
+    const [rows] = await pool.query(
+      `SELECT id, token_hash, expires_at
+         FROM SF_PASSWORD_RESET
+        WHERE email = ?
+        ORDER BY id DESC
+        LIMIT 1`,
+      [email]
+    );
+    if (!rows.length || !rows[0].token_hash) return res.status(400).json({ success: false, message: 'Token inválido.' });
+    if (new Date(rows[0].expires_at).getTime() < Date.now()) return res.status(400).json({ success: false, message: 'Token expirado.' });
+
+    const ok = await bcrypt.compare(token, rows[0].token_hash);
+    if (!ok) return res.status(400).json({ success: false, message: 'Token inválido.' });
+
+    const senhaHash = await bcrypt.hash(newPassword, 12);
+    await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE EMAIL = ?`, [senhaHash, email]);
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('password-reset/confirm:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar senha.', error: err.message });
+  }
+});
+
+app.post('/api/password-reset/verify', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const code = (req.body?.code || '').toString().trim();
+    if (!email || !code) return res.status(400).json({ success: false, message: 'Email e código são obrigatórios.' });
+
+    const [rows] = await pool.query(
+      `SELECT id, code_hash, expires_at, attempts, used
+         FROM SF_PASSWORD_RESET
+        WHERE email = ?
+        ORDER BY id DESC
+        LIMIT 1`,
+      [email]
+    );
+    if (!rows.length) return res.status(400).json({ success: false, message: 'Código inválido.' });
+
+    const r = rows[0];
+    if (r.used) return res.status(400).json({ success: false, message: 'Código já utilizado.' });
+    if (new Date(r.expires_at).getTime() < Date.now()) return res.status(400).json({ success: false, message: 'Código expirado.' });
+
+    const ok = await bcrypt.compare(code, r.code_hash);
+    if (!ok) {
+      await pool.query(`UPDATE SF_PASSWORD_RESET SET attempts = attempts + 1 WHERE id = ?`, [r.id]);
+      return res.status(400).json({ success: false, message: 'Código inválido.' });
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const tokenHash = await bcrypt.hash(token, 10);
+
+    await pool.query(
+      `UPDATE SF_PASSWORD_RESET
+          SET token_hash = ?, used = 1
+        WHERE id = ?`,
+      [tokenHash, r.id]
+    );
+
+    return res.json({ success: true, token });
+  } catch (err) {
+    console.error('password-reset/verify:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao verificar código.', error: err.message });
+  }
+});
+
+
+app.post('/api/password-reset/request', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
+
+    const [u] = await pool.query(
+      'SELECT ID, EMAIL, NOME FROM SF_USUARIO WHERE EMAIL = ? LIMIT 1',
+      [email]
+    );
+    if (!u.length) return res.status(404).json({ success: false, message: 'Email não cadastrado.' });
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const codeHash = await bcrypt.hash(code, 10);
+    const expiresMinutes = 10;
+
+    await pool.query(
+      `INSERT INTO SF_PASSWORD_RESET (email, code_hash, expires_at, used)
+       VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE), 0)`,
+      [email, codeHash, expiresMinutes]
+    );
+
+    // Enfileira email para o worker
+    const uid = `reset-${crypto.randomBytes(12).toString('hex')}@sociedadefranciosi`;
+
+    await pool.query(
+      `INSERT INTO SF_EMAIL_QUEUE
+        (tipo, status, tentativas, max_tentativas,
+         id_agendamento, id_usuario, email, nome,
+         sala, inicio, fim, motivo, uid, sequence, created_at)
+       VALUES
+        ('RESET_SENHA', 'PENDENTE', 0, 5,
+         NULL, NULL, ?, ?,
+         NULL, NULL, NULL, ?, ?, 0, NOW())`,
+      [
+        email,
+        u[0].NOME || email,
+        `Seu código de redefinição de senha é: ${code} (expira em ${expiresMinutes} min)`,
+        uid
+      ]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('password-reset/request:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao solicitar redefinição.', error: err.message });
+  }
+});
