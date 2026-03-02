@@ -1003,52 +1003,140 @@ app.get('/api/clientes/:id(\\d+)', async (req, res) => {
   }
 });
 
-// POST /api/clientes
+/ POST /api/clientes/salvar  (cria/edita cliente + sincroniza filiais)
 app.post('/api/clientes/salvar', async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    const razao = str(req.body?.razao_social);
-    const documento = normalizarDocumento(req.body?.documento);
-    const grupo = str(req.body?.grupo_economico) || null;
+    const c = req.body?.cliente || {};
+    const filiais = Array.isArray(req.body?.filiais) ? req.body.filiais : [];
 
-    const cidade = str(req.body?.cidade);
-    const uf = normalizarUF(req.body?.uf);
+    const idCliente = Number(c.id || 0) || null;
 
-    const contatoNome = str(req.body?.contato_nome) || null;
-    const contatoTelefone = str(req.body?.contato_telefone) || null;
-    const contatoEmail = str(req.body?.contato_email) || null;
+    const razao = str(c.razao_social);
+    const documento = normalizarDocumento(c.documento); // remove máscara (cpf/cnpj)
+    const grupo = str(c.grupo_economico) || null;
 
-    const cultura = str(req.body?.cultura_principal) || null; // 'soja'|'algodao'|'forrageira'
-    const hectares = Number(req.body?.hectares_estimados);
-    const obs = str(req.body?.observacoes) || null;
+    const cidade = str(c.cidade);
+    const uf = normalizarUF(c.uf);
+
+    const contatoNome = str(c.contato_nome) || null;
+    const contatoTelefone = str(c.contato_telefone) || null;
+    const contatoEmail = str(c.contato_email) || null;
+
+    const cultura = str(c.cultura_principal) || null;
+    const hectaresNum = Number(c.hectares_estimados);
+    const hectares = Number.isFinite(hectaresNum) ? hectaresNum : null;
+    const obs = str(c.observacoes) || null;
 
     if (!razao) return res.status(400).json({ success: false, message: 'razao_social é obrigatório.' });
     if (!documento) return res.status(400).json({ success: false, message: 'documento é obrigatório.' });
     if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
     if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
 
-    const [r] = await pool.query(
-      `INSERT INTO SF_CLIENTE
-       (RAZAO_SOCIAL, DOCUMENTO, GRUPO_ECONOMICO, CIDADE, UF,
-        CONTATO_NOME, CONTATO_TELEFONE, CONTATO_EMAIL,
-        CULTURA_PRINCIPAL, HECTARES_ESTIMADOS, OBSERVACOES, ACTIVE)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [
-        razao, documento, grupo, cidade, uf,
-        contatoNome, contatoTelefone, contatoEmail,
-        cultura, Number.isFinite(hectares) ? hectares : null, obs
-      ]
+    await conn.beginTransaction();
+
+    let idFinal = idCliente;
+
+    if (idFinal) {
+      const [r] = await conn.query(
+        `UPDATE SF_CLIENTE
+            SET RAZAO_SOCIAL = ?, DOCUMENTO = ?, GRUPO_ECONOMICO = ?,
+                CIDADE = ?, UF = ?,
+                CONTATO_NOME = ?, CONTATO_TELEFONE = ?, CONTATO_EMAIL = ?,
+                CULTURA_PRINCIPAL = ?, HECTARES_ESTIMADOS = ?, OBSERVACOES = ?
+          WHERE ID = ?`,
+        [
+          razao, documento, grupo,
+          cidade, uf,
+          contatoNome, contatoTelefone, contatoEmail,
+          cultura, hectares, obs,
+          idFinal
+        ]
+      );
+
+      if (r.affectedRows === 0) {
+        await conn.rollback();
+        return res.status(404).json({ success: false, message: 'Cliente não encontrado.' });
+      }
+    } else {
+      const [r] = await conn.query(
+        `INSERT INTO SF_CLIENTE
+         (RAZAO_SOCIAL, DOCUMENTO, GRUPO_ECONOMICO, CIDADE, UF,
+          CONTATO_NOME, CONTATO_TELEFONE, CONTATO_EMAIL,
+          CULTURA_PRINCIPAL, HECTARES_ESTIMADOS, OBSERVACOES, ACTIVE)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          razao, documento, grupo, cidade, uf,
+          contatoNome, contatoTelefone, contatoEmail,
+          cultura, hectares, obs
+        ]
+      );
+      idFinal = r.insertId;
+    }
+
+    // ---------- sincronizar filiais ----------
+    const [exist] = await conn.query(
+      `SELECT ID FROM SF_CLIENTE_FILIAL WHERE ID_CLIENTE = ? AND ACTIVE = 1`,
+      [idFinal]
     );
 
-    return res.status(201).json({ success: true, item: { id: r.insertId } });
+    const idsExistentes = exist.map(x => Number(x.ID)).filter(n => Number.isFinite(n) && n > 0);
+    const idsFormulario = filiais.map(f => Number(f.id || 0)).filter(n => Number.isFinite(n) && n > 0);
+
+    const idsParaDesativar = idsExistentes.filter(id => !idsFormulario.includes(id));
+    if (idsParaDesativar.length) {
+      await conn.query(
+        `UPDATE SF_CLIENTE_FILIAL SET ACTIVE = 0 WHERE ID_CLIENTE = ? AND ID IN (?)`,
+        [idFinal, idsParaDesativar]
+      );
+    }
+
+    for (const f of filiais) {
+      const fid = Number(f.id || 0) || null;
+
+      const nome = str(f.nome);
+      const endereco = str(f.endereco) || null;
+      const fCidade = str(f.cidade);
+      const fUf = normalizarUF(f.uf);
+      const fContatoNome = str(f.contato_nome) || null;
+      const fContatoTelefone = str(f.contato_telefone) || null;
+
+      if (!nome) { await conn.rollback(); return res.status(400).json({ success: false, message: 'Filial: nome é obrigatório.' }); }
+      if (!fCidade) { await conn.rollback(); return res.status(400).json({ success: false, message: 'Filial: cidade é obrigatória.' }); }
+      if (!fUf) { await conn.rollback(); return res.status(400).json({ success: false, message: 'Filial: uf inválida (2 letras).' }); }
+
+      if (fid) {
+        await conn.query(
+          `UPDATE SF_CLIENTE_FILIAL
+              SET NOME = ?, ENDERECO = ?, CIDADE = ?, UF = ?,
+                  CONTATO_NOME = ?, CONTATO_TELEFONE = ?, ACTIVE = 1
+            WHERE ID = ? AND ID_CLIENTE = ?`,
+          [nome, endereco, fCidade, fUf, fContatoNome, fContatoTelefone, fid, idFinal]
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO SF_CLIENTE_FILIAL
+           (ID_CLIENTE, NOME, ENDERECO, CIDADE, UF, CONTATO_NOME, CONTATO_TELEFONE, ACTIVE)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+          [idFinal, nome, endereco, fCidade, fUf, fContatoNome, fContatoTelefone]
+        );
+      }
+    }
+
+    await conn.commit();
+    return res.status(200).json({ success: true, id: idFinal });
   } catch (err) {
-    // duplicidade documento
+    try { await conn.rollback(); } catch {}
+
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ success: false, message: 'Já existe cliente com este documento.' });
     }
-    return res.status(500).json({ success: false, message: 'Erro ao criar cliente.', error: err.message });
+
+    return res.status(500).json({ success: false, message: 'Erro ao salvar cliente.', error: err.message });
+  } finally {
+    conn.release();
   }
 });
-
 // PUT /api/clientes/:id
 app.put('/api/clientes/:id(\\d+)', async (req, res) => {
   try {
