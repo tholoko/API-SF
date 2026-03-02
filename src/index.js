@@ -2,52 +2,58 @@ import express from 'express';
 import cors from 'cors';
 import { pool } from './db.js';
 import dotenv from 'dotenv';
-//import nodemailer from "nodemailer";
 import dns from "node:dns";
 import bcrypt from 'bcryptjs';
 import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 import crypto from 'node:crypto';
-dns.setDefaultResultOrder("ipv4first");
+
 import fs from "node:fs";
 import path from "node:path";
 import multer from "multer";
 
+dns.setDefaultResultOrder("ipv4first");
 dotenv.config();
 
-const app = express();  // ← PRIMEIRO: declara app
+const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors({ origin: true }));  // Permite todos para teste
+// =====================
+// Middleware base
+// =====================
+app.use(cors({ origin: true }));
 app.use(express.json());
 
+// =====================
+// Ajuste timezone MySQL
+// =====================
 (async () => {
   try {
-    await pool.query("SET time_zone = '-03:00'"); // ajusta a sessão [web:209]
+    await pool.query("SET time_zone = '-03:00'");
     console.log('MySQL time_zone ajustado para -03:00');
   } catch (e) {
     console.error('Falha ao setar time_zone:', e);
   }
 })();
 
-// Rotas de saúde e debug (DEPOIS do app)
+// =====================
+// Rotas de saúde / debug
+// =====================
 app.get('/', (req, res) => {
   res.json({ ok: true, message: 'API online' });
 });
 
-// Health check MySQL
 app.get('/health', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT 1 as test');
-    res.json({ 
-      status: 'OK', 
-      mysql: 'Connected!', 
-      test: rows[0].test 
+    res.json({
+      status: 'OK',
+      mysql: 'Connected!',
+      test: rows[0].test
     });
   } catch (err) {
     console.error('MySQL erro:', err.message);
-    res.status(500).json({ 
-      error: 'MySQL falhou', 
+    res.status(500).json({
+      error: 'MySQL falhou',
       details: err.message,
       vars: {
         host: !!process.env.MYSQLHOST,
@@ -59,7 +65,6 @@ app.get('/health', async (req, res) => {
   }
 });
 
-// Debug vars MySQL
 app.get('/debug', (req, res) => {
   res.json({
     mysqlVars: {
@@ -72,7 +77,9 @@ app.get('/debug', (req, res) => {
   });
 });
 
+// =====================
 // API Login
+// =====================
 app.post('/api/login', async (req, res) => {
   try {
     const email = normalizarEmail(req.body?.email);
@@ -142,6 +149,9 @@ app.post('/api/usuarios/primeiro-acesso/senha', async (req, res) => {
   }
 });
 
+// =====================
+// Agendamentos - Sala
+// =====================
 app.post('/api/agendamentos/sala/verificar', async (req, res) => {
   try {
     const { sala, inicio, fim } = req.body;
@@ -217,7 +227,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     await conn.beginTransaction();
 
-    // 1) Insere agendamento
     const [ins] = await conn.query(
       `INSERT INTO SF_AGENDAMENTO (sala, inicio, fim, motivo, usuario_agendamento, status, data_agendamento)
        VALUES (?, ?, ?, ?, ?, 'Agendado', NOW())`,
@@ -226,7 +235,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     const idAgendamento = ins.insertId;
 
-    // 2) Carrega usuários convidados
     let convidados = [];
     if (ids.length) {
       const [u] = await conn.query(
@@ -239,7 +247,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       convidados = u;
     }
 
-    // 3) Salva participantes
     for (const p of convidados) {
       await conn.query(
         `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
@@ -248,7 +255,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       );
     }
 
-    // 4) Enfileira convites (sequence=0)
     for (const p of convidados) {
       const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
 
@@ -299,11 +305,9 @@ app.post('/api/agendamentos/sala', async (req, res) => {
   }
 });
 
-
 app.get('/api/agendamentos/sala/dia', async (req, res) => {
   try {
-    const { data } = req.query; // opcional: '2026-02-28'
-    // se não vier, pega hoje no banco (server time)
+    const { data } = req.query;
     const [rows] = await pool.query(
       `
       SELECT
@@ -344,7 +348,6 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
 
     await conn.beginTransaction();
 
-    // 1) Buscar agendamento
     const [agRows] = await conn.query(
       `SELECT id, sala, inicio, fim, motivo, usuario_agendamento, status
          FROM SF_AGENDAMENTO
@@ -373,7 +376,6 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
       });
     }
 
-    // 2) Cancelar agendamento
     const [upd] = await conn.query(
       `UPDATE SF_AGENDAMENTO
           SET status = 'Cancelado',
@@ -390,7 +392,6 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
       return res.status(409).json({ success: false, message: 'Não foi possível cancelar (agendamento já alterado).' });
     }
 
-    // 3) Buscar participantes
     const [parts] = await conn.query(
       `SELECT id_usuario, nome, email
          FROM SF_AGENDAMENTO_PARTICIPANTE
@@ -399,7 +400,6 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
       [id]
     );
 
-    // 4) Enfileirar cancelamentos (sequence=1) — iTIP pede incremento em CANCEL [web:161]
     for (const p of parts) {
       const uid = `${ag.id}-${p.id_usuario}@sociedadefranciosi`;
 
@@ -437,7 +437,9 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
   }
 });
 
-
+// =====================
+// Usuários / Setores
+// =====================
 app.get('/api/usuarios', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -452,12 +454,11 @@ app.get('/api/usuarios', async (req, res) => {
   }
 });
 
-
 app.get('/api/setores', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT DISTINCT nome 
-         FROM SF_SETOR 
+      `SELECT DISTINCT nome
+         FROM SF_SETOR
         WHERE nome IS NOT NULL AND nome <> ''
         ORDER BY nome ASC`
     );
@@ -467,11 +468,9 @@ app.get('/api/setores', async (req, res) => {
   }
 });
 
-// ===========================
-// GESTÃO USUÁRIOS - PADRÃO success/items + rotas sem conflito
-// ===========================
-
-// PERFIS (rota fixa)
+// =====================
+// Gestão Usuários
+// =====================
 app.get('/api/gestao-usuarios-perfis', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -486,7 +485,6 @@ app.get('/api/gestao-usuarios-perfis', async (req, res) => {
   }
 });
 
-// SETORES (rota fixa)
 app.get('/api/gestao-usuarios-setores', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -513,7 +511,6 @@ app.post('/api/gestao-usuarios-setores', async (req, res) => {
   }
 });
 
-// LISTAR USUÁRIOS (rota fixa)
 app.get('/api/gestao-usuarios', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -536,7 +533,6 @@ app.get('/api/gestao-usuarios', async (req, res) => {
   }
 });
 
-// CRIAR USUÁRIO (rota fixa)
 app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
   try {
     const nome = titleCaseNome(req.body?.nome);
@@ -558,7 +554,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
 
     const [r] = await pool.query(
       `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS, MUST_CHANGE_PASSWORD)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       [nome, email, senhaHash, telefone, perfil, setor, status]
     );
 
@@ -567,14 +563,10 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
       item: { id: r.insertId, nome, email, telefone, perfil, setor, status },
     });
   } catch (err) {
-    console.error('ERRO /api/gestao-usuarios-adicionar:', err); // log completo
+    console.error('ERRO /api/gestao-usuarios-adicionar:', err);
     res.status(500).json({ success: false, message: 'Erro ao criar usuário.', error: err.message });
   }
 });
-
-// ===========================
-// ROTAS COM ID (somente número) => evita conflito com /perfis etc [web:158]
-// ===========================
 
 app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
   try {
@@ -669,10 +661,9 @@ app.patch('/api/gestao-usuarios/:id(\\d+)/senha', async (req, res) => {
     const ok = await bcrypt.compare(senhaAtual, rows[0].SENHA);
     if (!ok) return res.status(401).json({ success: false, message: 'Senha atual incorreta.' });
 
-    const saltRounds = 12;
-    const novoHash = await bcrypt.hash(novaSenha, saltRounds);
-
+    const novoHash = await bcrypt.hash(novaSenha, 12);
     await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Erro ao trocar senha.', error: err.message });
@@ -686,8 +677,7 @@ app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
 
     if (!novaSenha || novaSenha.length < 6) return res.status(400).json({ success: false, message: 'novaSenha inválida (mínimo 6).' });
 
-    const saltRounds = 12;
-    const novoHash = await bcrypt.hash(novaSenha, saltRounds);
+    const novoHash = await bcrypt.hash(novaSenha, 12);
 
     const [r] = await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
     if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
@@ -698,14 +688,9 @@ app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
   }
 });
 
-
-
-// Inicia servidor
-app.listen(PORT, () => {
-  console.log(`🚀 API rodando na porta ${PORT}`);
-  console.log('✅ Teste: https://sua-url/health');
-});
-
+// =====================
+// Password reset
+// =====================
 app.post('/api/password-reset/confirm', async (req, res) => {
   try {
     const email = normalizarEmail(req.body?.email);
@@ -813,14 +798,12 @@ app.post('/api/password-reset/request', async (req, res) => {
       [email]
     );
 
-    // Se quiser evitar enumeração de email, troque por success:true sempre.
     if (!u.length) return res.status(404).json({ success: false, message: 'Email não cadastrado.' });
 
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const codeHash = await bcrypt.hash(code, 10);
     const expiresMinutes = 10;
 
-    // Invalida pedidos anteriores (evita ter vários códigos ativos)
     await pool.query(
       `UPDATE SF_PASSWORD_RESET SET used = 1
         WHERE email = ? AND used = 0`,
@@ -859,37 +842,30 @@ app.post('/api/password-reset/request', async (req, res) => {
   }
 });
 
-// ===== Config de diretório do volume =====
-// Seu volume está montado em /publicidade (conforme screenshot)
+// =====================
+// MARKETING (Volume /publicidade)
+// =====================
+// Volume montado em /publicidade (conforme seu Railway)
 const DIRETORIO_VOLUME_PUBLICIDADE = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/publicidade";
-
-// Onde vão ficar as imagens dentro do volume
 const PASTA_MARKETING = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "marketing");
 
-// Garante que a pasta existe
 fs.mkdirSync(PASTA_MARKETING, { recursive: true });
 
-// ===== Servir as imagens publicamente =====
-// Ex.: https://sf-lkdsystem-production.up.railway.app/publicidade/marketing/arquivo.jpg
-app.use("/publicidade/marketing", express.static(PASTA_MARKETING)); // express.static é o jeito padrão [web:650]
+// Servir imagens via URL (Express static) [web:650]
+app.use("/publicidade/marketing", express.static(PASTA_MARKETING));
 
-// ===== Helpers =====
 function apenasNomeArquivoSeguro(nome) {
   const base = path.basename(String(nome || ""));
-  // remove chars perigosos
   return base.replace(/[^\w.\-() ]+/g, "_");
 }
-
 function ehImagem(mimetype) {
   return typeof mimetype === "string" && mimetype.startsWith("image/");
 }
 
-// ===== Multer config (salva direto no volume) =====
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, PASTA_MARKETING),
   filename: (req, file, cb) => {
     const original = apenasNomeArquivoSeguro(file.originalname || "imagem");
-    // evita colisão: prefixo timestamp + random
     const ext = path.extname(original);
     const nomeSemExt = path.basename(original, ext);
     const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -899,16 +875,12 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB por arquivo (ajuste se quiser)
+  limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (!ehImagem(file.mimetype)) return cb(new Error("Apenas imagens são permitidas."));
     cb(null, true);
   },
 });
-
-// ===============================
-// ROTAS: Marketing / Publicidade
-// ===============================
 
 // LISTAR
 app.get("/api/marketing/imagens", async (req, res) => {
@@ -918,7 +890,6 @@ app.get("/api/marketing/imagens", async (req, res) => {
     const items = files
       .filter((d) => d.isFile())
       .map((d) => d.name)
-      // opcional: só extensões comuns
       .filter((n) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(n))
       .sort((a, b) => a.localeCompare(b, "pt-BR"))
       .map((name) => ({
@@ -932,7 +903,7 @@ app.get("/api/marketing/imagens", async (req, res) => {
   }
 });
 
-// UPLOAD (multiple)
+// UPLOAD (múltiplos) - campo FormData: "files" [web:647]
 app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) => {
   try {
     const arquivos = Array.isArray(req.files) ? req.files : [];
@@ -956,15 +927,13 @@ app.delete("/api/marketing/imagens/:nome", async (req, res) => {
     const nome = apenasNomeArquivoSeguro(req.params.nome);
     if (!nome) return res.status(400).json({ success: false, message: "Nome inválido." });
 
-    const alvo = path.join(PASTA_MARKETING, nome);
-
-    // evita path traversal
-    if (!alvo.startsWith(PASTA_MARKETING)) {
+    const base = path.resolve(PASTA_MARKETING);
+    const alvo = path.resolve(path.join(PASTA_MARKETING, nome));
+    if (!alvo.startsWith(base + path.sep)) {
       return res.status(400).json({ success: false, message: "Caminho inválido." });
     }
 
     await fs.promises.unlink(alvo);
-
     return res.json({ success: true, message: "Imagem removida." });
   } catch (err) {
     if (err.code === "ENOENT") {
@@ -972,4 +941,12 @@ app.delete("/api/marketing/imagens/:nome", async (req, res) => {
     }
     return res.status(500).json({ success: false, message: "Erro ao remover imagem.", error: err.message });
   }
+});
+
+// =====================
+// Inicia servidor (sempre por último)
+// =====================
+app.listen(PORT, () => {
+  console.log(`🚀 API rodando na porta ${PORT}`);
+  console.log('✅ Teste: /health');
 });
