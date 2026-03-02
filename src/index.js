@@ -1004,7 +1004,7 @@ app.get('/api/clientes/:id(\\d+)', async (req, res) => {
 });
 
 // POST /api/clientes
-app.post('/api/clientes', async (req, res) => {
+app.post('/api/clientes/salvar', async (req, res) => {
   try {
     const razao = str(req.body?.razao_social);
     const documento = normalizarDocumento(req.body?.documento);
