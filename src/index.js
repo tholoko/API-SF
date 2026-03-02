@@ -2,12 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import { pool } from './db.js';
 import dotenv from 'dotenv';
-import nodemailer from "nodemailer";
+//import nodemailer from "nodemailer";
 import dns from "node:dns";
 import bcrypt from 'bcryptjs';
 import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 import crypto from 'node:crypto';
 dns.setDefaultResultOrder("ipv4first");
+import fs from "node:fs";
+import path from "node:path";
+import multer from "multer";
 
 dotenv.config();
 
@@ -856,3 +859,117 @@ app.post('/api/password-reset/request', async (req, res) => {
   }
 });
 
+// ===== Config de diretório do volume =====
+// Seu volume está montado em /publicidade (conforme screenshot)
+const DIRETORIO_VOLUME_PUBLICIDADE = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/publicidade";
+
+// Onde vão ficar as imagens dentro do volume
+const PASTA_MARKETING = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "marketing");
+
+// Garante que a pasta existe
+fs.mkdirSync(PASTA_MARKETING, { recursive: true });
+
+// ===== Servir as imagens publicamente =====
+// Ex.: https://sf-lkdsystem-production.up.railway.app/publicidade/marketing/arquivo.jpg
+app.use("/publicidade/marketing", express.static(PASTA_MARKETING)); // express.static é o jeito padrão [web:650]
+
+// ===== Helpers =====
+function apenasNomeArquivoSeguro(nome) {
+  const base = path.basename(String(nome || ""));
+  // remove chars perigosos
+  return base.replace(/[^\w.\-() ]+/g, "_");
+}
+
+function ehImagem(mimetype) {
+  return typeof mimetype === "string" && mimetype.startsWith("image/");
+}
+
+// ===== Multer config (salva direto no volume) =====
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, PASTA_MARKETING),
+  filename: (req, file, cb) => {
+    const original = apenasNomeArquivoSeguro(file.originalname || "imagem");
+    // evita colisão: prefixo timestamp + random
+    const ext = path.extname(original);
+    const nomeSemExt = path.basename(original, ext);
+    const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    cb(null, `${nomeSemExt}-${unico}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB por arquivo (ajuste se quiser)
+  fileFilter: (req, file, cb) => {
+    if (!ehImagem(file.mimetype)) return cb(new Error("Apenas imagens são permitidas."));
+    cb(null, true);
+  },
+});
+
+// ===============================
+// ROTAS: Marketing / Publicidade
+// ===============================
+
+// LISTAR
+app.get("/api/marketing/imagens", async (req, res) => {
+  try {
+    const files = await fs.promises.readdir(PASTA_MARKETING, { withFileTypes: true });
+
+    const items = files
+      .filter((d) => d.isFile())
+      .map((d) => d.name)
+      // opcional: só extensões comuns
+      .filter((n) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(n))
+      .sort((a, b) => a.localeCompare(b, "pt-BR"))
+      .map((name) => ({
+        name,
+        url: `/publicidade/marketing/${encodeURIComponent(name)}`,
+      }));
+
+    return res.json({ success: true, items });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Erro ao listar imagens.", error: err.message });
+  }
+});
+
+// UPLOAD (multiple)
+app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) => {
+  try {
+    const arquivos = Array.isArray(req.files) ? req.files : [];
+
+    const items = arquivos.map((f) => ({
+      name: f.filename,
+      url: `/publicidade/marketing/${encodeURIComponent(f.filename)}`,
+      size: f.size,
+      mimetype: f.mimetype,
+    }));
+
+    return res.status(201).json({ success: true, items });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message || "Erro ao enviar imagens." });
+  }
+});
+
+// REMOVER
+app.delete("/api/marketing/imagens/:nome", async (req, res) => {
+  try {
+    const nome = apenasNomeArquivoSeguro(req.params.nome);
+    if (!nome) return res.status(400).json({ success: false, message: "Nome inválido." });
+
+    const alvo = path.join(PASTA_MARKETING, nome);
+
+    // evita path traversal
+    if (!alvo.startsWith(PASTA_MARKETING)) {
+      return res.status(400).json({ success: false, message: "Caminho inválido." });
+    }
+
+    await fs.promises.unlink(alvo);
+
+    return res.json({ success: true, message: "Imagem removida." });
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return res.status(404).json({ success: false, message: "Arquivo não encontrado." });
+    }
+    return res.status(500).json({ success: false, message: "Erro ao remover imagem.", error: err.message });
+  }
+});
