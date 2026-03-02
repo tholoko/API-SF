@@ -943,6 +943,291 @@ app.delete("/api/marketing/imagens/:nome", async (req, res) => {
   }
 });
 
+function normalizarUF(uf) {
+  const s = (uf || '').toString().trim().toUpperCase();
+  return s.length === 2 ? s : '';
+}
+
+function normalizarDocumento(doc) {
+  return (doc || '').toString().replace(/\D+/g, '').trim(); // só números
+}
+
+function str(v) {
+  const s = (v ?? '').toString().trim();
+  return s ? s : '';
+}
+
+// GET /api/clientes?q=texto
+app.get('/api/clientes', async (req, res) => {
+  try {
+    const q = (req.query.q || '').toString().trim();
+
+    let sql = `
+      SELECT
+        ID, RAZAO_SOCIAL, DOCUMENTO, GRUPO_ECONOMICO,
+        CIDADE, UF,
+        CONTATO_NOME, CONTATO_TELEFONE, CONTATO_EMAIL,
+        CULTURA_PRINCIPAL, HECTARES_ESTIMADOS, OBSERVACOES,
+        ACTIVE, CREATED_AT, UPDATED_AT
+      FROM SF_CLIENTE
+      WHERE ACTIVE = 1
+    `;
+    const params = [];
+
+    if (q) {
+      sql += ` AND (RAZAO_SOCIAL LIKE ? OR DOCUMENTO LIKE ?) `;
+      params.push(`%${q}%`, `%${normalizarDocumento(q)}%`);
+    }
+
+    sql += ` ORDER BY RAZAO_SOCIAL ASC `;
+
+    const [rows] = await pool.query(sql, params);
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao listar clientes.', error: err.message });
+  }
+});
+
+// GET /api/clientes/:id
+app.get('/api/clientes/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.query(
+      `SELECT * FROM SF_CLIENTE WHERE ID = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Cliente não encontrado.' });
+    return res.json({ success: true, item: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao buscar cliente.', error: err.message });
+  }
+});
+
+// POST /api/clientes
+app.post('/api/clientes', async (req, res) => {
+  try {
+    const razao = str(req.body?.razao_social);
+    const documento = normalizarDocumento(req.body?.documento);
+    const grupo = str(req.body?.grupo_economico) || null;
+
+    const cidade = str(req.body?.cidade);
+    const uf = normalizarUF(req.body?.uf);
+
+    const contatoNome = str(req.body?.contato_nome) || null;
+    const contatoTelefone = str(req.body?.contato_telefone) || null;
+    const contatoEmail = str(req.body?.contato_email) || null;
+
+    const cultura = str(req.body?.cultura_principal) || null; // 'soja'|'algodao'|'forrageira'
+    const hectares = Number(req.body?.hectares_estimados);
+    const obs = str(req.body?.observacoes) || null;
+
+    if (!razao) return res.status(400).json({ success: false, message: 'razao_social é obrigatório.' });
+    if (!documento) return res.status(400).json({ success: false, message: 'documento é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_CLIENTE
+       (RAZAO_SOCIAL, DOCUMENTO, GRUPO_ECONOMICO, CIDADE, UF,
+        CONTATO_NOME, CONTATO_TELEFONE, CONTATO_EMAIL,
+        CULTURA_PRINCIPAL, HECTARES_ESTIMADOS, OBSERVACOES, ACTIVE)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [
+        razao, documento, grupo, cidade, uf,
+        contatoNome, contatoTelefone, contatoEmail,
+        cultura, Number.isFinite(hectares) ? hectares : null, obs
+      ]
+    );
+
+    return res.status(201).json({ success: true, item: { id: r.insertId } });
+  } catch (err) {
+    // duplicidade documento
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, message: 'Já existe cliente com este documento.' });
+    }
+    return res.status(500).json({ success: false, message: 'Erro ao criar cliente.', error: err.message });
+  }
+});
+
+// PUT /api/clientes/:id
+app.put('/api/clientes/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const razao = str(req.body?.razao_social);
+    const documento = normalizarDocumento(req.body?.documento);
+    const grupo = str(req.body?.grupo_economico) || null;
+
+    const cidade = str(req.body?.cidade);
+    const uf = normalizarUF(req.body?.uf);
+
+    const contatoNome = str(req.body?.contato_nome) || null;
+    const contatoTelefone = str(req.body?.contato_telefone) || null;
+    const contatoEmail = str(req.body?.contato_email) || null;
+
+    const cultura = str(req.body?.cultura_principal) || null;
+    const hectares = Number(req.body?.hectares_estimados);
+    const obs = str(req.body?.observacoes) || null;
+
+    if (!razao) return res.status(400).json({ success: false, message: 'razao_social é obrigatório.' });
+    if (!documento) return res.status(400).json({ success: false, message: 'documento é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    const [r] = await pool.query(
+      `UPDATE SF_CLIENTE
+          SET RAZAO_SOCIAL = ?, DOCUMENTO = ?, GRUPO_ECONOMICO = ?,
+              CIDADE = ?, UF = ?,
+              CONTATO_NOME = ?, CONTATO_TELEFONE = ?, CONTATO_EMAIL = ?,
+              CULTURA_PRINCIPAL = ?, HECTARES_ESTIMADOS = ?, OBSERVACOES = ?
+        WHERE ID = ?`,
+      [
+        razao, documento, grupo,
+        cidade, uf,
+        contatoNome, contatoTelefone, contatoEmail,
+        cultura, Number.isFinite(hectares) ? hectares : null, obs,
+        id
+      ]
+    );
+
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Cliente não encontrado.' });
+    return res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, message: 'Já existe cliente com este documento.' });
+    }
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar cliente.', error: err.message });
+  }
+});
+
+// DELETE /api/clientes/:id
+app.delete('/api/clientes/:id(\\d+)', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const id = Number(req.params.id);
+
+    await conn.beginTransaction();
+
+    // desativa filiais ativas
+    await conn.query(
+      `UPDATE SF_CLIENTE_FILIAL SET ACTIVE = 0 WHERE ID_CLIENTE = ? AND ACTIVE = 1`,
+      [id]
+    );
+
+    // desativa cliente
+    const [r] = await conn.query(
+      `UPDATE SF_CLIENTE SET ACTIVE = 0 WHERE ID = ? AND ACTIVE = 1`,
+      [id]
+    );
+
+    if (r.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Cliente não encontrado ou já desativado.' });
+    }
+
+    await conn.commit();
+    return res.json({ success: true });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    return res.status(500).json({ success: false, message: 'Erro ao desativar cliente.', error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// GET /api/clientes/:id/filiais
+app.get('/api/clientes/:id(\\d+)/filiais', async (req, res) => {
+  try {
+    const idCliente = Number(req.params.id);
+
+    const [rows] = await pool.query(
+      `SELECT ID, ID_CLIENTE, NOME, ENDERECO, CIDADE, UF, CONTATO_NOME, CONTATO_TELEFONE, ACTIVE, CREATED_AT, UPDATED_AT
+         FROM SF_CLIENTE_FILIAL
+        WHERE ID_CLIENTE = ? AND ACTIVE = 1
+        ORDER BY NOME ASC`,
+      [idCliente]
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao listar filiais.', error: err.message });
+  }
+});
+
+// POST /api/clientes/:id/filiais
+app.post('/api/clientes/:id(\\d+)/filiais', async (req, res) => {
+  try {
+    const idCliente = Number(req.params.id);
+
+    const nome = str(req.body?.nome);
+    const endereco = str(req.body?.endereco) || null;
+    const cidade = str(req.body?.cidade);
+    const uf = normalizarUF(req.body?.uf);
+    const contatoNome = str(req.body?.contato_nome) || null;
+    const contatoTelefone = str(req.body?.contato_telefone) || null;
+
+    if (!nome) return res.status(400).json({ success: false, message: 'nome é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_CLIENTE_FILIAL
+       (ID_CLIENTE, NOME, ENDERECO, CIDADE, UF, CONTATO_NOME, CONTATO_TELEFONE, ACTIVE)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+      [idCliente, nome, endereco, cidade, uf, contatoNome, contatoTelefone]
+    );
+
+    return res.status(201).json({ success: true, item: { id: r.insertId } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao criar filial.', error: err.message });
+  }
+});
+
+// PUT /api/filiais/:id
+app.put('/api/filiais/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const nome = str(req.body?.nome);
+    const endereco = str(req.body?.endereco) || null;
+    const cidade = str(req.body?.cidade);
+    const uf = normalizarUF(req.body?.uf);
+    const contatoNome = str(req.body?.contato_nome) || null;
+    const contatoTelefone = str(req.body?.contato_telefone) || null;
+
+    if (!nome) return res.status(400).json({ success: false, message: 'nome é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    const [r] = await pool.query(
+      `UPDATE SF_CLIENTE_FILIAL
+          SET NOME = ?, ENDERECO = ?, CIDADE = ?, UF = ?, CONTATO_NOME = ?, CONTATO_TELEFONE = ?
+        WHERE ID = ?`,
+      [nome, endereco, cidade, uf, contatoNome, contatoTelefone, id]
+    );
+
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Filial não encontrada.' });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar filial.', error: err.message });
+  }
+});
+
+// DELETE /api/filiais/:id
+app.delete('/api/filiais/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [r] = await pool.query(`UPDATE SF_CLIENTE_FILIAL SET ACTIVE = 0 WHERE ID = ? AND ACTIVE = 1`, [id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Filial não encontrada ou já desativada.' });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao desativar filial.', error: err.message });
+  }
+});
+
+
+
+
 // =====================
 // Inicia servidor (sempre por último)
 // =====================
