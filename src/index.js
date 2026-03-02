@@ -1003,7 +1003,7 @@ app.get('/api/clientes/:id(\\d+)', async (req, res) => {
   }
 });
 
-/ POST /api/clientes/salvar  (cria/edita cliente + sincroniza filiais)
+
 app.post('/api/clientes/salvar', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -1137,6 +1137,7 @@ app.post('/api/clientes/salvar', async (req, res) => {
     conn.release();
   }
 });
+
 // PUT /api/clientes/:id
 app.put('/api/clientes/:id(\\d+)', async (req, res) => {
   try {
