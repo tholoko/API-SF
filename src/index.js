@@ -1605,11 +1605,21 @@ app.post('/cron/processar-emails-office365', async (req, res) => {
     });
 });
 
-app.post('/test-emails-office365', async (req, res) => {
+app.get('/test-emails-office365', async (req, res) => {
   console.log('Testando leitura de emails...');
-  await processarEmailsOffice365();
-  res.json({ ok: true, message: 'Job executado!' });
+  try {
+    await processarEmailsOffice365();
+    res.json({ ok: true, message: 'Job executado com sucesso!' });
+  } catch (error) {
+    console.error('Erro no teste:', error);
+    res.status(500).json({ 
+      ok: false, 
+      message: 'Erro no job', 
+      error: error.message 
+    });
+  }
 });
+
 
 
 // =====================
