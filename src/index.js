@@ -1596,14 +1596,21 @@ cron.schedule('0 20 * * *', () => {
   processarEmailsOffice365();
 });
 
-app.post('/cron/processar-emails-office365', async (req, res) => {
-  processarEmailsOffice365()
-    .then(() => res.json({ ok: true }))
-    .catch(err => {
-      console.error(err);
-      res.status(500).json({ ok: false, erro: err.message });
+app.get('/cron/processar-emails-office365', async (req, res) => {
+  console.log('Executando cron job emails...');
+  try {
+    await processarEmailsOffice365();
+    res.json({ ok: true, message: 'Cron job executado com sucesso!' });
+  } catch (error) {
+    console.error('Erro no cron job:', error);
+    res.status(500).json({ 
+      ok: false, 
+      message: 'Erro no cron job', 
+      error: error.message 
     });
+  }
 });
+
 
 app.get('/test-emails-office365', async (req, res) => {
   console.log('Testando leitura de emails...');
