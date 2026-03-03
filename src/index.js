@@ -11,6 +11,10 @@ import fs from "node:fs";
 import path from "node:path";
 import multer from "multer";
 
+import fetch from 'node-fetch';
+import cron from 'node-cron';
+
+
 dns.setDefaultResultOrder("ipv4first");
 dotenv.config();
 
@@ -1314,7 +1318,298 @@ app.delete('/api/filiais/:id(\\d+)', async (req, res) => {
   }
 });
 
+// Leitura de email automatico as 06:00 e as 20:00 //
 
+const MS_TENANT_ID = process.env.MS_TENANT_ID;
+const MS_CLIENT_ID = process.env.MS_CLIENT_ID;
+const MS_CLIENT_SECRET = process.env.MS_CLIENT_SECRET;
+const MS_USER_EMAIL = process.env.MS_USER_EMAIL;
+
+async function obterAccessTokenGraph() {
+  const url = `https://login.microsoftonline.com/${MS_TENANT_ID}/oauth2/v2.0/token`;
+  const params = new URLSearchParams();
+  params.append('client_id', MS_CLIENT_ID);
+  params.append('client_secret', MS_CLIENT_SECRET);
+  params.append('scope', 'https://graph.microsoft.com/.default');
+  params.append('grant_type', 'client_credentials');
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    body: params,
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error('Falha ao obter token Graph: ' + txt);
+  }
+
+  const data = await resp.json();
+  return data.access_token;
+}
+
+async function graphRequest(path, options = {}) {
+  const token = await obterAccessTokenGraph();
+  const url = `https://graph.microsoft.com/v1.0${path}`;
+
+  const resp = await fetch(url, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Graph erro ${resp.status}: ${txt}`);
+  }
+
+  return resp.json();
+}
+
+async function processarEmailsOffice365() {
+  const conn = await pool.getConnection();
+
+  try {
+    // 1) Carrega remetentes
+    const [remRows] = await conn.query(
+      `SELECT ID, EMAIL
+         FROM SF_EMAIL_REMETENTE
+        WHERE ATIVO = 1`
+    );
+
+    if (!remRows.length) {
+      console.log('Nenhum remetente configurado.');
+      conn.release();
+      return;
+    }
+
+    const remetentes = remRows.map(r => ({
+      id: r.ID,
+      email: (r.EMAIL || '').toLowerCase().trim(),
+    }));
+
+    // 2) Carrega destinatários por remetente
+    const [destRows] = await conn.query(
+      `SELECT ID_REMETENTE, EMAIL_DESTINATARIO
+         FROM SF_EMAIL_DESTINATARIOS
+        WHERE ATIVO = 1`
+    );
+
+    const mapaDestinatarios = new Map();
+    for (const d of destRows) {
+      const idRem = d.ID_REMETENTE;
+      const emailDest = (d.EMAIL_DESTINATARIO || '').toLowerCase().trim();
+      if (!mapaDestinatarios.has(idRem)) {
+        mapaDestinatarios.set(idRem, new Set());
+      }
+      mapaDestinatarios.get(idRem).add(emailDest);
+    }
+
+    if (!destRows.length) {
+      console.log('Nenhum destinatário configurado para os remetentes.');
+      conn.release();
+      return;
+    }
+
+    // 3) Busca emails recentes na caixa de entrada
+    // Exemplo: últimas 48h, apenas não deletados
+    const filtroData = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const path =
+      `/users/${encodeURIComponent(MS_USER_EMAIL)}/mailFolders/Inbox/messages` +
+      `?$top=50&$filter=receivedDateTime ge ${filtroData}`;
+
+    const data = await graphRequest(path);
+    const mensagens = Array.isArray(data.value) ? data.value : [];
+
+    console.log(`Encontradas ${mensagens.length} mensagens na Inbox.`);
+
+    for (const msg of mensagens) {
+      const messageId = msg.id;
+      const assunto = msg.subject || '';
+      const recebidoEm = msg.receivedDateTime || null;
+
+      const fromEmail =
+        msg.from?.emailAddress?.address?.toLowerCase().trim() || '';
+      const toRecipients = Array.isArray(msg.toRecipients)
+        ? msg.toRecipients
+        : [];
+
+      // tenta casar remetente
+      const remetente = remetentes.find(r => r.email === fromEmail);
+      if (!remetente) continue;
+
+      const listaDestinatarios = mapaDestinatarios.get(remetente.id);
+      if (!listaDestinatarios || !listaDestinatarios.size) continue;
+
+      for (const dest of toRecipients) {
+        const destEmail =
+          dest.emailAddress?.address?.toLowerCase().trim() || '';
+        if (!listaDestinatarios.has(destEmail)) continue;
+
+        // verifica se já foi processado (pela tabela, não pelo Outlook)
+        const [ja] = await conn.query(
+          `SELECT ID, LIDO_TABELA
+             FROM SF_EMAIL_PROCESSADO
+            WHERE MESSAGE_ID = ? AND DESTINATARIO_EMAIL = ?
+            LIMIT 1`,
+          [messageId, destEmail]
+        );
+
+        if (ja.length && ja[0].LIDO_TABELA === 1) {
+          continue; // já processado
+        }
+
+        let idProcessado;
+        if (!ja.length) {
+          const [ins] = await conn.query(
+            `INSERT INTO SF_EMAIL_PROCESSADO
+              (MESSAGE_ID, REMETENTE_EMAIL, DESTINATARIO_EMAIL,
+               ASSUNTO, RECEBIDO_EM, LIDO_TABELA, LIDO_OUTLOOK)
+             VALUES (?, ?, ?, ?, ?, 0, 0)`,
+            [
+              messageId,
+              fromEmail,
+              destEmail,
+              assunto,
+              recebidoEm ? new Date(recebidoEm) : null,
+            ]
+          );
+          idProcessado = ins.insertId;
+        } else {
+          idProcessado = ja[0].ID;
+        }
+
+        // 4) Baixar anexos e salvar
+        await baixarESalvarAnexos(conn, idProcessado, messageId);
+
+        // 5) Marca como lido na tabela
+        await conn.query(
+          `UPDATE SF_EMAIL_PROCESSADO
+              SET LIDO_TABELA = 1
+            WHERE ID = ?`,
+          [idProcessado]
+        );
+
+        // 6) Opcional: marcar como lido no Outlook
+        try {
+          await marcarEmailComoLidoOutlook(messageId);
+          await conn.query(
+            `UPDATE SF_EMAIL_PROCESSADO
+                SET LIDO_OUTLOOK = 1
+              WHERE ID = ?`,
+            [idProcessado]
+          );
+        } catch (e) {
+          console.error(
+            'Falha ao marcar como lido no Outlook (continua assim mesmo):',
+            e.message
+          );
+        }
+      }
+    }
+
+    conn.release();
+  } catch (err) {
+    conn.release();
+    console.error('Erro em processarEmailsOffice365:', err);
+  }
+}
+
+async function baixarESalvarAnexos(conn, emailProcessadoId, messageId) {
+  // pega a lista de attachments
+  const path = `/users/${encodeURIComponent(
+    MS_USER_EMAIL
+  )}/messages/${messageId}/attachments`;
+
+  const data = await graphRequest(path);
+  const anexos = Array.isArray(data.value) ? data.value : [];
+
+  for (const at of anexos) {
+    // fileAttachment tem contentBytes
+    if (
+      at['@odata.type'] !== '#microsoft.graph.fileAttachment' ||
+      !at.contentBytes
+    ) {
+      continue;
+    }
+
+    const nomeOriginal = at.name || 'anexo';
+    const contentType = at.contentType || null;
+    const buffer = Buffer.from(at.contentBytes, 'base64');
+
+    const { caminhoAbsoluto, caminhoRelativo, nomeFinal } =
+      gerarCaminhoAnexo(nomeOriginal);
+
+    // grava arquivo no volume
+    await fs.promises.writeFile(caminhoAbsoluto, buffer);
+
+    await conn.query(
+      `INSERT INTO SF_EMAIL_ANEXO
+        (EMAIL_PROCESSADO_ID, NOME_ORIGINAL, NOME_SALVO,
+         CAMINHO_RELATIVO, TAMANHO_BYTES, CONTENT_TYPE)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        emailProcessadoId,
+        nomeOriginal,
+        nomeFinal,
+        caminhoRelativo,
+        buffer.length,
+        contentType,
+      ]
+    );
+  }
+}
+
+async function marcarEmailComoLidoOutlook(messageId) {
+  const path = `/users/${encodeURIComponent(
+    MS_USER_EMAIL
+  )}/messages/${messageId}`;
+  const token = await obterAccessTokenGraph();
+  const url = `https://graph.microsoft.com/v1.0${path}`;
+
+  const resp = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ isRead: true }),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Erro ao marcar email como lido: ${txt}`);
+  }
+}
+
+// todos os dias às 06:00
+cron.schedule('0 6 * * *', () => {
+  console.log('Rodando job de leitura de emails (06:00)...');
+  processarEmailsOffice365();
+});
+
+// todos os dias às 20:00
+cron.schedule('0 20 * * *', () => {
+  console.log('Rodando job de leitura de emails (20:00)...');
+  processarEmailsOffice365();
+});
+
+app.post('/cron/processar-emails-office365', async (req, res) => {
+  processarEmailsOffice365()
+    .then(() => res.json({ ok: true }))
+    .catch(err => {
+      console.error(err);
+      res.status(500).json({ ok: false, erro: err.message });
+    });
+});
+
+app.post('/test-emails-office365', async (req, res) => {
+  console.log('Testando leitura de emails...');
+  await processarEmailsOffice365();
+  res.json({ ok: true, message: 'Job executado!' });
+});
 
 
 // =====================
