@@ -27,6 +27,11 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({ origin: true }));
 app.use(express.json());
 
+// **NOVO: Servir fotos de usuário**
+const PASTA_FOTO_USUARIO = path.join(process.cwd(), 'foto-usuario');
+fs.mkdirSync(PASTA_FOTO_USUARIO, { recursive: true });
+app.use('/foto-usuario', express.static(PASTA_FOTO_USUARIO));
+
 // =====================
 // Ajuste timezone MySQL
 // =====================
@@ -518,17 +523,19 @@ app.post('/api/gestao-usuarios-setores', async (req, res) => {
 app.get('/api/gestao-usuarios', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT ID, NOME, EMAIL, SETOR, STATUS
-         FROM SF_USUARIO
-        ORDER BY NOME ASC`
+      `SELECT ID, NOME, EMAIL, TELEFONE, SETOR, STATUS, FOTO 
+       FROM SF_USUARIO 
+       ORDER BY NOME ASC`
     );
 
     const items = rows.map(r => ({
-      id: r.ID,
-      nome: r.NOME,
-      email: r.EMAIL,
-      setor: r.SETOR,
-      status: r.STATUS,
+      ID: r.ID,
+      NOME: r.NOME,
+      EMAIL: r.EMAIL,
+      TELEFONE: r.TELEFONE,
+      SETOR: r.SETOR,
+      STATUS: r.STATUS,
+      FOTO: r.FOTO,  // **NOVO: caminho da foto**
     }));
 
     res.json({ success: true, items });
@@ -546,6 +553,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const perfil = (req.body?.perfil || '').toString().trim();
     const setor = (req.body?.setor || '').toString().trim();
     const status = (req.body?.status || 'Ativo').toString().trim();
+    const foto = req.body?.foto;  // **NOVO: base64 da foto**
 
     if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
     if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
@@ -556,15 +564,31 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const saltRounds = 12;
     const senhaHash = await bcrypt.hash(senha, saltRounds);
 
+    // **NOVO: Salvar foto se enviada**
+    let fotoPath = null;
+    if (foto) {
+      const dir = PASTA_FOTO_USUARIO;
+      const ext = foto.startsWith('iVBORw0KGgo') ? 'png' : 'jpg';  // detecta PNG ou JPG
+      const fileName = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${ext}`;
+      const fullPath = path.join(dir, fileName);
+
+      await fs.promises.writeFile(fullPath, foto, 'base64');
+      fotoPath = `/foto-usuario/${fileName}`;  // URL pública
+    }
+
     const [r] = await pool.query(
-      `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS, MUST_CHANGE_PASSWORD)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-      [nome, email, senhaHash, telefone, perfil, setor, status]
+      `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS, FOTO, MUST_CHANGE_PASSWORD)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [nome, email, senhaHash, telefone, perfil, setor, status, fotoPath]
     );
 
     res.status(201).json({
       success: true,
-      item: { id: r.insertId, nome, email, telefone, perfil, setor, status },
+      item: { 
+        id: r.insertId, 
+        nome, email, telefone, perfil, setor, status,
+        foto: fotoPath 
+      },
     });
   } catch (err) {
     console.error('ERRO /api/gestao-usuarios-adicionar:', err);
@@ -575,11 +599,10 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
 app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
   try {
     const id = Number(req.params.id);
-
     const [rows] = await pool.query(
-      `SELECT ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, STATUS
-         FROM SF_USUARIO
-        WHERE ID = ?`,
+      `SELECT ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, STATUS, FOTO 
+       FROM SF_USUARIO 
+       WHERE ID=?`,
       [id]
     );
 
@@ -600,6 +623,7 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     const perfil = (req.body?.perfil || '').toString().trim();
     const setor = (req.body?.setor || '').toString().trim();
     const status = (req.body?.status || '').toString().trim();
+    const foto = req.body?.foto;  // **NOVO: pode ser null (manter atual) ou base64**
 
     if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
     if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
@@ -607,11 +631,26 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
     if (!status) return res.status(400).json({ success: false, message: 'Status é obrigatório.' });
 
+    // **NOVO: Tratar foto (se enviada, substitui; se null, limpa; senão mantém)**
+    let fotoPath = null;
+    if (foto !== undefined && foto !== null) {
+      if (foto) {  // nova foto
+        const dir = PASTA_FOTO_USUARIO;
+        const ext = foto.startsWith('iVBORw0KGgo') ? 'png' : 'jpg';
+        const fileName = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${ext}`;
+        const fullPath = path.join(dir, fileName);
+
+        await fs.promises.writeFile(fullPath, foto, 'base64');
+        fotoPath = `/foto-usuario/${fileName}`;
+      }
+      // se foto === null/undefined, fotoPath fica null (limpa coluna)
+    }
+
     const [r] = await pool.query(
-      `UPDATE SF_USUARIO
-          SET NOME = ?, EMAIL = ?, TELEFONE = ?, PERFIL = ?, SETOR = ?, STATUS = ?
-        WHERE ID = ?`,
-      [nome, email, telefone, perfil, setor, status, id]
+      `UPDATE SF_USUARIO 
+       SET NOME=?, EMAIL=?, TELEFONE=?, PERFIL=?, SETOR=?, STATUS=?, FOTO=?
+       WHERE ID=?`,
+      [nome, email, telefone, perfil, setor, status, fotoPath, id]
     );
 
     if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
@@ -1596,180 +1635,20 @@ cron.schedule('0 20 * * *', () => {
   processarEmailsOffice365();
 });
 
-app.get('/cron/processar-emails-office365', async (req, res) => {
-  console.log('Executando cron job emails...');
-  try {
-    await processarEmailsOffice365();
-    res.json({ ok: true, message: 'Cron job executado com sucesso!' });
-  } catch (error) {
-    console.error('Erro no cron job:', error);
-    res.status(500).json({ 
-      ok: false, 
-      message: 'Erro no cron job', 
-      error: error.message 
+app.post('/cron/processar-emails-office365', async (req, res) => {
+  processarEmailsOffice365()
+    .then(() => res.json({ ok: true }))
+    .catch(err => {
+      console.error(err);
+      res.status(500).json({ ok: false, erro: err.message });
     });
-  }
 });
 
-
-app.get('/test-emails-office365', async (req, res) => {
+app.post('/test-emails-office365', async (req, res) => {
   console.log('Testando leitura de emails...');
-  try {
-    await processarEmailsOffice365();
-    res.json({ ok: true, message: 'Job executado com sucesso!' });
-  } catch (error) {
-    console.error('Erro no teste:', error);
-    res.status(500).json({ 
-      ok: false, 
-      message: 'Erro no job', 
-      error: error.message 
-    });
-  }
+  await processarEmailsOffice365();
+  res.json({ ok: true, message: 'Job executado!' });
 });
-
-// POST Novo/Editar Remetente
-app.post('/api/emails/remetentes', async (req, res) => {
-  try {
-    const { EMAIL, NOME } = req.body;
-    const [result] = await pool.query(
-      `INSERT INTO SF_EMAIL_REMETENTE (EMAIL, NOME, ATIVO) VALUES (?, ?, 1)`,
-      [EMAIL.toLowerCase().trim(), NOME?.trim() || null]
-    );
-    res.status(201).json({ success: true, id: result.insertId });
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ success: false, message: 'Email já cadastrado' });
-    }
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.put('/api/emails/remetentes/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const { EMAIL, NOME } = req.body;
-    const [result] = await pool.query(
-      `UPDATE SF_EMAIL_REMETENTE SET EMAIL = ?, NOME = ? WHERE ID = ?`,
-      [EMAIL.toLowerCase().trim(), NOME?.trim() || null, id]
-    );
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'Remetente não encontrado' });
-    }
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-app.delete('/api/emails/remetentes/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    await pool.query(`UPDATE SF_EMAIL_REMETENTE SET ATIVO = 0 WHERE ID = ?`, [id]);
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// POST Destinatário (igual, mas com ID_REMETENTE)
-app.post('/api/emails/destinatarios', async (req, res) => {
-  try {
-    const { ID_REMETENTE, EMAIL_DESTINATARIO, NOME_DESTINATARIO } = req.body;
-    const [result] = await pool.query(
-      `INSERT INTO SF_EMAIL_DESTINATARIOS (ID_REMETENTE, EMAIL_DESTINATARIO, NOME_DESTINATARIO, ATIVO) 
-       VALUES (?, ?, ?, 1)`,
-      [Number(ID_REMETENTE), EMAIL_DESTINATARIO.toLowerCase().trim(), NOME_DESTINATARIO?.trim() || null]
-    );
-    res.status(201).json({ success: true, id: result.insertId });
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ success: false, message: 'Destinatário já cadastrado para este remetente' });
-    }
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// PUT Destinatário (editar)
-app.put('/api/emails/destinatarios/:id(\\d+)', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const { ID_REMETENTE, EMAIL_DESTINATARIO, NOME_DESTINATARIO } = req.body;
-    
-    const [result] = await pool.query(
-      `UPDATE SF_EMAIL_DESTINATARIOS 
-       SET ID_REMETENTE = ?, EMAIL_DESTINATARIO = ?, NOME_DESTINATARIO = ? 
-       WHERE ID = ?`,
-      [
-        Number(ID_REMETENTE),
-        EMAIL_DESTINATARIO.toLowerCase().trim(),
-        NOME_DESTINATARIO?.trim() || null,
-        id
-      ]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'Destinatário não encontrado' });
-    }
-    
-    res.json({ success: true });
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') {
-      return res.status(409).json({ success: false, message: 'Destinatário já cadastrado para este remetente' });
-    }
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// DELETE Destinatário (desativar)
-app.delete('/api/emails/destinatarios/:id(\\d+)', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const [result] = await pool.query(
-      `UPDATE SF_EMAIL_DESTINATARIOS SET ATIVO = 0 WHERE ID = ?`,
-      [id]
-    );
-    
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ success: false, message: 'Destinatário não encontrado' });
-    }
-    
-    res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// GET Remetentes
-app.get('/api/emails/remetentes', async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT ID, EMAIL, NOME, ATIVO, CREATED_AT 
-       FROM SF_EMAIL_REMETENTE 
-       ORDER BY EMAIL ASC`
-    );
-    res.json({ success: true, items: rows });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-// GET Destinatários (com JOIN remetente)
-app.get('/api/emails/destinatarios', async (req, res) => {
-  try {
-    const [rows] = await pool.query(
-      `SELECT d.ID, d.ID_REMETENTE, d.EMAIL_DESTINATARIO, d.NOME_DESTINATARIO, d.ATIVO,
-              r.EMAIL as remetenteEmail, r.NOME as remetenteNome
-       FROM SF_EMAIL_DESTINATARIOS d
-       JOIN SF_EMAIL_REMETENTE r ON d.ID_REMETENTE = r.ID
-       ORDER BY r.EMAIL, d.EMAIL_DESTINATARIO ASC`
-    );
-    res.json({ success: true, items: rows });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
-
-
 
 
 // =====================
