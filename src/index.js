@@ -14,7 +14,6 @@ import multer from "multer";
 import fetch from 'node-fetch';
 import cron from 'node-cron';
 
-
 dns.setDefaultResultOrder("ipv4first");
 dotenv.config();
 
@@ -25,9 +24,12 @@ const PORT = process.env.PORT || 3000;
 // Middleware base
 // =====================
 app.use(cors({ origin: true }));
-app.use(express.json());
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// **NOVO: Servir fotos de usuário**
+// =====================
+// Fotos de usuário
+// =====================
 const PASTA_FOTO_USUARIO = path.join(process.cwd(), 'foto-usuario');
 fs.mkdirSync(PASTA_FOTO_USUARIO, { recursive: true });
 app.use('/foto-usuario', express.static(PASTA_FOTO_USUARIO));
