@@ -549,57 +549,7 @@ app.get('/api/gestao-usuarios', async (req, res) => {
   }
 });
 
-app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
-  try {
-    const nome = titleCaseNome(req.body?.nome);
-    const email = normalizarEmail(req.body?.email);
-    const senha = (req.body?.senha || '').toString();
-    const telefone = somenteNumeros(req.body?.telefone);
-    const perfil = (req.body?.perfil || '').toString().trim();
-    const setor = (req.body?.setor || '').toString().trim();
-    const status = (req.body?.status || 'Ativo').toString().trim();
-    const foto = req.body?.foto;  // **NOVO: base64 da foto**
 
-    if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
-    if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
-    if (!senha || senha.length < 6) return res.status(400).json({ success: false, message: 'Senha inválida (mínimo 6).' });
-    if (!perfil) return res.status(400).json({ success: false, message: 'Perfil é obrigatório.' });
-    if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
-
-    const saltRounds = 12;
-    const senhaHash = await bcrypt.hash(senha, saltRounds);
-
-    // **NOVO: Salvar foto se enviada**
-    let fotoPath = null;
-    if (foto) {
-      const dir = PASTA_FOTO_USUARIO;
-      const ext = foto.startsWith('iVBORw0KGgo') ? 'png' : 'jpg';  // detecta PNG ou JPG
-      const fileName = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${ext}`;
-      const fullPath = path.join(dir, fileName);
-
-      await fs.promises.writeFile(fullPath, foto, 'base64');
-      fotoPath = `/foto-usuario/${fileName}`;  // URL pública
-    }
-
-    const [r] = await pool.query(
-      `INSERT INTO SF_USUARIO (NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS, FOTO, MUST_CHANGE_PASSWORD)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      [nome, email, senhaHash, telefone, perfil, setor, status, fotoPath]
-    );
-
-    res.status(201).json({
-      success: true,
-      item: { 
-        id: r.insertId, 
-        nome, email, telefone, perfil, setor, status,
-        foto: fotoPath 
-      },
-    });
-  } catch (err) {
-    console.error('ERRO /api/gestao-usuarios-adicionar:', err);
-    res.status(500).json({ success: false, message: 'Erro ao criar usuário.', error: err.message });
-  }
-});
 
 app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
   try {
@@ -618,6 +568,62 @@ app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
   }
 });
 
+app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+    const email = normalizarEmail(req.body?.email);
+    const senha = (req.body?.senha || '').toString();
+    const telefone = somenteNumeros(req.body?.telefone);
+    const perfil = (req.body?.perfil || '').toString().trim();
+    const setor = (req.body?.setor || '').toString().trim();
+    const status = (req.body?.status || 'Ativo').toString().trim();
+    const foto = req.body?.foto;
+
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
+    if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
+    if (!senha || senha.length < 6) return res.status(400).json({ success: false, message: 'Senha inválida (mínimo 6).' });
+    if (!perfil) return res.status(400).json({ success: false, message: 'Perfil é obrigatório.' });
+    if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
+
+    const saltRounds = 12;
+    const senhaHash = await bcrypt.hash(senha, saltRounds);
+
+    let fotoPath = null;
+
+    if (foto) {
+      const fileName = `user_${Date.now()}_${Math.random().toString(36).slice(2, 9)}.jpg`;
+      const fullPath = path.join(PASTA_FOTO_USUARIO, fileName);
+
+      await fs.promises.writeFile(fullPath, foto, 'base64');
+      fotoPath = `/publicidade/foto-usuario/${fileName}`;
+    }
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_USUARIO (
+        NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, STATUS, FOTO, MUST_CHANGE_PASSWORD
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [nome, email, senhaHash, telefone, perfil, setor, status, fotoPath]
+    );
+
+    res.status(201).json({
+      success: true,
+      item: {
+        id: r.insertId,
+        nome,
+        email,
+        telefone,
+        perfil,
+        setor,
+        status,
+        foto: fotoPath
+      },
+    });
+  } catch (err) {
+    console.error('ERRO /api/gestao-usuarios-adicionar:', err);
+    res.status(500).json({ success: false, message: 'Erro ao criar usuário.', error: err.message });
+  }
+});
+
 app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -628,7 +634,7 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     const perfil = (req.body?.perfil || '').toString().trim();
     const setor = (req.body?.setor || '').toString().trim();
     const status = (req.body?.status || '').toString().trim();
-    const foto = req.body?.foto;  // **NOVO: pode ser null (manter atual) ou base64**
+    const foto = req.body?.foto;
 
     if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
     if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
@@ -636,34 +642,95 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
     if (!status) return res.status(400).json({ success: false, message: 'Status é obrigatório.' });
 
-    // **NOVO: Tratar foto (se enviada, substitui; se null, limpa; senão mantém)**
-    let fotoPath = null;
-    if (foto !== undefined && foto !== null) {
-      if (foto) {  // nova foto
-        const dir = PASTA_FOTO_USUARIO;
-        const ext = foto.startsWith('iVBORw0KGgo') ? 'png' : 'jpg';
-        const fileName = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${ext}`;
-        const fullPath = path.join(dir, fileName);
+    const [rows] = await pool.query(
+      `SELECT ID, FOTO
+         FROM SF_USUARIO
+        WHERE ID = ?`,
+      [id]
+    );
 
-        await fs.promises.writeFile(fullPath, foto, 'base64');
-        fotoPath = `/foto-usuario/${fileName}`;
-      }
-      // se foto === null/undefined, fotoPath fica null (limpa coluna)
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
     }
 
+    const usuarioAtual = rows[0];
+    let fotoPath = usuarioAtual.FOTO || null;
+
+    // foto enviada em base64 = substitui
+    if (typeof foto === 'string' && foto.trim()) {
+      const fileName = `user_${Date.now()}_${Math.random().toString(36).slice(2, 9)}.jpg`;
+      const fullPath = path.join(PASTA_FOTO_USUARIO, fileName);
+
+      await fs.promises.writeFile(fullPath, foto, 'base64');
+      fotoPath = `/publicidade/foto-usuario/${fileName}`;
+
+      // remove foto antiga se for da pasta de usuário
+      if (
+        usuarioAtual.FOTO &&
+        usuarioAtual.FOTO.startsWith('/publicidade/foto-usuario/')
+      ) {
+        const nomeAntigo = path.basename(usuarioAtual.FOTO);
+        const caminhoAntigo = path.join(PASTA_FOTO_USUARIO, nomeAntigo);
+
+        try {
+          await fs.promises.unlink(caminhoAntigo);
+        } catch (e) {
+          // ignora se não existir
+        }
+      }
+    }
+
+    // foto null = remover foto atual
+    if (foto === null) {
+      if (
+        usuarioAtual.FOTO &&
+        usuarioAtual.FOTO.startsWith('/publicidade/foto-usuario/')
+      ) {
+        const nomeAntigo = path.basename(usuarioAtual.FOTO);
+        const caminhoAntigo = path.join(PASTA_FOTO_USUARIO, nomeAntigo);
+
+        try {
+          await fs.promises.unlink(caminhoAntigo);
+        } catch (e) {
+          // ignora se não existir
+        }
+      }
+
+      fotoPath = null;
+    }
+
+    // foto undefined = mantém a atual
+
     const [r] = await pool.query(
-      `UPDATE SF_USUARIO 
-       SET NOME=?, EMAIL=?, TELEFONE=?, PERFIL=?, SETOR=?, STATUS=?, FOTO=?
-       WHERE ID=?`,
+      `UPDATE SF_USUARIO
+          SET NOME = ?, EMAIL = ?, TELEFONE = ?, PERFIL = ?, SETOR = ?, STATUS = ?, FOTO = ?
+        WHERE ID = ?`,
       [nome, email, telefone, perfil, setor, status, fotoPath, id]
     );
 
-    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
-    res.json({ success: true });
+    if (r.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    res.json({
+      success: true,
+      item: {
+        id,
+        nome,
+        email,
+        telefone,
+        perfil,
+        setor,
+        status,
+        foto: fotoPath
+      }
+    });
   } catch (err) {
+    console.error('ERRO /api/gestao-usuarios/:id:', err);
     res.status(500).json({ success: false, message: 'Erro ao atualizar usuário.', error: err.message });
   }
 });
+
 
 app.patch('/api/gestao-usuarios/:id(\\d+)/status', async (req, res) => {
   try {
