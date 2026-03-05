@@ -28,11 +28,14 @@ app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // =====================
-// Fotos de usuário
+// Fotos de usuário (volume /publicidade/foto-usuario)
 // =====================
-const PASTA_FOTO_USUARIO = path.join(process.cwd(), 'foto-usuario');
+const DIRETORIO_VOLUME_PUBLICIDADE = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/publicidade";
+const PASTA_FOTO_USUARIO = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "foto-usuario");
+
 fs.mkdirSync(PASTA_FOTO_USUARIO, { recursive: true });
-app.use('/foto-usuario', express.static(PASTA_FOTO_USUARIO));
+
+app.use("/publicidade/foto-usuario", express.static(PASTA_FOTO_USUARIO));
 
 // =====================
 // Ajuste timezone MySQL
@@ -891,7 +894,6 @@ app.post('/api/password-reset/request', async (req, res) => {
 // MARKETING (Volume /publicidade)
 // =====================
 // Volume montado em /publicidade (conforme seu Railway)
-const DIRETORIO_VOLUME_PUBLICIDADE = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/publicidade";
 const PASTA_MARKETING = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "marketing");
 
 fs.mkdirSync(PASTA_MARKETING, { recursive: true });
