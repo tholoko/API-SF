@@ -1042,6 +1042,19 @@ function ehImagem(mimetype) {
   return typeof mimetype === "string" && mimetype.startsWith("image/");
 }
 
+const storageFotoUsuario = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, PASTA_FOTO_USUARIO);
+  },
+  filename: (req, file, cb) => {
+    const original = apenasNomeArquivoSeguro(file.originalname || 'foto.jpg');
+    const ext = path.extname(original) || '.jpg';
+    const nomeSemExt = path.basename(original, ext);
+    const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    cb(null, `${nomeSemExt}-${unico}${ext}`);
+  },
+});
+
 const uploadFotoUsuario = multer({
   storage: storageFotoUsuario,
   limits: { fileSize: 10 * 1024 * 1024 },
