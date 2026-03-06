@@ -480,6 +480,66 @@ function nullableDate(v) {
 }
 
 
+app.get('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, NOME
+         FROM SF_LOCAL_TRABALHO
+        WHERE NOME IS NOT NULL
+          AND NOME <> ''
+        ORDER BY NOME ASC`
+    );
+
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao listar locais de trabalho.',
+      error: err.message,
+    });
+  }
+});
+
+app.post('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome do local de trabalho é obrigatório.',
+      });
+    }
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_LOCAL_TRABALHO (NOME)
+       VALUES (?)`,
+      [nome]
+    );
+
+    res.status(201).json({
+      success: true,
+      item: {
+        id: r.insertId,
+        nome,
+      },
+    });
+  } catch (err) {
+    if (err?.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({
+        success: false,
+        message: 'Já existe um local de trabalho com esse nome.',
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao adicionar local de trabalho.',
+      error: err.message,
+    });
+  }
+});
+
 
 
 
@@ -1860,3 +1920,4 @@ app.listen(PORT, () => {
   console.log(`🚀 API rodando na porta ${PORT}`);
   console.log('✅ Teste: /health');
 });
+
