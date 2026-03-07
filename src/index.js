@@ -2269,14 +2269,29 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         `
         INSERT INTO SF_PRODUTO_ENTRADA
         (
-          ID_FORNECEDOR, NOTA, SERIE, CNPJ_EMITENTE, CNPJ_REMETENTE,
-          DATA_EMISSAO, DATA_REGISTRO, USUARIO_REGISTRO,
-          QTD_NF, VALOR_UNITARIO_NF, VALOR_TOTAL_NF,
-          COD_PRODUTO_NF, DESCRICAO_PRODUTO_NF, COD_PRODUTO_SISTEMA, ID_PRODUTO
+          fornecedor_id,
+          ID_FORNECEDOR,
+          nota,
+          serie,
+          cnpj_emitente,
+          cnpj_remetente,
+          data_emissao,
+          data_registro,
+          usuario_registro,
+          qtd_nf,
+          valor_unitario_nf,
+          valor_total_nf,
+          cod_produto_nf,
+          descricao_produto_nf,
+          cod_produto_sistema,
+          produto_sistema_id,
+          ID_PRODUTO,
+          created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `,
         [
+          fornecedor.ID,
           fornecedor.ID,
           numeroNota,
           serie || null,
@@ -2290,6 +2305,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           codProdutoNf,
           descricaoProdutoNf || null,
           codProdutoSistema,
+          idProduto,
           idProduto
         ]
       );
