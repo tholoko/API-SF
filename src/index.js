@@ -2177,6 +2177,18 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     const usuarioRegistro = textoLivre(req.body?.usuarioRegistro);
     const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
 
+    console.log('[IMPORTACAO PDF][CONFIRMAR] payload recebido:', {
+      emitente,
+      emitenteCnpj,
+      destinatarioCnpj,
+      numeroNota,
+      serie,
+      dataEmissao,
+      usuarioRegistro,
+      totalItens: itens.length,
+      itens
+    });
+
     if (!emitenteCnpj) {
       return res.status(400).json({ success: false, message: 'CNPJ do emitente é obrigatório.' });
     }
@@ -2227,6 +2239,16 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
       const valorUnit = parseDecimalBr(item.valorUnitario);
       const valorTotal = parseDecimalBr(item.valorTotal);
 
+      console.log('[IMPORTACAO PDF][ITEM]', {
+        codProdutoNf,
+        descricaoProdutoNf,
+        idProduto,
+        codProdutoSistema,
+        qtd,
+        valorUnit,
+        valorTotal
+      });
+
       if (!codProdutoNf) {
         throw new Error('Existe item sem código do produto na NF.');
       }
@@ -2237,6 +2259,10 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
 
       if (!codProdutoSistema) {
         throw new Error(`O item ${codProdutoNf} está sem código do produto do sistema.`);
+      }
+
+      if (!dataEmissao) {
+        throw new Error('Data de emissão inválida para gravação no banco.');
       }
 
       await conn.query(
@@ -2288,6 +2314,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     conn.release();
   }
 });
+
 
 async function gerarProximoCodigoProduto(connOuPool = pool) {
   const [rows] = await connOuPool.query(`
