@@ -1944,7 +1944,7 @@ app.get('/api/estoque/produtos', async (req, res) => {
     const [rows] = await pool.query(
       `SELECT ID, CODIGO, DESCRICAO, UNIDADE
          FROM SF_PRODUTOS
-        WHERE ACTIVE = 1
+        WHERE ATIVO = 1
         ORDER BY DESCRICAO ASC`
     );
 
@@ -1978,7 +1978,7 @@ app.post('/api/estoque/produtos', async (req, res) => {
     }
 
     const [r] = await conn.query(
-      `INSERT INTO SF_PRODUTOS (CODIGO, DESCRICAO, UNIDADE, ACTIVE)
+      `INSERT INTO SF_PRODUTOS (CODIGO, DESCRICAO, UNIDADE, ATIVO)
        VALUES (?, ?, ?, 1)`,
       [codigo, descricao, unidade]
     );
