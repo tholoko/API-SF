@@ -1912,24 +1912,28 @@ app.post('/test-emails-office365', async (req, res) => {
   res.json({ ok: true, message: 'Job executado!' });
 });
 
-function normalizarDocumentoPDF(doc) {
-  return String(doc || '').replace(/\D+/g, '').trim();
-}
-
 function textoLivre(v) {
   return String(v ?? '').trim();
 }
 
-function parseDecimalBr(valor) {
-  const s = String(valor ?? '').trim();
+function normalizarDocumentoPDF(v) {
+  return String(v ?? '').replace(/\D+/g, '').trim();
+}
+
+function parseDecimalBr(v) {
+  const s = String(v ?? '').trim();
   if (!s) return 0;
   return Number(s.replace(/\./g, '').replace(',', '.')) || 0;
 }
 
-function dataBrParaMysql(data) {
-  const s = String(data || '').trim();
-  if (!s || !/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return null;
-  const [dd, mm, yyyy] = s.split('/');
+function dataBrParaMysql(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+
+  const [, dd, mm, yyyy] = m;
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -1946,6 +1950,7 @@ app.get('/api/estoque/produtos', async (req, res) => {
 
     return res.json({ success: true, items: rows });
   } catch (err) {
+    console.error('Erro /api/estoque/produtos GET:', err);
     return res.status(500).json({
       success: false,
       message: 'Erro ao listar produtos.',
@@ -1984,6 +1989,8 @@ app.post('/api/estoque/produtos', async (req, res) => {
       }
     });
   } catch (err) {
+    console.error('Erro /api/estoque/produtos POST:', err);
+
     if (err?.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({
         success: false,
@@ -2096,6 +2103,7 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
       })
     });
   } catch (err) {
+    console.error('Erro /api/estoque/importacao-pdf/validar:', err);
     return res.status(500).json({
       success: false,
       message: 'Erro ao validar importação do PDF.',
@@ -2138,6 +2146,7 @@ app.post('/api/estoque/produtos-amarracao', async (req, res) => {
 
     return res.json({ success: true });
   } catch (err) {
+    console.error('Erro /api/estoque/produtos-amarracao:', err);
     return res.status(500).json({
       success: false,
       message: 'Erro ao salvar amarração.',
@@ -2185,8 +2194,8 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
 
     if (!fornecedor) {
       const [rFornecedor] = await conn.query(
-        `INSERT INTO SF_FORNECEDOR (RAZAO_SOCIAL, CNPJ, ACTIVE)
-         VALUES (?, ?, 1)`,
+        `INSERT INTO SF_FORNECEDOR (RAZAO_SOCIAL, CNPJ)
+         VALUES (?, ?)`,
         [emitente || emitenteCnpj, emitenteCnpj]
       );
 
@@ -2260,6 +2269,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     });
   } catch (err) {
     try { await conn.rollback(); } catch {}
+    console.error('Erro /api/estoque/importacao-pdf/confirmar:', err);
     return res.status(500).json({
       success: false,
       message: 'Erro ao confirmar importação do PDF.',
@@ -2269,6 +2279,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     conn.release();
   }
 });
+
 
 
 // =====================
