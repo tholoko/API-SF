@@ -1960,24 +1960,30 @@ app.get('/api/estoque/produtos', async (req, res) => {
 });
 
 app.post('/api/estoque/produtos', async (req, res) => {
+  const conn = await pool.getConnection();
+
   try {
-    const codigo = textoLivre(req.body?.codigo).toUpperCase();
     const descricao = textoLivre(req.body?.descricao).toUpperCase();
     const unidade = textoLivre(req.body?.unidade).toUpperCase() || null;
-
-    if (!codigo) {
-      return res.status(400).json({ success: false, message: 'Código é obrigatório.' });
-    }
+    let codigo = textoLivre(req.body?.codigo).toUpperCase();
 
     if (!descricao) {
       return res.status(400).json({ success: false, message: 'Descrição é obrigatória.' });
     }
 
-    const [r] = await pool.query(
+    await conn.beginTransaction();
+
+    if (!codigo) {
+      codigo = await gerarProximoCodigoProduto(conn);
+    }
+
+    const [r] = await conn.query(
       `INSERT INTO SF_PRODUTOS (CODIGO, DESCRICAO, UNIDADE, ACTIVE)
        VALUES (?, ?, ?, 1)`,
       [codigo, descricao, unidade]
     );
+
+    await conn.commit();
 
     return res.status(201).json({
       success: true,
@@ -1989,6 +1995,7 @@ app.post('/api/estoque/produtos', async (req, res) => {
       }
     });
   } catch (err) {
+    try { await conn.rollback(); } catch {}
     console.error('Erro /api/estoque/produtos POST:', err);
 
     if (err?.code === 'ER_DUP_ENTRY') {
@@ -2003,6 +2010,8 @@ app.post('/api/estoque/produtos', async (req, res) => {
       message: 'Erro ao cadastrar produto.',
       error: err.message
     });
+  } finally {
+    conn.release();
   }
 });
 
@@ -2277,6 +2286,37 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     });
   } finally {
     conn.release();
+  }
+});
+
+async function gerarProximoCodigoProduto(connOuPool = pool) {
+  const [rows] = await connOuPool.query(`
+    SELECT MAX(CAST(CODIGO AS UNSIGNED)) AS ULTIMO
+    FROM SF_PRODUTOS
+    WHERE CODIGO REGEXP '^[0-9]+$'
+  `);
+
+  const ultimo = Number(rows?.[0]?.ULTIMO || 0);
+  const proximo = ultimo + 1;
+
+  return String(proximo).padStart(6, '0');
+}
+
+app.get('/api/estoque/produtos/proximo-codigo', async (req, res) => {
+  try {
+    const codigo = await gerarProximoCodigoProduto(pool);
+
+    return res.json({
+      success: true,
+      codigo
+    });
+  } catch (err) {
+    console.error('Erro /api/estoque/produtos/proximo-codigo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao gerar próximo código do produto.',
+      error: err.message
+    });
   }
 });
 
