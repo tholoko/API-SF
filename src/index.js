@@ -1912,6 +1912,363 @@ app.post('/test-emails-office365', async (req, res) => {
   res.json({ ok: true, message: 'Job executado!' });
 });
 
+function normalizarDocumentoPDF(doc) {
+  return String(doc || '').replace(/\D+/g, '').trim();
+}
+
+function textoLivre(v) {
+  return String(v ?? '').trim();
+}
+
+function parseDecimalBr(valor) {
+  const s = String(valor ?? '').trim();
+  if (!s) return 0;
+  return Number(s.replace(/\./g, '').replace(',', '.')) || 0;
+}
+
+function dataBrParaMysql(data) {
+  const s = String(data || '').trim();
+  if (!s || !/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return null;
+  const [dd, mm, yyyy] = s.split('/');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+app.get('/api/estoque/produtos', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, CODIGO, DESCRICAO, UNIDADE
+         FROM SF_PRODUTOS
+        WHERE ACTIVE = 1
+        ORDER BY DESCRICAO ASC`
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar produtos.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/estoque/produtos', async (req, res) => {
+  try {
+    const codigo = textoLivre(req.body?.codigo).toUpperCase();
+    const descricao = textoLivre(req.body?.descricao).toUpperCase();
+    const unidade = textoLivre(req.body?.unidade).toUpperCase() || null;
+
+    if (!codigo) {
+      return res.status(400).json({ success: false, message: 'Código é obrigatório.' });
+    }
+
+    if (!descricao) {
+      return res.status(400).json({ success: false, message: 'Descrição é obrigatória.' });
+    }
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_PRODUTOS (CODIGO, DESCRICAO, UNIDADE, ACTIVE)
+       VALUES (?, ?, ?, 1)`,
+      [codigo, descricao, unidade]
+    );
+
+    return res.status(201).json({
+      success: true,
+      item: {
+        ID: r.insertId,
+        CODIGO: codigo,
+        DESCRICAO: descricao,
+        UNIDADE: unidade
+      }
+    });
+  } catch (err) {
+    if (err?.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({
+        success: false,
+        message: 'Já existe produto com esse código.'
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao cadastrar produto.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
+  try {
+    const cnpjEmitente = normalizarDocumentoPDF(req.body?.emitenteCnpj);
+    const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
+
+    if (!cnpjEmitente) {
+      return res.status(400).json({
+        success: false,
+        message: 'CNPJ do emitente é obrigatório.'
+      });
+    }
+
+    const [fornecedorRows] = await pool.query(
+      `SELECT ID, RAZAO_SOCIAL, CNPJ
+         FROM SF_FORNECEDOR
+        WHERE CNPJ = ?
+          AND ACTIVE = 1
+        LIMIT 1`,
+      [cnpjEmitente]
+    );
+
+    const fornecedor = fornecedorRows[0] || null;
+
+    if (!fornecedor || !itens.length) {
+      return res.json({
+        success: true,
+        fornecedorEncontrado: !!fornecedor,
+        fornecedor,
+        itens: itens.map(item => ({
+          codigo: item.codigo || '',
+          descricao: item.descricao || '',
+          vinculado: false,
+          produto: null
+        }))
+      });
+    }
+
+    const codigos = itens
+      .map(item => textoLivre(item.codigo))
+      .filter(Boolean);
+
+    if (!codigos.length) {
+      return res.json({
+        success: true,
+        fornecedorEncontrado: true,
+        fornecedor,
+        itens: itens.map(item => ({
+          codigo: item.codigo || '',
+          descricao: item.descricao || '',
+          vinculado: false,
+          produto: null
+        }))
+      });
+    }
+
+    const placeholders = codigos.map(() => '?').join(',');
+
+    const [amarracoes] = await pool.query(
+      `
+      SELECT
+        A.ID,
+        A.COD_PRODUTO_NF,
+        A.DESCRICAO_PRODUTO_NF,
+        A.ID_PRODUTO,
+        P.CODIGO AS CODIGO_SISTEMA,
+        P.DESCRICAO AS DESCRICAO_SISTEMA,
+        P.UNIDADE AS UNIDADE_SISTEMA
+      FROM SF_PRODUTOS_AMARRACAO A
+      INNER JOIN SF_PRODUTOS P
+              ON P.ID = A.ID_PRODUTO
+      WHERE A.ID_FORNECEDOR = ?
+        AND A.COD_PRODUTO_NF IN (${placeholders})
+      `,
+      [fornecedor.ID, ...codigos]
+    );
+
+    const mapa = new Map(amarracoes.map(a => [a.COD_PRODUTO_NF, a]));
+
+    return res.json({
+      success: true,
+      fornecedorEncontrado: true,
+      fornecedor,
+      itens: itens.map(item => {
+        const am = mapa.get(textoLivre(item.codigo));
+        return {
+          codigo: item.codigo || '',
+          descricao: item.descricao || '',
+          vinculado: !!am,
+          produto: am ? {
+            ID: am.ID_PRODUTO,
+            CODIGO: am.CODIGO_SISTEMA,
+            DESCRICAO: am.DESCRICAO_SISTEMA,
+            UNIDADE: am.UNIDADE_SISTEMA
+          } : null
+        };
+      })
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao validar importação do PDF.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/estoque/produtos-amarracao', async (req, res) => {
+  try {
+    const idFornecedor = Number(req.body?.id_fornecedor);
+    const codProdutoNf = textoLivre(req.body?.cod_produto_nf);
+    const descricaoProdutoNf = textoLivre(req.body?.descricao_produto_nf).toUpperCase() || null;
+    const idProduto = Number(req.body?.id_produto);
+
+    if (!idFornecedor) {
+      return res.status(400).json({ success: false, message: 'Fornecedor é obrigatório.' });
+    }
+
+    if (!codProdutoNf) {
+      return res.status(400).json({ success: false, message: 'Código do produto da nota é obrigatório.' });
+    }
+
+    if (!idProduto) {
+      return res.status(400).json({ success: false, message: 'Produto do sistema é obrigatório.' });
+    }
+
+    await pool.query(
+      `
+      INSERT INTO SF_PRODUTOS_AMARRACAO
+      (ID_FORNECEDOR, COD_PRODUTO_NF, DESCRICAO_PRODUTO_NF, ID_PRODUTO)
+      VALUES (?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        DESCRICAO_PRODUTO_NF = VALUES(DESCRICAO_PRODUTO_NF),
+        ID_PRODUTO = VALUES(ID_PRODUTO),
+        UPDATED_AT = CURRENT_TIMESTAMP
+      `,
+      [idFornecedor, codProdutoNf, descricaoProdutoNf, idProduto]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao salvar amarração.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const emitente = textoLivre(req.body?.emitente).toUpperCase();
+    const emitenteCnpj = normalizarDocumentoPDF(req.body?.emitenteCnpj);
+    const destinatarioCnpj = normalizarDocumentoPDF(req.body?.destinatarioCnpj);
+    const numeroNota = textoLivre(req.body?.numeroNota);
+    const serie = textoLivre(req.body?.serie);
+    const dataEmissao = dataBrParaMysql(req.body?.dataEmissao);
+    const usuarioRegistro = textoLivre(req.body?.usuarioRegistro);
+    const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
+
+    if (!emitenteCnpj) {
+      return res.status(400).json({ success: false, message: 'CNPJ do emitente é obrigatório.' });
+    }
+
+    if (!numeroNota) {
+      return res.status(400).json({ success: false, message: 'Número da nota é obrigatório.' });
+    }
+
+    if (!itens.length) {
+      return res.status(400).json({ success: false, message: 'Nenhum item para importar.' });
+    }
+
+    await conn.beginTransaction();
+
+    let [fornecedorRows] = await conn.query(
+      `SELECT ID, RAZAO_SOCIAL, CNPJ
+         FROM SF_FORNECEDOR
+        WHERE CNPJ = ?
+        LIMIT 1`,
+      [emitenteCnpj]
+    );
+
+    let fornecedor = fornecedorRows[0] || null;
+
+    if (!fornecedor) {
+      const [rFornecedor] = await conn.query(
+        `INSERT INTO SF_FORNECEDOR (RAZAO_SOCIAL, CNPJ, ACTIVE)
+         VALUES (?, ?, 1)`,
+        [emitente || emitenteCnpj, emitenteCnpj]
+      );
+
+      [fornecedorRows] = await conn.query(
+        `SELECT ID, RAZAO_SOCIAL, CNPJ
+           FROM SF_FORNECEDOR
+          WHERE ID = ?`,
+        [rFornecedor.insertId]
+      );
+
+      fornecedor = fornecedorRows[0];
+    }
+
+    for (const item of itens) {
+      const codProdutoNf = textoLivre(item.codigo);
+      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase();
+      const idProduto = Number(item.id_produto);
+      const codProdutoSistema = textoLivre(item.cod_produto_sistema).toUpperCase();
+      const qtd = parseDecimalBr(item.quantidade);
+      const valorUnit = parseDecimalBr(item.valorUnitario);
+      const valorTotal = parseDecimalBr(item.valorTotal);
+
+      if (!codProdutoNf) {
+        throw new Error('Existe item sem código do produto na NF.');
+      }
+
+      if (!idProduto) {
+        throw new Error(`O item ${codProdutoNf} está sem vínculo com produto do sistema.`);
+      }
+
+      if (!codProdutoSistema) {
+        throw new Error(`O item ${codProdutoNf} está sem código do produto do sistema.`);
+      }
+
+      await conn.query(
+        `
+        INSERT INTO SF_PRODUTO_ENTRADA
+        (
+          ID_FORNECEDOR, NOTA, SERIE, CNPJ_EMITENTE, CNPJ_REMETENTE,
+          DATA_EMISSAO, DATA_REGISTRO, USUARIO_REGISTRO,
+          QTD_NF, VALOR_UNITARIO_NF, VALOR_TOTAL_NF,
+          COD_PRODUTO_NF, DESCRICAO_PRODUTO_NF, COD_PRODUTO_SISTEMA, ID_PRODUTO
+        )
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          fornecedor.ID,
+          numeroNota,
+          serie || null,
+          emitenteCnpj,
+          destinatarioCnpj || null,
+          dataEmissao,
+          usuarioRegistro || null,
+          qtd,
+          valorUnit,
+          valorTotal,
+          codProdutoNf,
+          descricaoProdutoNf || null,
+          codProdutoSistema,
+          idProduto
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Importação realizada com sucesso.',
+      fornecedor
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao confirmar importação do PDF.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
 
 // =====================
 // Inicia servidor (sempre por último)
