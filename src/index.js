@@ -1933,6 +1933,8 @@ function dataBrParaMysql(data) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+// importação Nota PDF
+
 app.get('/api/estoque/produtos', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -2013,7 +2015,6 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
       `SELECT ID, RAZAO_SOCIAL, CNPJ
          FROM SF_FORNECEDOR
         WHERE CNPJ = ?
-          AND ACTIVE = 1
         LIMIT 1`,
       [cnpjEmitente]
     );
