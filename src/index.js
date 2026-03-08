@@ -1941,10 +1941,14 @@ function dataBrParaMysql(v) {
 app.get('/api/estoque/produtos', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT ID, CODIGO, DESCRICAO, UNIDADE
-         FROM SF_PRODUTOS
-        WHERE ATIVO = 1
-        ORDER BY DESCRICAO ASC`
+      `SELECT
+         id AS ID,
+         codigo AS CODIGO,
+         descricao AS DESCRICAO,
+         unidade AS UNIDADE
+       FROM SF_PRODUTOS
+       WHERE ativo = 1
+       ORDER BY descricao ASC`
     );
 
     return res.json({ success: true, items: rows });
@@ -1977,7 +1981,7 @@ app.post('/api/estoque/produtos', async (req, res) => {
     }
 
     const [r] = await conn.query(
-      `INSERT INTO SF_PRODUTOS (CODIGO, DESCRICAO, UNIDADE, ATIVO)
+      `INSERT INTO SF_PRODUTOS (codigo, descricao, unidade, ativo)
        VALUES (?, ?, ?, 1)`,
       [codigo, descricao, unidade]
     );
@@ -2027,10 +2031,13 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
     }
 
     const [fornecedorRows] = await pool.query(
-      `SELECT id, razao_social, cnpj
-         FROM SF_FORNECEDOR
-        WHERE cnpj = ?
-        LIMIT 1`,
+      `SELECT
+         id,
+         razao_social,
+         cnpj
+       FROM SF_FORNECEDOR
+       WHERE cnpj = ?
+       LIMIT 1`,
       [cnpjEmitente]
     );
 
@@ -2120,8 +2127,6 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
   }
 });
 
-
-
 app.post('/api/estoque/produtos-amarracao', async (req, res) => {
   try {
     const idFornecedor = Number(req.body?.id_fornecedor);
@@ -2169,7 +2174,6 @@ app.post('/api/estoque/produtos-amarracao', async (req, res) => {
   }
 });
 
-
 app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
   const conn = await pool.getConnection();
 
@@ -2207,13 +2211,20 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Nenhum item para importar.' });
     }
 
+    if (!dataEmissao) {
+      return res.status(400).json({ success: false, message: 'Data de emissão inválida para gravação no banco.' });
+    }
+
     await conn.beginTransaction();
 
     let [fornecedorRows] = await conn.query(
-      `SELECT ID, RAZAO_SOCIAL, CNPJ
-         FROM SF_FORNECEDOR
-        WHERE CNPJ = ?
-        LIMIT 1`,
+      `SELECT
+         id,
+         razao_social,
+         cnpj
+       FROM SF_FORNECEDOR
+       WHERE cnpj = ?
+       LIMIT 1`,
       [emitenteCnpj]
     );
 
@@ -2221,24 +2232,48 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
 
     if (!fornecedor) {
       const [rFornecedor] = await conn.query(
-        `INSERT INTO SF_FORNECEDOR (RAZAO_SOCIAL, CNPJ)
+        `INSERT INTO SF_FORNECEDOR (razao_social, cnpj)
          VALUES (?, ?)`,
         [emitente || emitenteCnpj, emitenteCnpj]
       );
 
       [fornecedorRows] = await conn.query(
-        `SELECT ID, RAZAO_SOCIAL, CNPJ
-           FROM SF_FORNECEDOR
-          WHERE ID = ?`,
+        `SELECT
+           id,
+           razao_social,
+           cnpj
+         FROM SF_FORNECEDOR
+         WHERE id = ?`,
         [rFornecedor.insertId]
       );
 
       fornecedor = fornecedorRows[0];
     }
 
+    const [entradaExistente] = await conn.query(
+      `
+      SELECT id
+      FROM SF_PRODUTO_ENTRADA
+      WHERE cnpj_emitente = ?
+        AND nota = ?
+        AND (
+          (serie IS NULL AND ? IS NULL)
+          OR serie = ?
+        )
+      LIMIT 1
+      `,
+      [emitenteCnpj, numeroNota, serie || null, serie || null]
+    );
+
+    if (entradaExistente.length) {
+      throw new Error(
+        `A nota ${numeroNota} série ${serie || 'SEM SÉRIE'} do emitente ${emitenteCnpj} já foi importada.`
+      );
+    }
+
     for (const item of itens) {
       const codProdutoNf = textoLivre(item.codigo);
-      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase();
+      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase() || null;
       const idProduto = Number(item.id_produto);
       const codProdutoSistema = textoLivre(item.cod_produto_sistema).toUpperCase();
       const qtd = parseDecimalBr(item.quantidade);
@@ -2267,8 +2302,32 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         throw new Error(`O item ${codProdutoNf} está sem código do produto do sistema.`);
       }
 
-      if (!dataEmissao) {
-        throw new Error('Data de emissão inválida para gravação no banco.');
+      const [amarracaoExistente] = await conn.query(
+        `
+        SELECT id
+        FROM SF_PRODUTOS_AMARRACAO
+        WHERE fornecedor_id = ?
+          AND produto_fornecedor_codigo = ?
+          AND produto_sistema_id = ?
+        LIMIT 1
+        `,
+        [fornecedor.id, codProdutoNf, idProduto]
+      );
+
+      if (!amarracaoExistente.length) {
+        await conn.query(
+          `
+          INSERT INTO SF_PRODUTOS_AMARRACAO
+          (
+            fornecedor_id,
+            produto_fornecedor_codigo,
+            produto_fornecedor_descricao,
+            produto_sistema_id
+          )
+          VALUES (?, ?, ?, ?)
+          `,
+          [fornecedor.id, codProdutoNf, descricaoProdutoNf, idProduto]
+        );
       }
 
       await conn.query(
@@ -2276,7 +2335,6 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         INSERT INTO SF_PRODUTO_ENTRADA
         (
           fornecedor_id,
-          ID_FORNECEDOR,
           nota,
           serie,
           cnpj_emitente,
@@ -2291,14 +2349,12 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           descricao_produto_nf,
           cod_produto_sistema,
           produto_sistema_id,
-          ID_PRODUTO,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `,
         [
-          fornecedor.ID,
-          fornecedor.ID,
+          fornecedor.id,
           numeroNota,
           serie || null,
           emitenteCnpj,
@@ -2309,9 +2365,8 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           valorUnit,
           valorTotal,
           codProdutoNf,
-          descricaoProdutoNf || null,
+          descricaoProdutoNf,
           codProdutoSistema,
-          idProduto,
           idProduto
         ]
       );
@@ -2337,12 +2392,11 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
   }
 });
 
-
 async function gerarProximoCodigoProduto(connOuPool = pool) {
   const [rows] = await connOuPool.query(`
-    SELECT MAX(CAST(CODIGO AS UNSIGNED)) AS ULTIMO
+    SELECT MAX(CAST(codigo AS UNSIGNED)) AS ULTIMO
     FROM SF_PRODUTOS
-    WHERE CODIGO REGEXP '^[0-9]+$'
+    WHERE codigo REGEXP '^[0-9]+$'
   `);
 
   const ultimo = Number(rows?.[0]?.ULTIMO || 0);
@@ -2368,6 +2422,7 @@ app.get('/api/estoque/produtos/proximo-codigo', async (req, res) => {
     });
   }
 });
+
 
 
 
