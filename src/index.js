@@ -2297,7 +2297,6 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         INSERT INTO SF_PRODUTO_ENTRADA
         (
           fornecedor_id,
-          ID_FORNECEDOR,
           nota,
           serie,
           cnpj_emitente,
@@ -2312,13 +2311,11 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           descricao_produto_nf,
           cod_produto_sistema,
           produto_sistema_id,
-          ID_PRODUTO,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `,
         [
-          fornecedor.id,
           fornecedor.id,
           numeroNota,
           serie || null,
@@ -2332,10 +2329,10 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           codProdutoNf,
           descricaoProdutoNf,
           codProdutoSistema,
-          idProduto,
           idProduto
         ]
       );
+
     }
 
     await conn.commit();
