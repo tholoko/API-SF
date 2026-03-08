@@ -2031,10 +2031,7 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
     }
 
     const [fornecedorRows] = await pool.query(
-      `SELECT
-         id,
-         razao_social,
-         cnpj
+      `SELECT id, razao_social, cnpj
        FROM SF_FORNECEDOR
        WHERE cnpj = ?
        LIMIT 1`,
@@ -2052,14 +2049,16 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
           codigo: item.codigo || '',
           descricao: item.descricao || '',
           vinculado: false,
+          multiplosVinculos: false,
+          produtosVinculados: [],
           produto: null
         }))
       });
     }
 
-    const codigos = itens
-      .map(item => textoLivre(item.codigo))
-      .filter(Boolean);
+    const codigos = [...new Set(
+      itens.map(item => textoLivre(item.codigo)).filter(Boolean)
+    )];
 
     if (!codigos.length) {
       return res.json({
@@ -2070,6 +2069,8 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
           codigo: item.codigo || '',
           descricao: item.descricao || '',
           vinculado: false,
+          multiplosVinculos: false,
+          produtosVinculados: [],
           produto: null
         }))
       });
@@ -2092,28 +2093,40 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
               ON P.id = A.produto_sistema_id
       WHERE A.fornecedor_id = ?
         AND A.produto_fornecedor_codigo IN (${placeholders})
+      ORDER BY P.descricao ASC
       `,
       [fornecedor.id, ...codigos]
     );
 
-    const mapa = new Map(amarracoes.map(a => [a.COD_PRODUTO_NF, a]));
+    const mapa = new Map();
+
+    for (const am of amarracoes) {
+      const chave = textoLivre(am.COD_PRODUTO_NF);
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave).push({
+        ID_AMARRACAO: am.ID,
+        ID: am.ID_PRODUTO,
+        CODIGO: am.CODIGO_SISTEMA,
+        DESCRICAO: am.DESCRICAO_SISTEMA,
+        UNIDADE: am.UNIDADE_SISTEMA
+      });
+    }
 
     return res.json({
       success: true,
       fornecedorEncontrado: true,
       fornecedor,
       itens: itens.map(item => {
-        const am = mapa.get(textoLivre(item.codigo));
+        const codigo = textoLivre(item.codigo);
+        const vinculados = mapa.get(codigo) || [];
+
         return {
           codigo: item.codigo || '',
           descricao: item.descricao || '',
-          vinculado: !!am,
-          produto: am ? {
-            ID: am.ID_PRODUTO,
-            CODIGO: am.CODIGO_SISTEMA,
-            DESCRICAO: am.DESCRICAO_SISTEMA,
-            UNIDADE: am.UNIDADE_SISTEMA
-          } : null
+          vinculado: vinculados.length > 0,
+          multiplosVinculos: vinculados.length > 1,
+          produtosVinculados: vinculados,
+          produto: vinculados.length === 1 ? vinculados[0] : null
         };
       })
     });
@@ -2127,270 +2140,6 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
   }
 });
 
-app.post('/api/estoque/produtos-amarracao', async (req, res) => {
-  try {
-    const idFornecedor = Number(req.body?.id_fornecedor);
-    const codProdutoNf = textoLivre(req.body?.cod_produto_nf);
-    const descricaoProdutoNf = textoLivre(req.body?.descricao_produto_nf).toUpperCase() || null;
-    const idProduto = Number(req.body?.id_produto);
-
-    if (!idFornecedor) {
-      return res.status(400).json({ success: false, message: 'Fornecedor é obrigatório.' });
-    }
-
-    if (!codProdutoNf) {
-      return res.status(400).json({ success: false, message: 'Código do produto da nota é obrigatório.' });
-    }
-
-    if (!idProduto) {
-      return res.status(400).json({ success: false, message: 'Produto do sistema é obrigatório.' });
-    }
-
-    await pool.query(
-      `
-      INSERT INTO SF_PRODUTOS_AMARRACAO
-      (
-        fornecedor_id,
-        produto_fornecedor_codigo,
-        produto_fornecedor_descricao,
-        produto_sistema_id
-      )
-      VALUES (?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        produto_fornecedor_descricao = VALUES(produto_fornecedor_descricao),
-        updated_at = CURRENT_TIMESTAMP
-      `,
-      [idFornecedor, codProdutoNf, descricaoProdutoNf, idProduto]
-    );
-
-    return res.json({ success: true });
-  } catch (err) {
-    console.error('Erro /api/estoque/produtos-amarracao:', err);
-    return res.status(500).json({
-      success: false,
-      message: 'Erro ao salvar amarração.',
-      error: err.message
-    });
-  }
-});
-
-app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
-  const conn = await pool.getConnection();
-
-  try {
-    const emitente = textoLivre(req.body?.emitente).toUpperCase();
-    const emitenteCnpj = normalizarDocumentoPDF(req.body?.emitenteCnpj);
-    const destinatarioCnpj = normalizarDocumentoPDF(req.body?.destinatarioCnpj);
-    const numeroNota = textoLivre(req.body?.numeroNota);
-    const serie = textoLivre(req.body?.serie);
-    const dataEmissao = dataBrParaMysql(req.body?.dataEmissao);
-    const usuarioRegistro = textoLivre(req.body?.usuarioRegistro);
-    const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
-
-    console.log('[IMPORTACAO PDF][CONFIRMAR] payload recebido:', {
-      emitente,
-      emitenteCnpj,
-      destinatarioCnpj,
-      numeroNota,
-      serie,
-      dataEmissao,
-      usuarioRegistro,
-      totalItens: itens.length,
-      itens
-    });
-
-    if (!emitenteCnpj) {
-      return res.status(400).json({ success: false, message: 'CNPJ do emitente é obrigatório.' });
-    }
-
-    if (!numeroNota) {
-      return res.status(400).json({ success: false, message: 'Número da nota é obrigatório.' });
-    }
-
-    if (!itens.length) {
-      return res.status(400).json({ success: false, message: 'Nenhum item para importar.' });
-    }
-
-    if (!dataEmissao) {
-      return res.status(400).json({ success: false, message: 'Data de emissão inválida para gravação no banco.' });
-    }
-
-    await conn.beginTransaction();
-
-    let [fornecedorRows] = await conn.query(
-      `SELECT
-         id,
-         razao_social,
-         cnpj
-       FROM SF_FORNECEDOR
-       WHERE cnpj = ?
-       LIMIT 1`,
-      [emitenteCnpj]
-    );
-
-    let fornecedor = fornecedorRows[0] || null;
-
-    if (!fornecedor) {
-      const [rFornecedor] = await conn.query(
-        `INSERT INTO SF_FORNECEDOR (razao_social, cnpj)
-         VALUES (?, ?)`,
-        [emitente || emitenteCnpj, emitenteCnpj]
-      );
-
-      [fornecedorRows] = await conn.query(
-        `SELECT
-           id,
-           razao_social,
-           cnpj
-         FROM SF_FORNECEDOR
-         WHERE id = ?`,
-        [rFornecedor.insertId]
-      );
-
-      fornecedor = fornecedorRows[0];
-    }
-
-    const [entradaExistente] = await conn.query(
-      `
-      SELECT id
-      FROM SF_PRODUTO_ENTRADA
-      WHERE cnpj_emitente = ?
-        AND nota = ?
-        AND (
-          (serie IS NULL AND ? IS NULL)
-          OR serie = ?
-        )
-      LIMIT 1
-      `,
-      [emitenteCnpj, numeroNota, serie || null, serie || null]
-    );
-
-    if (entradaExistente.length) {
-      throw new Error(
-        `A nota ${numeroNota} série ${serie || 'SEM SÉRIE'} do emitente ${emitenteCnpj} já foi importada.`
-      );
-    }
-
-    for (const item of itens) {
-      const codProdutoNf = textoLivre(item.codigo);
-      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase() || null;
-      const idProduto = Number(item.id_produto);
-      const codProdutoSistema = textoLivre(item.cod_produto_sistema).toUpperCase();
-      const qtd = parseDecimalBr(item.quantidade);
-      const valorUnit = parseDecimalBr(item.valorUnitario);
-      const valorTotal = parseDecimalBr(item.valorTotal);
-
-      console.log('[IMPORTACAO PDF][ITEM]', {
-        codProdutoNf,
-        descricaoProdutoNf,
-        idProduto,
-        codProdutoSistema,
-        qtd,
-        valorUnit,
-        valorTotal
-      });
-
-      if (!codProdutoNf) {
-        throw new Error('Existe item sem código do produto na NF.');
-      }
-
-      if (!idProduto) {
-        throw new Error(`O item ${codProdutoNf} está sem vínculo com produto do sistema.`);
-      }
-
-      if (!codProdutoSistema) {
-        throw new Error(`O item ${codProdutoNf} está sem código do produto do sistema.`);
-      }
-
-      const [amarracaoExistente] = await conn.query(
-        `
-        SELECT id
-        FROM SF_PRODUTOS_AMARRACAO
-        WHERE fornecedor_id = ?
-          AND produto_fornecedor_codigo = ?
-          AND produto_sistema_id = ?
-        LIMIT 1
-        `,
-        [fornecedor.id, codProdutoNf, idProduto]
-      );
-
-      if (!amarracaoExistente.length) {
-        await conn.query(
-          `
-          INSERT INTO SF_PRODUTOS_AMARRACAO
-          (
-            fornecedor_id,
-            produto_fornecedor_codigo,
-            produto_fornecedor_descricao,
-            produto_sistema_id
-          )
-          VALUES (?, ?, ?, ?)
-          `,
-          [fornecedor.id, codProdutoNf, descricaoProdutoNf, idProduto]
-        );
-      }
-
-      await conn.query(
-        `
-        INSERT INTO SF_PRODUTO_ENTRADA
-        (
-          fornecedor_id,
-          nota,
-          serie,
-          cnpj_emitente,
-          cnpj_remetente,
-          data_emissao,
-          data_registro,
-          usuario_registro,
-          qtd_nf,
-          valor_unitario_nf,
-          valor_total_nf,
-          cod_produto_nf,
-          descricao_produto_nf,
-          cod_produto_sistema,
-          produto_sistema_id,
-          created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        `,
-        [
-          fornecedor.id,
-          numeroNota,
-          serie || null,
-          emitenteCnpj,
-          destinatarioCnpj || null,
-          dataEmissao,
-          usuarioRegistro || null,
-          qtd,
-          valorUnit,
-          valorTotal,
-          codProdutoNf,
-          descricaoProdutoNf,
-          codProdutoSistema,
-          idProduto
-        ]
-      );
-    }
-
-    await conn.commit();
-
-    return res.json({
-      success: true,
-      message: 'Importação realizada com sucesso.',
-      fornecedor
-    });
-  } catch (err) {
-    try { await conn.rollback(); } catch {}
-    console.error('Erro /api/estoque/importacao-pdf/confirmar:', err);
-    return res.status(500).json({
-      success: false,
-      message: 'Erro ao confirmar importação do PDF.',
-      error: err.message
-    });
-  } finally {
-    conn.release();
-  }
-});
 
 async function gerarProximoCodigoProduto(connOuPool = pool) {
   const [rows] = await connOuPool.query(`
@@ -2423,6 +2172,180 @@ app.get('/api/estoque/produtos/proximo-codigo', async (req, res) => {
   }
 });
 
+app.post('/api/estoque/produtos-amarracao/adicionar', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const idFornecedor = Number(req.body?.id_fornecedor);
+    const codProdutoNf = textoLivre(req.body?.cod_produto_nf);
+    const descricaoProdutoNf = textoLivre(req.body?.descricao_produto_nf).toUpperCase() || null;
+    const idProduto = Number(req.body?.id_produto);
+    const usuario = textoLivre(req.body?.usuario);
+
+    if (!idFornecedor) {
+      return res.status(400).json({ success: false, message: 'Fornecedor é obrigatório.' });
+    }
+
+    if (!codProdutoNf) {
+      return res.status(400).json({ success: false, message: 'Código do produto da nota é obrigatório.' });
+    }
+
+    if (!idProduto) {
+      return res.status(400).json({ success: false, message: 'Produto do sistema é obrigatório.' });
+    }
+
+    await conn.beginTransaction();
+
+    const [jaExiste] = await conn.query(
+      `
+      SELECT id
+      FROM SF_PRODUTOS_AMARRACAO
+      WHERE fornecedor_id = ?
+        AND produto_fornecedor_codigo = ?
+        AND produto_sistema_id = ?
+      LIMIT 1
+      `,
+      [idFornecedor, codProdutoNf, idProduto]
+    );
+
+    if (jaExiste.length) {
+      await conn.rollback();
+      return res.json({ success: true, message: 'Vínculo já existente.', id: jaExiste[0].id });
+    }
+
+    const [r] = await conn.query(
+      `
+      INSERT INTO SF_PRODUTOS_AMARRACAO
+      (
+        fornecedor_id,
+        produto_fornecedor_codigo,
+        produto_fornecedor_descricao,
+        produto_sistema_id
+      )
+      VALUES (?, ?, ?, ?)
+      `,
+      [idFornecedor, codProdutoNf, descricaoProdutoNf, idProduto]
+    );
+
+    await conn.query(
+      `
+      INSERT INTO SF_PRODUTOS_AMARRACAO_LOG
+      (
+        amarracao_id,
+        fornecedor_id,
+        produto_fornecedor_codigo,
+        produto_fornecedor_descricao,
+        produto_sistema_id_anterior,
+        produto_sistema_id_novo,
+        acao,
+        usuario
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'CRIAR', ?)
+      `,
+      [r.insertId, idFornecedor, codProdutoNf, descricaoProdutoNf, null, idProduto, usuario || null]
+    );
+
+    await conn.commit();
+
+    return res.json({ success: true, id: r.insertId });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/estoque/produtos-amarracao/adicionar:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao adicionar vínculo.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+app.put('/api/estoque/produtos-amarracao/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const idAmarracao = Number(req.params.id);
+    const idProduto = Number(req.body?.id_produto);
+    const usuario = textoLivre(req.body?.usuario);
+
+    if (!idAmarracao) {
+      return res.status(400).json({ success: false, message: 'ID da amarração é obrigatório.' });
+    }
+
+    if (!idProduto) {
+      return res.status(400).json({ success: false, message: 'Produto do sistema é obrigatório.' });
+    }
+
+    await conn.beginTransaction();
+
+    const [rows] = await conn.query(
+      `
+      SELECT id, fornecedor_id, produto_fornecedor_codigo, produto_fornecedor_descricao, produto_sistema_id
+      FROM SF_PRODUTOS_AMARRACAO
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [idAmarracao]
+    );
+
+    const atual = rows[0];
+
+    if (!atual) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Amarração não encontrada.' });
+    }
+
+    await conn.query(
+      `
+      UPDATE SF_PRODUTOS_AMARRACAO
+      SET produto_sistema_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [idProduto, idAmarracao]
+    );
+
+    await conn.query(
+      `
+      INSERT INTO SF_PRODUTOS_AMARRACAO_LOG
+      (
+        amarracao_id,
+        fornecedor_id,
+        produto_fornecedor_codigo,
+        produto_fornecedor_descricao,
+        produto_sistema_id_anterior,
+        produto_sistema_id_novo,
+        acao,
+        usuario
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'EDITAR', ?)
+      `,
+      [
+        atual.id,
+        atual.fornecedor_id,
+        atual.produto_fornecedor_codigo,
+        atual.produto_fornecedor_descricao,
+        atual.produto_sistema_id,
+        idProduto,
+        usuario || null
+      ]
+    );
+
+    await conn.commit();
+
+    return res.json({ success: true });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro PUT /api/estoque/produtos-amarracao/:id:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao editar vínculo.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
 
 
 
