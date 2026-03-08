@@ -2074,21 +2074,22 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
     const [amarracoes] = await pool.query(
       `
       SELECT
-        A.ID,
-        A.COD_PRODUTO_NF,
-        A.DESCRICAO_PRODUTO_NF,
-        A.ID_PRODUTO,
-        P.CODIGO AS CODIGO_SISTEMA,
-        P.DESCRICAO AS DESCRICAO_SISTEMA,
-        P.UNIDADE AS UNIDADE_SISTEMA
+        A.id AS ID,
+        A.produto_fornecedor_codigo AS COD_PRODUTO_NF,
+        A.produto_fornecedor_descricao AS DESCRICAO_PRODUTO_NF,
+        A.produto_sistema_id AS ID_PRODUTO,
+        P.codigo AS CODIGO_SISTEMA,
+        P.descricao AS DESCRICAO_SISTEMA,
+        P.unidade AS UNIDADE_SISTEMA
       FROM SF_PRODUTOS_AMARRACAO A
       INNER JOIN SF_PRODUTOS P
-              ON P.ID = A.ID_PRODUTO
-      WHERE A.ID_FORNECEDOR = ?
-        AND A.COD_PRODUTO_NF IN (${placeholders})
+              ON P.id = A.produto_sistema_id
+      WHERE A.fornecedor_id = ?
+        AND A.produto_fornecedor_codigo IN (${placeholders})
       `,
-      [fornecedor.ID, ...codigos]
+      [fornecedor.id, ...codigos]
     );
+
 
     const mapa = new Map(amarracoes.map(a => [a.COD_PRODUTO_NF, a]));
 
