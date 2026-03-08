@@ -2074,22 +2074,21 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
     const [amarracoes] = await pool.query(
       `
       SELECT
-        A.id AS ID,
-        A.produto_fornecedor_codigo AS COD_PRODUTO_NF,
-        A.produto_fornecedor_descricao AS DESCRICAO_PRODUTO_NF,
-        A.produto_sistema_id AS ID_PRODUTO,
-        P.codigo AS CODIGO_SISTEMA,
-        P.descricao AS DESCRICAO_SISTEMA,
-        P.unidade AS UNIDADE_SISTEMA
+        A.ID,
+        A.COD_PRODUTO_NF,
+        A.DESCRICAO_PRODUTO_NF,
+        A.ID_PRODUTO,
+        P.CODIGO AS CODIGO_SISTEMA,
+        P.DESCRICAO AS DESCRICAO_SISTEMA,
+        P.UNIDADE AS UNIDADE_SISTEMA
       FROM SF_PRODUTOS_AMARRACAO A
       INNER JOIN SF_PRODUTOS P
-              ON P.id = A.produto_sistema_id
-      WHERE A.fornecedor_id = ?
-        AND A.produto_fornecedor_codigo IN (${placeholders})
+              ON P.ID = A.ID_PRODUTO
+      WHERE A.ID_FORNECEDOR = ?
+        AND A.COD_PRODUTO_NF IN (${placeholders})
       `,
-      [fornecedor.id, ...codigos]
+      [fornecedor.ID, ...codigos]
     );
-
 
     const mapa = new Map(amarracoes.map(a => [a.COD_PRODUTO_NF, a]));
 
@@ -2144,16 +2143,12 @@ app.post('/api/estoque/produtos-amarracao', async (req, res) => {
     await pool.query(
       `
       INSERT INTO SF_PRODUTOS_AMARRACAO
-      (
-        fornecedor_id,
-        produto_fornecedor_codigo,
-        produto_fornecedor_descricao,
-        produto_sistema_id
-      )
+      (ID_FORNECEDOR, COD_PRODUTO_NF, DESCRICAO_PRODUTO_NF, ID_PRODUTO)
       VALUES (?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
-        produto_fornecedor_descricao = VALUES(produto_fornecedor_descricao),
-        updated_at = CURRENT_TIMESTAMP
+        DESCRICAO_PRODUTO_NF = VALUES(DESCRICAO_PRODUTO_NF),
+        ID_PRODUTO = VALUES(ID_PRODUTO),
+        UPDATED_AT = CURRENT_TIMESTAMP
       `,
       [idFornecedor, codProdutoNf, descricaoProdutoNf, idProduto]
     );
@@ -2168,7 +2163,6 @@ app.post('/api/estoque/produtos-amarracao', async (req, res) => {
     });
   }
 });
-
 
 app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
   const conn = await pool.getConnection();
