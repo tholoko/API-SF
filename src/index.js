@@ -2646,6 +2646,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
 });
 
 
+
 app.get('/api/locais-almoxarifado', async (req, res) => {
   try {
     const [rows] = await pool.query(`
