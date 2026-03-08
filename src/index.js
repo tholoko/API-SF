@@ -2177,6 +2177,18 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     const usuarioRegistro = textoLivre(req.body?.usuarioRegistro);
     const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
 
+    console.log('[IMPORTACAO PDF][CONFIRMAR] payload recebido:', {
+      emitente,
+      emitenteCnpj,
+      destinatarioCnpj,
+      numeroNota,
+      serie,
+      dataEmissao,
+      usuarioRegistro,
+      totalItens: itens.length,
+      itens
+    });
+
     if (!emitenteCnpj) {
       return res.status(400).json({ success: false, message: 'CNPJ do emitente é obrigatório.' });
     }
@@ -2189,16 +2201,12 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Nenhum item para importar.' });
     }
 
-    if (!dataEmissao) {
-      return res.status(400).json({ success: false, message: 'Data de emissão inválida para gravação no banco.' });
-    }
-
     await conn.beginTransaction();
 
     let [fornecedorRows] = await conn.query(
-      `SELECT id, razao_social, cnpj
+      `SELECT ID, RAZAO_SOCIAL, CNPJ
          FROM SF_FORNECEDOR
-        WHERE cnpj = ?
+        WHERE CNPJ = ?
         LIMIT 1`,
       [emitenteCnpj]
     );
@@ -2207,50 +2215,39 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
 
     if (!fornecedor) {
       const [rFornecedor] = await conn.query(
-        `INSERT INTO SF_FORNECEDOR (razao_social, cnpj)
+        `INSERT INTO SF_FORNECEDOR (RAZAO_SOCIAL, CNPJ)
          VALUES (?, ?)`,
         [emitente || emitenteCnpj, emitenteCnpj]
       );
 
       [fornecedorRows] = await conn.query(
-        `SELECT id, razao_social, cnpj
+        `SELECT ID, RAZAO_SOCIAL, CNPJ
            FROM SF_FORNECEDOR
-          WHERE id = ?`,
+          WHERE ID = ?`,
         [rFornecedor.insertId]
       );
 
       fornecedor = fornecedorRows[0];
     }
 
-    const [entradaExistente] = await conn.query(
-      `
-      SELECT id
-        FROM SF_PRODUTO_ENTRADA
-       WHERE cnpj_emitente = ?
-         AND nota = ?
-         AND (
-           (serie IS NULL AND ? IS NULL)
-           OR serie = ?
-         )
-       LIMIT 1
-      `,
-      [emitenteCnpj, numeroNota, serie || null, serie || null]
-    );
-
-    if (entradaExistente.length) {
-      throw new Error(
-        `A nota ${numeroNota} série ${serie || 'SEM SÉRIE'} do emitente ${emitenteCnpj} já foi importada.`
-      );
-    }
-
     for (const item of itens) {
       const codProdutoNf = textoLivre(item.codigo);
-      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase() || null;
+      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase();
       const idProduto = Number(item.id_produto);
       const codProdutoSistema = textoLivre(item.cod_produto_sistema).toUpperCase();
       const qtd = parseDecimalBr(item.quantidade);
       const valorUnit = parseDecimalBr(item.valorUnitario);
       const valorTotal = parseDecimalBr(item.valorTotal);
+
+      console.log('[IMPORTACAO PDF][ITEM]', {
+        codProdutoNf,
+        descricaoProdutoNf,
+        idProduto,
+        codProdutoSistema,
+        qtd,
+        valorUnit,
+        valorTotal
+      });
 
       if (!codProdutoNf) {
         throw new Error('Existe item sem código do produto na NF.');
@@ -2264,32 +2261,8 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         throw new Error(`O item ${codProdutoNf} está sem código do produto do sistema.`);
       }
 
-      const [amarracaoExistente] = await conn.query(
-        `
-        SELECT id
-          FROM SF_PRODUTOS_AMARRACAO
-         WHERE fornecedor_id = ?
-           AND produto_fornecedor_codigo = ?
-           AND produto_sistema_id = ?
-         LIMIT 1
-        `,
-        [fornecedor.id, codProdutoNf, idProduto]
-      );
-
-      if (!amarracaoExistente.length) {
-        await conn.query(
-          `
-          INSERT INTO SF_PRODUTOS_AMARRACAO
-          (
-            fornecedor_id,
-            produto_fornecedor_codigo,
-            produto_fornecedor_descricao,
-            produto_sistema_id
-          )
-          VALUES (?, ?, ?, ?)
-          `,
-          [fornecedor.id, codProdutoNf, descricaoProdutoNf, idProduto]
-        );
+      if (!dataEmissao) {
+        throw new Error('Data de emissão inválida para gravação no banco.');
       }
 
       await conn.query(
@@ -2297,6 +2270,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         INSERT INTO SF_PRODUTO_ENTRADA
         (
           fornecedor_id,
+          ID_FORNECEDOR,
           nota,
           serie,
           cnpj_emitente,
@@ -2311,12 +2285,14 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           descricao_produto_nf,
           cod_produto_sistema,
           produto_sistema_id,
+          ID_PRODUTO,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `,
         [
-          fornecedor.id,
+          fornecedor.ID,
+          fornecedor.ID,
           numeroNota,
           serie || null,
           emitenteCnpj,
@@ -2327,12 +2303,12 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           valorUnit,
           valorTotal,
           codProdutoNf,
-          descricaoProdutoNf,
+          descricaoProdutoNf || null,
           codProdutoSistema,
+          idProduto,
           idProduto
         ]
       );
-
     }
 
     await conn.commit();
@@ -2354,7 +2330,6 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     conn.release();
   }
 });
-
 
 
 async function gerarProximoCodigoProduto(connOuPool = pool) {
