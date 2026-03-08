@@ -2210,7 +2210,12 @@ app.post('/api/estoque/produtos-amarracao/adicionar', async (req, res) => {
 
     if (jaExiste.length) {
       await conn.rollback();
-      return res.json({ success: true, message: 'Vínculo já existente.', id: jaExiste[0].id });
+      return res.json({
+        success: true,
+        id: jaExiste[0].id,
+        jaExistia: true,
+        message: 'Vínculo já existente.'
+      });
     }
 
     const [r] = await conn.query(
@@ -2247,7 +2252,12 @@ app.post('/api/estoque/produtos-amarracao/adicionar', async (req, res) => {
 
     await conn.commit();
 
-    return res.json({ success: true, id: r.insertId });
+    return res.json({
+      success: true,
+      id: r.insertId,
+      jaExistia: false,
+      message: 'Vínculo salvo com sucesso.'
+    });
   } catch (err) {
     try { await conn.rollback(); } catch {}
     console.error('Erro /api/estoque/produtos-amarracao/adicionar:', err);
@@ -2260,6 +2270,7 @@ app.post('/api/estoque/produtos-amarracao/adicionar', async (req, res) => {
     conn.release();
   }
 });
+
 
 app.put('/api/estoque/produtos-amarracao/:id', async (req, res) => {
   const conn = await pool.getConnection();
