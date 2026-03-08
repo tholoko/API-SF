@@ -2143,12 +2143,16 @@ app.post('/api/estoque/produtos-amarracao', async (req, res) => {
     await pool.query(
       `
       INSERT INTO SF_PRODUTOS_AMARRACAO
-      (ID_FORNECEDOR, COD_PRODUTO_NF, DESCRICAO_PRODUTO_NF, ID_PRODUTO)
+      (
+        fornecedor_id,
+        produto_fornecedor_codigo,
+        produto_fornecedor_descricao,
+        produto_sistema_id
+      )
       VALUES (?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
-        DESCRICAO_PRODUTO_NF = VALUES(DESCRICAO_PRODUTO_NF),
-        ID_PRODUTO = VALUES(ID_PRODUTO),
-        UPDATED_AT = CURRENT_TIMESTAMP
+        produto_fornecedor_descricao = VALUES(produto_fornecedor_descricao),
+        updated_at = CURRENT_TIMESTAMP
       `,
       [idFornecedor, codProdutoNf, descricaoProdutoNf, idProduto]
     );
@@ -2163,6 +2167,7 @@ app.post('/api/estoque/produtos-amarracao', async (req, res) => {
     });
   }
 });
+
 
 app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
   const conn = await pool.getConnection();
