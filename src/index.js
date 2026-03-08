@@ -2358,6 +2358,261 @@ app.put('/api/estoque/produtos-amarracao/:id', async (req, res) => {
   }
 });
 
+app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const emitente = textoLivre(req.body?.emitente).toUpperCase();
+    const emitenteCnpj = normalizarDocumentoPDF(req.body?.emitenteCnpj);
+    const destinatarioCnpj = normalizarDocumentoPDF(req.body?.destinatarioCnpj);
+    const numeroNota = textoLivre(req.body?.numeroNota);
+    const serie = textoLivre(req.body?.serie) || null;
+    const dataEmissao = dataBrParaMysql(req.body?.dataEmissao);
+    const usuarioRegistro = textoLivre(req.body?.usuarioRegistro);
+    const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
+
+    if (!emitenteCnpj) {
+      return res.status(400).json({
+        success: false,
+        message: 'CNPJ do emitente é obrigatório.'
+      });
+    }
+
+    if (!numeroNota) {
+      return res.status(400).json({
+        success: false,
+        message: 'Número da nota é obrigatório.'
+      });
+    }
+
+    if (!dataEmissao) {
+      return res.status(400).json({
+        success: false,
+        message: 'Data de emissão inválida.'
+      });
+    }
+
+    if (!itens.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nenhum item informado para importação.'
+      });
+    }
+
+    await conn.beginTransaction();
+
+    let [fornecedorRows] = await conn.query(
+      `
+      SELECT id, razao_social, cnpj
+      FROM SF_FORNECEDOR
+      WHERE cnpj = ?
+      LIMIT 1
+      `,
+      [emitenteCnpj]
+    );
+
+    let fornecedor = fornecedorRows[0] || null;
+
+    if (!fornecedor) {
+      const [rFornecedor] = await conn.query(
+        `
+        INSERT INTO SF_FORNECEDOR (razao_social, cnpj)
+        VALUES (?, ?)
+        `,
+        [emitente || emitenteCnpj, emitenteCnpj]
+      );
+
+      [fornecedorRows] = await conn.query(
+        `
+        SELECT id, razao_social, cnpj
+        FROM SF_FORNECEDOR
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [rFornecedor.insertId]
+      );
+
+      fornecedor = fornecedorRows[0] || null;
+    }
+
+    const [entradaExistente] = await conn.query(
+      `
+      SELECT id
+      FROM SF_PRODUTO_ENTRADA
+      WHERE cnpj_emitente = ?
+        AND nota = ?
+        AND (
+          (serie IS NULL AND ? IS NULL)
+          OR serie = ?
+        )
+      LIMIT 1
+      `,
+      [emitenteCnpj, numeroNota, serie, serie]
+    );
+
+    if (entradaExistente.length) {
+      throw new Error(
+        `A nota ${numeroNota} série ${serie || 'SEM SÉRIE'} do emitente ${emitenteCnpj} já foi importada.`
+      );
+    }
+
+    for (const item of itens) {
+      const codProdutoNf = textoLivre(item.codigo);
+      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase() || null;
+      const unidade = textoLivre(item.unidade).toUpperCase() || null;
+      const idProduto = Number(item.id_produto);
+      const codProdutoSistema = textoLivre(item.cod_produto_sistema).toUpperCase();
+      const qtd = parseDecimalBr(item.quantidade);
+      const valorUnit = parseDecimalBr(item.valorUnitario);
+      const valorTotal = parseDecimalBr(item.valorTotal);
+
+      if (!codProdutoNf) {
+        throw new Error('Existe item sem código do produto na nota.');
+      }
+
+      if (!idProduto) {
+        throw new Error(`O item ${codProdutoNf} está sem produto do sistema vinculado.`);
+      }
+
+      if (!codProdutoSistema) {
+        throw new Error(`O item ${codProdutoNf} está sem código do produto do sistema.`);
+      }
+
+      const [produtoRows] = await conn.query(
+        `
+        SELECT id, codigo, descricao, unidade
+        FROM SF_PRODUTOS
+        WHERE id = ?
+          AND ativo = 1
+        LIMIT 1
+        `,
+        [idProduto]
+      );
+
+      const produtoSistema = produtoRows[0] || null;
+
+      if (!produtoSistema) {
+        throw new Error(`Produto do sistema não encontrado para o item ${codProdutoNf}.`);
+      }
+
+      const [amarracaoExistente] = await conn.query(
+        `
+        SELECT id
+        FROM SF_PRODUTOS_AMARRACAO
+        WHERE fornecedor_id = ?
+          AND produto_fornecedor_codigo = ?
+          AND produto_sistema_id = ?
+        LIMIT 1
+        `,
+        [fornecedor.id, codProdutoNf, idProduto]
+      );
+
+      if (!amarracaoExistente.length) {
+        const [rAmarracao] = await conn.query(
+          `
+          INSERT INTO SF_PRODUTOS_AMARRACAO
+          (
+            fornecedor_id,
+            produto_fornecedor_codigo,
+            produto_fornecedor_descricao,
+            produto_sistema_id
+          )
+          VALUES (?, ?, ?, ?)
+          `,
+          [fornecedor.id, codProdutoNf, descricaoProdutoNf, idProduto]
+        );
+
+        await conn.query(
+          `
+          INSERT INTO SF_PRODUTOS_AMARRACAO_LOG
+          (
+            amarracao_id,
+            fornecedor_id,
+            produto_fornecedor_codigo,
+            produto_fornecedor_descricao,
+            produto_sistema_id_anterior,
+            produto_sistema_id_novo,
+            acao,
+            usuario
+          )
+          VALUES (?, ?, ?, ?, ?, ?, 'CRIAR_IMPORTACAO', ?)
+          `,
+          [
+            rAmarracao.insertId,
+            fornecedor.id,
+            codProdutoNf,
+            descricaoProdutoNf,
+            null,
+            idProduto,
+            usuarioRegistro || null
+          ]
+        );
+      }
+
+      await conn.query(
+        `
+        INSERT INTO SF_PRODUTO_ENTRADA
+        (
+          fornecedor_id,
+          nota,
+          serie,
+          cnpj_emitente,
+          cnpj_remetente,
+          data_emissao,
+          data_registro,
+          usuario_registro,
+          qtd_nf,
+          valor_unitario_nf,
+          valor_total_nf,
+          cod_produto_nf,
+          descricao_produto_nf,
+          unidade_nf,
+          cod_produto_sistema,
+          produto_sistema_id,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `,
+        [
+          fornecedor.id,
+          numeroNota,
+          serie,
+          emitenteCnpj,
+          destinatarioCnpj || null,
+          dataEmissao,
+          usuarioRegistro || null,
+          qtd,
+          valorUnit,
+          valorTotal,
+          codProdutoNf,
+          descricaoProdutoNf,
+          unidade,
+          codProdutoSistema,
+          idProduto
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Importação realizada com sucesso.',
+      fornecedor
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/estoque/importacao-pdf/confirmar:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao confirmar importação do PDF.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
 
 
 // =====================
