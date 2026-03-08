@@ -2413,7 +2413,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     const [localRows] = await conn.query(
       `
       SELECT ID, NOME
-      FROM SF_LOCAIS_ALMOXARIFADO
+      FROM SF_LOCAL_ALMOXARIFADO
       WHERE ID = ?
       LIMIT 1
       `,
