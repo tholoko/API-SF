@@ -2121,6 +2121,7 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
 });
 
 
+
 app.post('/api/estoque/produtos-amarracao', async (req, res) => {
   try {
     const idFornecedor = Number(req.body?.id_fornecedor);
