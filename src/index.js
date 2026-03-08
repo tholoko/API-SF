@@ -1,3 +1,2706 @@
+import express from 'express';
+import cors from 'cors';
+import { pool } from './db.js';
+import dotenv from 'dotenv';
+import dns from "node:dns";
+import bcrypt from 'bcryptjs';
+import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
+import crypto from 'node:crypto';
+
+import fs from "node:fs";
+import path from "node:path";
+import multer from "multer";
+import fetch from 'node-fetch';
+import cron from 'node-cron';
+
+dns.setDefaultResultOrder("ipv4first");
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// =====================
+// Middleware base
+// =====================
+app.use(cors({ origin: true }));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// =====================
+// Fotos de usuário (volume /publicidade/foto-usuario)
+// =====================
+const DIRETORIO_VOLUME_PUBLICIDADE = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/publicidade";
+const PASTA_FOTO_USUARIO = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "foto-usuario");
+
+fs.mkdirSync(PASTA_FOTO_USUARIO, { recursive: true });
+
+app.use("/publicidade/foto-usuario", express.static(PASTA_FOTO_USUARIO));
+
+// =====================
+// Ajuste timezone MySQL
+// =====================
+(async () => {
+  try {
+    await pool.query("SET time_zone = '-03:00'");
+    console.log('MySQL time_zone ajustado para -03:00');
+  } catch (e) {
+    console.error('Falha ao setar time_zone:', e);
+  }
+})();
+
+// =====================
+// Rotas de saúde / debug
+// =====================
+app.get('/', (req, res) => {
+  res.json({ ok: true, message: 'API online' });
+});
+
+app.get('/health', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT 1 as test');
+    res.json({
+      status: 'OK',
+      mysql: 'Connected!',
+      test: rows[0].test
+    });
+  } catch (err) {
+    console.error('MySQL erro:', err.message);
+    res.status(500).json({
+      error: 'MySQL falhou',
+      details: err.message,
+      vars: {
+        host: !!process.env.MYSQLHOST,
+        port: !!process.env.MYSQLPORT,
+        user: !!process.env.MYSQLUSER,
+        db: !!process.env.MYSQLDATABASE
+      }
+    });
+  }
+});
+
+app.get('/debug', (req, res) => {
+  res.json({
+    mysqlVars: {
+      host: process.env.MYSQLHOST ? 'OK' : 'MISSING',
+      port: process.env.MYSQLPORT,
+      user: process.env.MYSQLUSER ? 'OK' : 'MISSING',
+      pass: process.env.MYSQLPASSWORD ? 'OK' : 'MISSING',
+      db: process.env.MYSQLDATABASE ? 'OK' : 'MISSING'
+    }
+  });
+});
+
+// =====================
+// API Login
+// =====================
+app.post('/api/login', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const senha = (req.body?.senha || '').toString();
+
+    if (!email || !senha) {
+      return res.status(400).json({ success: false, message: 'Email e senha são obrigatórios.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT ID, EMAIL, NOME, SENHA, STATUS, MUST_CHANGE_PASSWORD
+         FROM SF_USUARIO
+        WHERE EMAIL = ?
+        LIMIT 1`,
+      [email]
+    );
+
+    if (!rows.length) {
+      return res.status(401).json({ success: false, message: 'Email ou senha inválidos.' });
+    }
+
+    const u = rows[0];
+
+    if ((u.STATUS || '').toString().trim() !== 'Ativo') {
+      return res.status(403).json({ success: false, message: 'Usuário desativado.' });
+    }
+
+    const ok = await bcrypt.compare(senha, u.SENHA);
+    if (!ok) {
+      return res.status(401).json({ success: false, message: 'Email ou senha inválidos.' });
+    }
+
+    return res.json({
+      success: true,
+      email: u.EMAIL,
+      nome: u.NOME,
+      id: u.ID,
+      mustChangePassword: Number(u.MUST_CHANGE_PASSWORD) === 1
+    });
+  } catch (err) {
+    console.error('Erro /api/login:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno.', error: err.message });
+  }
+});
+
+app.post('/api/usuarios/primeiro-acesso/senha', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const newPassword = (req.body?.newPassword || '').toString();
+
+    if (!email || !newPassword) return res.status(400).json({ success: false, message: 'Dados incompletos.' });
+    if (newPassword.length < 6) return res.status(400).json({ success: false, message: 'Senha mínima: 6 caracteres.' });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+
+    await pool.query(
+      `UPDATE SF_USUARIO
+          SET SENHA = ?, MUST_CHANGE_PASSWORD = 0
+        WHERE EMAIL = ?`,
+      [hash, email]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('Erro primeiro acesso senha:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar senha.', error: err.message });
+  }
+});
+
+// =====================
+// Agendamentos - Sala
+// =====================
+app.post('/api/agendamentos/sala/verificar', async (req, res) => {
+  try {
+    const { sala, inicio, fim } = req.body;
+
+    if (!sala || !inicio || !fim) {
+      return res.status(400).json({ success: false, message: 'sala, inicio e fim são obrigatórios.' });
+    }
+
+    const ini = new Date(inicio);
+    const end = new Date(fim);
+    if (!(end > ini)) {
+      return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
+    }
+
+    const [rows] = await pool.query(
+      `
+      SELECT
+        sala,
+        inicio,
+        fim,
+        motivo,
+        usuario_agendamento,
+        data_agendamento
+      FROM SF_AGENDAMENTO
+      WHERE sala = ?
+        AND status = 'Agendado'
+        AND inicio < ?
+        AND fim > ?
+      ORDER BY inicio ASC
+      LIMIT 1
+      `,
+      [sala, fim, inicio]
+    );
+
+    if (rows.length > 0) {
+      return res.json({
+        success: true,
+        conflito: true,
+        message: 'Existe conflito de agendamento.',
+        conflitoDetalhe: rows[0]
+      });
+    }
+
+    return res.json({ success: true, conflito: false, message: 'Sem conflito.' });
+  } catch (err) {
+    console.error('Erro /api/agendamentos/sala/verificar:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  }
+});
+
+app.post('/api/agendamentos/sala', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const { sala, inicio, fim, motivo, usuario, participantes } = req.body;
+
+    if (!sala || !inicio || !fim || !motivo || !usuario) {
+      return res.status(400).json({
+        success: false,
+        message: 'sala, inicio, fim, motivo e usuario são obrigatórios.'
+      });
+    }
+
+    const ini = new Date(inicio);
+    const end = new Date(fim);
+    if (!(end > ini)) {
+      return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
+    }
+
+    const ids = Array.isArray(participantes)
+      ? participantes.map(Number).filter(Number.isFinite)
+      : [];
+
+    await conn.beginTransaction();
+
+    const [ins] = await conn.query(
+      `INSERT INTO SF_AGENDAMENTO (sala, inicio, fim, motivo, usuario_agendamento, status, data_agendamento)
+       VALUES (?, ?, ?, ?, ?, 'Agendado', NOW())`,
+      [sala, inicio, fim, motivo, usuario]
+    );
+
+    const idAgendamento = ins.insertId;
+
+    let convidados = [];
+    if (ids.length) {
+      const [u] = await conn.query(
+        `SELECT id, nome, email
+           FROM SF_USUARIO
+          WHERE id IN (?)
+            AND email IS NOT NULL AND email <> ''`,
+        [ids]
+      );
+      convidados = u;
+    }
+
+    for (const p of convidados) {
+      await conn.query(
+        `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
+         VALUES (?, ?, ?, ?)`,
+        [idAgendamento, p.id, p.nome, p.email]
+      );
+    }
+
+    for (const p of convidados) {
+      const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
+
+      await conn.query(
+        `INSERT INTO SF_EMAIL_QUEUE
+          (tipo, status, tentativas, max_tentativas,
+           id_agendamento, id_usuario, email, nome,
+           sala, inicio, fim, motivo, uid, sequence,
+           created_at)
+         VALUES
+          ('CONVITE_SALA', 'PENDENTE', 0, 5,
+           ?, ?, ?, ?,
+           ?, ?, ?, ?, ?, 0,
+           NOW())`,
+        [
+          idAgendamento, p.id, p.email, p.nome,
+          sala, inicio, fim, motivo, uid
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    if (!convidados.length) {
+      return res.json({
+        success: true,
+        message: 'Agendamento salvo (sem participantes selecionados).',
+        id: idAgendamento,
+        filaEmail: { total: 0, enfileirados: 0 }
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Agendamento salvo. Convites enfileirados para envio.',
+      id: idAgendamento,
+      filaEmail: { total: convidados.length, enfileirados: convidados.length }
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao salvar agendamento.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+app.get('/api/agendamentos/sala/dia', async (req, res) => {
+  try {
+    const { data } = req.query;
+    const [rows] = await pool.query(
+      `
+      SELECT
+        id,
+        sala,
+        inicio,
+        fim,
+        motivo,
+        usuario_agendamento,
+        data_agendamento
+      FROM SF_AGENDAMENTO
+      WHERE status = 'Agendado'
+        AND DATE(inicio) = COALESCE(?, CURDATE())
+      ORDER BY inicio ASC
+      `,
+      [data || null]
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    console.error('Erro /api/agendamentos/sala/dia:', err);
+    res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  }
+});
+
+app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const { id } = req.params;
+
+    const usuarioSolicitante =
+      req.headers['x-usuario'] || req.headers['x-user'] || '';
+
+    if (!usuarioSolicitante) {
+      return res.status(400).json({ success: false, message: 'Usuário solicitante é obrigatório.' });
+    }
+
+    await conn.beginTransaction();
+
+    const [agRows] = await conn.query(
+      `SELECT id, sala, inicio, fim, motivo, usuario_agendamento, status
+         FROM SF_AGENDAMENTO
+        WHERE id = ?
+        LIMIT 1`,
+      [id]
+    );
+
+    if (!agRows.length) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Agendamento não encontrado.' });
+    }
+
+    const ag = agRows[0];
+
+    if (ag.status !== 'Agendado') {
+      await conn.rollback();
+      return res.status(409).json({ success: false, message: 'Este agendamento não está mais como Agendado.' });
+    }
+
+    if (ag.usuario_agendamento !== usuarioSolicitante) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para excluir um agendamento de outro usuário.'
+      });
+    }
+
+    const [upd] = await conn.query(
+      `UPDATE SF_AGENDAMENTO
+          SET status = 'Cancelado',
+              usuario_cancelamento = ?,
+              data_cancelamento = NOW()
+        WHERE id = ?
+          AND status = 'Agendado'
+          AND usuario_agendamento = ?`,
+      [usuarioSolicitante, id, usuarioSolicitante]
+    );
+
+    if (upd.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(409).json({ success: false, message: 'Não foi possível cancelar (agendamento já alterado).' });
+    }
+
+    const [parts] = await conn.query(
+      `SELECT id_usuario, nome, email
+         FROM SF_AGENDAMENTO_PARTICIPANTE
+        WHERE id_agendamento = ?
+          AND email IS NOT NULL AND email <> ''`,
+      [id]
+    );
+
+    for (const p of parts) {
+      const uid = `${ag.id}-${p.id_usuario}@sociedadefranciosi`;
+
+      await conn.query(
+        `INSERT INTO SF_EMAIL_QUEUE
+          (tipo, status, tentativas, max_tentativas,
+           id_agendamento, id_usuario, email, nome,
+           sala, inicio, fim, motivo, uid, sequence,
+           created_at)
+         VALUES
+          ('CANCELAR_SALA', 'PENDENTE', 0, 5,
+           ?, ?, ?, ?,
+           ?, ?, ?, ?, ?, 1,
+           NOW())`,
+        [
+          ag.id, p.id_usuario, p.email, p.nome,
+          ag.sala, ag.inicio, ag.fim, ag.motivo, uid
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Agendamento cancelado com sucesso. Cancelamentos enfileirados para envio.',
+      cancelEmails: { total: parts.length, enfileirados: parts.length }
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro DELETE /api/cancelar-agendamentos/sala/:id:', err);
+    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// =====================
+// Usuários / Setores
+// =====================
+
+function soNumeros(v) {
+  return String(v ?? '').replace(/\D+/g, '');
+}
+
+function texto(v) {
+  return String(v ?? '').trim();
+}
+
+function normalizarEmailNullable(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+  return s || null;
+}
+
+function nullable(v) {
+  const s = String(v ?? '').trim();
+  return s || null;
+}
+
+function nullableDate(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+  return s.slice(0, 10);
+}
+
+
+app.get('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, NOME
+         FROM SF_LOCAL_TRABALHO
+        WHERE NOME IS NOT NULL
+          AND NOME <> ''
+        ORDER BY NOME ASC`
+    );
+
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao listar locais de trabalho.',
+      error: err.message,
+    });
+  }
+});
+
+app.post('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome do local de trabalho é obrigatório.',
+      });
+    }
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_LOCAL_TRABALHO (NOME)
+       VALUES (?)`,
+      [nome]
+    );
+
+    res.status(201).json({
+      success: true,
+      item: {
+        id: r.insertId,
+        nome,
+      },
+    });
+  } catch (err) {
+    if (err?.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({
+        success: false,
+        message: 'Já existe um local de trabalho com esse nome.',
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao adicionar local de trabalho.',
+      error: err.message,
+    });
+  }
+});
+
+
+
+
+app.get('/api/usuarios', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, nome, email, setor
+         FROM SF_USUARIO
+        WHERE email IS NOT NULL AND email <> ''
+        ORDER BY nome ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar usuários.', error: err.message });
+  }
+});
+
+app.patch('/api/gestao-usuarios/:id(\\d+)/status', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const status = (req.body?.status || '').toString().trim();
+
+    if (!status) return res.status(400).json({ success: false, message: 'Status é obrigatório.' });
+
+    const [r] = await pool.query(`UPDATE SF_USUARIO SET STATUS = ? WHERE ID = ?`, [status, id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao alterar status.', error: err.message });
+  }
+});
+
+app.delete('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const [r] = await pool.query(`DELETE FROM SF_USUARIO WHERE ID = ?`, [id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao excluir usuário.', error: err.message });
+  }
+});
+
+app.patch('/api/gestao-usuarios/:id(\\d+)/senha', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const senhaAtual = (req.body?.senhaAtual || '').toString();
+    const novaSenha = (req.body?.novaSenha || '').toString();
+
+    if (!senhaAtual) return res.status(400).json({ success: false, message: 'senhaAtual é obrigatória.' });
+    if (!novaSenha || novaSenha.length < 6) return res.status(400).json({ success: false, message: 'novaSenha inválida (mínimo 6).' });
+
+    const [rows] = await pool.query(`SELECT SENHA FROM SF_USUARIO WHERE ID = ?`, [id]);
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    const ok = await bcrypt.compare(senhaAtual, rows[0].SENHA);
+    if (!ok) return res.status(401).json({ success: false, message: 'Senha atual incorreta.' });
+
+    const novoHash = await bcrypt.hash(novaSenha, 12);
+    await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao trocar senha.', error: err.message });
+  }
+});
+
+app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const novaSenha = (req.body?.novaSenha || '').toString();
+
+    if (!novaSenha || novaSenha.length < 6) return res.status(400).json({ success: false, message: 'novaSenha inválida (mínimo 6).' });
+
+    const novoHash = await bcrypt.hash(novaSenha, 12);
+
+    const [r] = await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE ID = ?`, [novoHash, id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao resetar senha.', error: err.message });
+  }
+});
+
+app.get('/api/gestao-usuarios', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+         ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, LOCAL_TRABALHO, STATUS, FOTO,
+         CPF, RG, CNH, CNH_CATEGORIA, DATA_NASCIMENTO, ESTADO_CIVIL,
+         TELEFONE_PESSOAL, EMAIL_PESSOAL
+       FROM SF_USUARIO
+       ORDER BY NOME ASC`
+    );
+
+    const items = rows.map(r => ({
+      ID: r.ID,
+      NOME: r.NOME,
+      EMAIL: r.EMAIL,
+      TELEFONE: r.TELEFONE,
+      PERFIL: r.PERFIL,
+      SETOR: r.SETOR,
+      LOCAL_TRABALHO: r.LOCAL_TRABALHO,
+      STATUS: r.STATUS,
+      FOTO: r.FOTO,
+      CPF: r.CPF,
+      RG: r.RG,
+      CNH: r.CNH,
+      CNH_CATEGORIA: r.CNH_CATEGORIA,
+      DATA_NASCIMENTO: r.DATA_NASCIMENTO,
+      ESTADO_CIVIL: r.ESTADO_CIVIL,
+      TELEFONE_PESSOAL: r.TELEFONE_PESSOAL,
+      EMAIL_PESSOAL: r.EMAIL_PESSOAL,
+    }));
+
+    res.json({ success: true, items });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar usuários.', error: err.message });
+  }
+});
+
+app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const [rows] = await pool.query(
+      `SELECT
+         ID, NOME, EMAIL, TELEFONE, PERFIL, SETOR, LOCAL_TRABALHO, STATUS, FOTO,
+         CPF, RG, CNH, CNH_CATEGORIA, DATA_NASCIMENTO, ESTADO_CIVIL,
+         TELEFONE_PESSOAL, EMAIL_PESSOAL
+       FROM SF_USUARIO
+       WHERE ID = ?`,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    res.json({ success: true, item: rows[0] });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao buscar usuário.', error: err.message });
+  }
+});
+
+app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+    const email = normalizarEmail(req.body?.email);
+    const senha = texto(req.body?.senha);
+    const telefone = soNumeros(req.body?.telefone);
+    const perfil = texto(req.body?.perfil);
+    const setor = texto(req.body?.setor);
+    const localTrabalho = nullable(req.body?.local_trabalho);
+    const status = texto(req.body?.status || 'Ativo');
+    const foto = nullable(req.body?.foto);
+
+    const cpf = nullable(soNumeros(req.body?.cpf));
+    const rg = nullable(req.body?.rg);
+    const cnh = nullable(req.body?.cnh);
+    const cnhCategoria = nullable(texto(req.body?.cnh_categoria).toUpperCase());
+    const dataNascimento = nullableDate(req.body?.data_nascimento);
+    const estadoCivil = nullable(req.body?.estado_civil);
+    const telefonePessoal = nullable(soNumeros(req.body?.telefone_pessoal));
+    const emailPessoal = normalizarEmailNullable(req.body?.email_pessoal);
+
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
+    if (!email) return res.status(400).json({ success: false, message: 'E-mail corporativo é obrigatório.' });
+    if (!senha || senha.length < 6) return res.status(400).json({ success: false, message: 'Senha inválida (mínimo 6).' });
+    if (!perfil) return res.status(400).json({ success: false, message: 'Perfil é obrigatório.' });
+    if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
+
+    const senhaHash = await bcrypt.hash(senha, 12);
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_USUARIO (
+        NOME, EMAIL, SENHA, TELEFONE, PERFIL, SETOR, LOCAL_TRABALHO, STATUS, FOTO,
+        CPF, RG, CNH, CNH_CATEGORIA, DATA_NASCIMENTO, ESTADO_CIVIL, TELEFONE_PESSOAL, EMAIL_PESSOAL,
+        MUST_CHANGE_PASSWORD
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+      [
+        nome, email, senhaHash, telefone, perfil, setor, localTrabalho, status, foto,
+        cpf, rg, cnh, cnhCategoria, dataNascimento, estadoCivil, telefonePessoal, emailPessoal
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      item: {
+        id: r.insertId,
+        nome,
+        email,
+        telefone,
+        perfil,
+        setor,
+        local_trabalho: localTrabalho,
+        status,
+        foto,
+        cpf,
+        rg,
+        cnh,
+        cnh_categoria: cnhCategoria,
+        data_nascimento: dataNascimento,
+        estado_civil: estadoCivil,
+        telefone_pessoal: telefonePessoal,
+        email_pessoal: emailPessoal,
+      },
+    });
+  } catch (err) {
+    console.error('ERRO /api/gestao-usuarios-adicionar:', err);
+    res.status(500).json({ success: false, message: 'Erro ao criar usuário.', error: err.message });
+  }
+});
+
+app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const nome = titleCaseNome(req.body?.nome);
+    const email = normalizarEmail(req.body?.email);
+    const telefone = soNumeros(req.body?.telefone);
+    const perfil = texto(req.body?.perfil);
+    const setor = texto(req.body?.setor);
+    const localTrabalho = nullable(req.body?.local_trabalho);
+    const status = texto(req.body?.status);
+    const foto = req.body?.foto;
+
+    const cpf = nullable(soNumeros(req.body?.cpf));
+    const rg = nullable(req.body?.rg);
+    const cnh = nullable(req.body?.cnh);
+    const cnhCategoria = nullable(texto(req.body?.cnh_categoria).toUpperCase());
+    const dataNascimento = nullableDate(req.body?.data_nascimento);
+    const estadoCivil = nullable(req.body?.estado_civil);
+    const telefonePessoal = nullable(soNumeros(req.body?.telefone_pessoal));
+    const emailPessoal = normalizarEmailNullable(req.body?.email_pessoal);
+
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome é obrigatório.' });
+    if (!email) return res.status(400).json({ success: false, message: 'E-mail corporativo é obrigatório.' });
+    if (!perfil) return res.status(400).json({ success: false, message: 'Perfil é obrigatório.' });
+    if (!setor) return res.status(400).json({ success: false, message: 'Setor é obrigatório.' });
+    if (!status) return res.status(400).json({ success: false, message: 'Status é obrigatório.' });
+
+    const [rows] = await pool.query(
+      `SELECT ID, FOTO
+         FROM SF_USUARIO
+        WHERE ID = ?`,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    const usuarioAtual = rows[0];
+    let fotoPath = usuarioAtual.FOTO || null;
+
+    if (typeof foto === 'string' && foto.trim()) {
+      fotoPath = foto.trim();
+
+      if (
+        usuarioAtual.FOTO &&
+        usuarioAtual.FOTO.startsWith('/publicidade/foto-usuario/') &&
+        usuarioAtual.FOTO !== fotoPath
+      ) {
+        const nomeAntigo = path.basename(usuarioAtual.FOTO);
+        const caminhoAntigo = path.join(PASTA_FOTO_USUARIO, nomeAntigo);
+        try { await fs.promises.unlink(caminhoAntigo); } catch {}
+      }
+    }
+
+    if (foto === null) {
+      if (
+        usuarioAtual.FOTO &&
+        usuarioAtual.FOTO.startsWith('/publicidade/foto-usuario/')
+      ) {
+        const nomeAntigo = path.basename(usuarioAtual.FOTO);
+        const caminhoAntigo = path.join(PASTA_FOTO_USUARIO, nomeAntigo);
+        try { await fs.promises.unlink(caminhoAntigo); } catch {}
+      }
+      fotoPath = null;
+    }
+
+    const [r] = await pool.query(
+      `UPDATE SF_USUARIO
+          SET NOME = ?, EMAIL = ?, TELEFONE = ?, PERFIL = ?, SETOR = ?, LOCAL_TRABALHO = ?, STATUS = ?, FOTO = ?,
+              CPF = ?, RG = ?, CNH = ?, CNH_CATEGORIA = ?, DATA_NASCIMENTO = ?, ESTADO_CIVIL = ?, TELEFONE_PESSOAL = ?, EMAIL_PESSOAL = ?
+        WHERE ID = ?`,
+      [
+        nome, email, telefone, perfil, setor, localTrabalho, status, fotoPath,
+        cpf, rg, cnh, cnhCategoria, dataNascimento, estadoCivil, telefonePessoal, emailPessoal,
+        id
+      ]
+    );
+
+    if (r.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    res.json({
+      success: true,
+      item: {
+        id,
+        nome,
+        email,
+        telefone,
+        perfil,
+        setor,
+        local_trabalho: localTrabalho,
+        status,
+        foto: fotoPath,
+        cpf,
+        rg,
+        cnh,
+        cnh_categoria: cnhCategoria,
+        data_nascimento: dataNascimento,
+        estado_civil: estadoCivil,
+        telefone_pessoal: telefonePessoal,
+        email_pessoal: emailPessoal,
+      },
+    });
+  } catch (err) {
+    console.error('ERRO /api/gestao-usuarios/:id:', err);
+    res.status(500).json({ success: false, message: 'Erro ao atualizar usuário.', error: err.message });
+  }
+});
+
+
+app.get('/api/setores', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT nome
+         FROM SF_SETOR
+        WHERE nome IS NOT NULL AND nome <> ''
+        ORDER BY nome ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar setores.', error: err.message });
+  }
+});
+
+// =====================
+// Gestão Usuários
+// =====================
+app.get('/api/gestao-usuarios-perfis', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, NOME
+         FROM SF_PERFIL
+        WHERE NOME IS NOT NULL AND NOME <> ''
+        ORDER BY NOME ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar perfis.', error: err.message });
+  }
+});
+
+app.get('/api/gestao-usuarios-setores', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, NOME
+         FROM SF_SETOR
+        WHERE NOME IS NOT NULL AND NOME <> ''
+        ORDER BY NOME ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao listar setores.', error: err.message });
+  }
+});
+
+app.post('/api/gestao-usuarios-setores', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome do setor é obrigatório.' });
+
+    const [r] = await pool.query(`INSERT INTO SF_SETOR (NOME) VALUES (?)`, [nome]);
+    res.status(201).json({ success: true, item: { id: r.insertId, nome } });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Erro ao adicionar setor.', error: err.message });
+  }
+});
+
+// =====================
+// Password reset
+// =====================
+app.post('/api/password-reset/confirm', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const token = (req.body?.token || '').toString().trim();
+    const newPassword = (req.body?.newPassword || '').toString();
+
+    if (!email || !token || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Dados incompletos.' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'Senha mínima: 6 caracteres.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT id, token_hash, expires_at
+         FROM SF_PASSWORD_RESET
+        WHERE email = ? AND token_hash IS NOT NULL
+        ORDER BY id DESC
+        LIMIT 1`,
+      [email]
+    );
+
+    if (!rows.length) return res.status(400).json({ success: false, message: 'Token inválido.' });
+
+    const r = rows[0];
+
+    const [exp] = await pool.query(
+      `SELECT (UTC_TIMESTAMP() <= ?) AS ok`,
+      [r.expires_at]
+    );
+    if (!exp?.length || exp[0].ok !== 1) {
+      return res.status(400).json({ success: false, message: 'Token expirado.' });
+    }
+
+    const ok = await bcrypt.compare(token, r.token_hash);
+    if (!ok) return res.status(400).json({ success: false, message: 'Token inválido.' });
+
+    const senhaHash = await bcrypt.hash(newPassword, 12);
+    await pool.query(`UPDATE SF_USUARIO SET SENHA = ? WHERE EMAIL = ?`, [senhaHash, email]);
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('password-reset/confirm:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar senha.', error: err.message });
+  }
+});
+
+app.post('/api/password-reset/verify', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    const code = (req.body?.code || '').toString().trim();
+    if (!email || !code) return res.status(400).json({ success: false, message: 'Email e código são obrigatórios.' });
+
+    const [rows] = await pool.query(
+      `SELECT id, code_hash, expires_at, attempts
+         FROM SF_PASSWORD_RESET
+        WHERE email = ? AND used = 0
+        ORDER BY id DESC
+        LIMIT 1`,
+      [email]
+    );
+
+    if (!rows.length) return res.status(400).json({ success: false, message: 'Código inválido ou já utilizado.' });
+
+    const r = rows[0];
+
+    const [exp] = await pool.query(
+      `SELECT (UTC_TIMESTAMP() <= ?) AS ok`,
+      [r.expires_at]
+    );
+    if (!exp?.length || exp[0].ok !== 1) {
+      return res.status(400).json({ success: false, message: 'Código expirado.' });
+    }
+
+    const ok = await bcrypt.compare(code, r.code_hash);
+    if (!ok) {
+      await pool.query(`UPDATE SF_PASSWORD_RESET SET attempts = attempts + 1 WHERE id = ?`, [r.id]);
+      return res.status(400).json({ success: false, message: 'Código inválido.' });
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    const tokenHash = await bcrypt.hash(token, 10);
+
+    await pool.query(
+      `UPDATE SF_PASSWORD_RESET
+          SET token_hash = ?, used = 1
+        WHERE id = ?`,
+      [tokenHash, r.id]
+    );
+
+    return res.json({ success: true, token });
+  } catch (err) {
+    console.error('password-reset/verify:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao verificar código.', error: err.message });
+  }
+});
+
+app.post('/api/password-reset/request', async (req, res) => {
+  try {
+    const email = normalizarEmail(req.body?.email);
+    if (!email) return res.status(400).json({ success: false, message: 'Email é obrigatório.' });
+
+    const [u] = await pool.query(
+      'SELECT ID, EMAIL, NOME FROM SF_USUARIO WHERE EMAIL = ? LIMIT 1',
+      [email]
+    );
+
+    if (!u.length) return res.status(404).json({ success: false, message: 'Email não cadastrado.' });
+
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const codeHash = await bcrypt.hash(code, 10);
+    const expiresMinutes = 10;
+
+    await pool.query(
+      `UPDATE SF_PASSWORD_RESET SET used = 1
+        WHERE email = ? AND used = 0`,
+      [email]
+    );
+
+    await pool.query(
+      `INSERT INTO SF_PASSWORD_RESET (email, code_hash, expires_at, used, attempts, token_hash)
+       VALUES (?, ?, DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE), 0, 0, NULL)`,
+      [email, codeHash, expiresMinutes]
+    );
+
+    const uid = `reset-${crypto.randomBytes(12).toString('hex')}@sociedadefranciosi`;
+
+    await pool.query(
+      `INSERT INTO SF_EMAIL_QUEUE
+        (tipo, status, tentativas, max_tentativas,
+         id_agendamento, id_usuario, email, nome,
+         sala, inicio, fim, motivo, uid, sequence, created_at)
+       VALUES
+        ('RESET_SENHA', 'PENDENTE', 0, 5,
+         NULL, NULL, ?, ?,
+         NULL, NULL, NULL, ?, ?, 0, UTC_TIMESTAMP())`,
+      [
+        email,
+        u[0].NOME || email,
+        `Seu código de redefinição de senha é: ${code} (expira em ${expiresMinutes} min)`,
+        uid
+      ]
+    );
+
+    return res.json({ success: true });
+  } catch (err) {
+    console.error('password-reset/request:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao solicitar redefinição.', error: err.message });
+  }
+});
+
+// =====================
+// MARKETING (Volume /publicidade)
+// =====================
+// Volume montado em /publicidade (conforme seu Railway)
+const PASTA_MARKETING = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "marketing");
+
+fs.mkdirSync(PASTA_MARKETING, { recursive: true });
+
+// Servir imagens via URL (Express static) [web:650]
+app.use("/publicidade/marketing", express.static(PASTA_MARKETING));
+
+function apenasNomeArquivoSeguro(nome) {
+  const base = path.basename(String(nome || ""));
+  return base.replace(/[^\w.\-() ]+/g, "_");
+}
+
+function ehImagem(mimetype) {
+  return typeof mimetype === "string" && mimetype.startsWith("image/");
+}
+
+const storageFotoUsuario = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, PASTA_FOTO_USUARIO);
+  },
+  filename: (req, file, cb) => {
+    const original = apenasNomeArquivoSeguro(file.originalname || 'foto.jpg');
+    const ext = path.extname(original) || '.jpg';
+    const nomeSemExt = path.basename(original, ext);
+    const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    cb(null, `${nomeSemExt}-${unico}${ext}`);
+  },
+});
+
+const uploadFotoUsuario = multer({
+  storage: storageFotoUsuario,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!ehImagem(file.mimetype)) return cb(new Error('Apenas imagens são permitidas.'));
+    cb(null, true);
+  },
+});
+
+// Upload único da foto do usuário
+app.post('/api/gestao-usuarios/foto', uploadFotoUsuario.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'Arquivo de foto não enviado.' });
+    }
+
+    return res.status(201).json({
+      success: true,
+      item: {
+        name: req.file.filename,
+        url: `/publicidade/foto-usuario/${encodeURIComponent(req.file.filename)}`,
+        size: req.file.size,
+        mimetype: req.file.mimetype,
+      },
+    });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message || 'Erro ao enviar foto.' });
+  }
+});
+
+// Remover arquivo da foto do usuário
+app.delete('/api/gestao-usuarios/foto/:nome', async (req, res) => {
+  try {
+    const nome = apenasNomeArquivoSeguro(req.params.nome);
+    if (!nome) return res.status(400).json({ success: false, message: 'Nome inválido.' });
+
+    const base = path.resolve(PASTA_FOTO_USUARIO);
+    const alvo = path.resolve(path.join(PASTA_FOTO_USUARIO, nome));
+    if (!alvo.startsWith(base + path.sep)) {
+      return res.status(400).json({ success: false, message: 'Caminho inválido.' });
+    }
+
+    await fs.promises.unlink(alvo);
+    return res.json({ success: true, message: 'Foto removida.' });
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return res.status(404).json({ success: false, message: 'Arquivo não encontrado.' });
+    }
+    return res.status(500).json({ success: false, message: 'Erro ao remover foto.', error: err.message });
+  }
+});
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, PASTA_MARKETING),
+  filename: (req, file, cb) => {
+    const original = apenasNomeArquivoSeguro(file.originalname || "imagem");
+    const ext = path.extname(original);
+    const nomeSemExt = path.basename(original, ext);
+    const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    cb(null, `${nomeSemExt}-${unico}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!ehImagem(file.mimetype)) return cb(new Error("Apenas imagens são permitidas."));
+    cb(null, true);
+  },
+});
+
+// LISTAR
+app.get("/api/marketing/imagens", async (req, res) => {
+  try {
+    const files = await fs.promises.readdir(PASTA_MARKETING, { withFileTypes: true });
+
+    const items = files
+      .filter((d) => d.isFile())
+      .map((d) => d.name)
+      .filter((n) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(n))
+      .sort((a, b) => a.localeCompare(b, "pt-BR"))
+      .map((name) => ({
+        name,
+        url: `/publicidade/marketing/${encodeURIComponent(name)}`,
+      }));
+
+    return res.json({ success: true, items });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Erro ao listar imagens.", error: err.message });
+  }
+});
+
+// UPLOAD (múltiplos) - campo FormData: "files" [web:647]
+app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) => {
+  try {
+    const arquivos = Array.isArray(req.files) ? req.files : [];
+
+    const items = arquivos.map((f) => ({
+      name: f.filename,
+      url: `/publicidade/marketing/${encodeURIComponent(f.filename)}`,
+      size: f.size,
+      mimetype: f.mimetype,
+    }));
+
+    return res.status(201).json({ success: true, items });
+  } catch (err) {
+    return res.status(400).json({ success: false, message: err.message || "Erro ao enviar imagens." });
+  }
+});
+
+// REMOVER
+app.delete("/api/marketing/imagens/:nome", async (req, res) => {
+  try {
+    const nome = apenasNomeArquivoSeguro(req.params.nome);
+    if (!nome) return res.status(400).json({ success: false, message: "Nome inválido." });
+
+    const base = path.resolve(PASTA_MARKETING);
+    const alvo = path.resolve(path.join(PASTA_MARKETING, nome));
+    if (!alvo.startsWith(base + path.sep)) {
+      return res.status(400).json({ success: false, message: "Caminho inválido." });
+    }
+
+    await fs.promises.unlink(alvo);
+    return res.json({ success: true, message: "Imagem removida." });
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      return res.status(404).json({ success: false, message: "Arquivo não encontrado." });
+    }
+    return res.status(500).json({ success: false, message: "Erro ao remover imagem.", error: err.message });
+  }
+});
+
+function normalizarUF(uf) {
+  const s = (uf || '').toString().trim().toUpperCase();
+  return s.length === 2 ? s : '';
+}
+
+function normalizarDocumento(doc) {
+  return (doc || '').toString().replace(/\D+/g, '').trim(); // só números
+}
+
+function str(v) {
+  const s = (v ?? '').toString().trim();
+  return s ? s : '';
+}
+
+// GET /api/clientes?q=texto
+app.get('/api/clientes', async (req, res) => {
+  try {
+    const q = (req.query.q || '').toString().trim();
+
+    let sql = `
+      SELECT
+        ID, RAZAO_SOCIAL, DOCUMENTO, GRUPO_ECONOMICO,
+        CIDADE, UF,
+        CONTATO_NOME, CONTATO_TELEFONE, CONTATO_EMAIL,
+        CULTURA_PRINCIPAL, HECTARES_ESTIMADOS, OBSERVACOES,
+        ACTIVE, CREATED_AT, UPDATED_AT
+      FROM SF_CLIENTE
+      WHERE ACTIVE = 1
+    `;
+    const params = [];
+
+    if (q) {
+      sql += ` AND (RAZAO_SOCIAL LIKE ? OR DOCUMENTO LIKE ?) `;
+      params.push(`%${q}%`, `%${normalizarDocumento(q)}%`);
+    }
+
+    sql += ` ORDER BY RAZAO_SOCIAL ASC `;
+
+    const [rows] = await pool.query(sql, params);
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao listar clientes.', error: err.message });
+  }
+});
+
+// GET /api/clientes/:id
+app.get('/api/clientes/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [rows] = await pool.query(
+      `SELECT * FROM SF_CLIENTE WHERE ID = ? LIMIT 1`,
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Cliente não encontrado.' });
+    return res.json({ success: true, item: rows[0] });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao buscar cliente.', error: err.message });
+  }
+});
+
+
+app.post('/api/clientes/salvar', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const c = req.body?.cliente || {};
+    const filiais = Array.isArray(req.body?.filiais) ? req.body.filiais : [];
+
+    const idCliente = Number(c.id || 0) || null;
+
+    const razao = str(c.razao_social);
+    const documento = normalizarDocumento(c.documento); // remove máscara (cpf/cnpj)
+    const grupo = str(c.grupo_economico) || null;
+
+    const cidade = str(c.cidade);
+    const uf = normalizarUF(c.uf);
+
+    const contatoNome = str(c.contato_nome) || null;
+    const contatoTelefone = str(c.contato_telefone) || null;
+    const contatoEmail = str(c.contato_email) || null;
+
+    const cultura = str(c.cultura_principal) || null;
+    const hectaresNum = Number(c.hectares_estimados);
+    const hectares = Number.isFinite(hectaresNum) ? hectaresNum : null;
+    const obs = str(c.observacoes) || null;
+
+    if (!razao) return res.status(400).json({ success: false, message: 'razao_social é obrigatório.' });
+    if (!documento) return res.status(400).json({ success: false, message: 'documento é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    await conn.beginTransaction();
+
+    let idFinal = idCliente;
+
+    if (idFinal) {
+      const [r] = await conn.query(
+        `UPDATE SF_CLIENTE
+            SET RAZAO_SOCIAL = ?, DOCUMENTO = ?, GRUPO_ECONOMICO = ?,
+                CIDADE = ?, UF = ?,
+                CONTATO_NOME = ?, CONTATO_TELEFONE = ?, CONTATO_EMAIL = ?,
+                CULTURA_PRINCIPAL = ?, HECTARES_ESTIMADOS = ?, OBSERVACOES = ?
+          WHERE ID = ?`,
+        [
+          razao, documento, grupo,
+          cidade, uf,
+          contatoNome, contatoTelefone, contatoEmail,
+          cultura, hectares, obs,
+          idFinal
+        ]
+      );
+
+      if (r.affectedRows === 0) {
+        await conn.rollback();
+        return res.status(404).json({ success: false, message: 'Cliente não encontrado.' });
+      }
+    } else {
+      const [r] = await conn.query(
+        `INSERT INTO SF_CLIENTE
+         (RAZAO_SOCIAL, DOCUMENTO, GRUPO_ECONOMICO, CIDADE, UF,
+          CONTATO_NOME, CONTATO_TELEFONE, CONTATO_EMAIL,
+          CULTURA_PRINCIPAL, HECTARES_ESTIMADOS, OBSERVACOES, ACTIVE)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        [
+          razao, documento, grupo, cidade, uf,
+          contatoNome, contatoTelefone, contatoEmail,
+          cultura, hectares, obs
+        ]
+      );
+      idFinal = r.insertId;
+    }
+
+    // ---------- sincronizar filiais ----------
+    const [exist] = await conn.query(
+      `SELECT ID FROM SF_CLIENTE_FILIAL WHERE ID_CLIENTE = ? AND ACTIVE = 1`,
+      [idFinal]
+    );
+
+    const idsExistentes = exist.map(x => Number(x.ID)).filter(n => Number.isFinite(n) && n > 0);
+    const idsFormulario = filiais.map(f => Number(f.id || 0)).filter(n => Number.isFinite(n) && n > 0);
+
+    const idsParaDesativar = idsExistentes.filter(id => !idsFormulario.includes(id));
+    if (idsParaDesativar.length) {
+      await conn.query(
+        `UPDATE SF_CLIENTE_FILIAL SET ACTIVE = 0 WHERE ID_CLIENTE = ? AND ID IN (?)`,
+        [idFinal, idsParaDesativar]
+      );
+    }
+
+    for (const f of filiais) {
+      const fid = Number(f.id || 0) || null;
+
+      const nome = str(f.nome);
+      const endereco = str(f.endereco) || null;
+      const fCidade = str(f.cidade);
+      const fUf = normalizarUF(f.uf);
+      const fContatoNome = str(f.contato_nome) || null;
+      const fContatoTelefone = str(f.contato_telefone) || null;
+
+      if (!nome) { await conn.rollback(); return res.status(400).json({ success: false, message: 'Filial: nome é obrigatório.' }); }
+      if (!fCidade) { await conn.rollback(); return res.status(400).json({ success: false, message: 'Filial: cidade é obrigatória.' }); }
+      if (!fUf) { await conn.rollback(); return res.status(400).json({ success: false, message: 'Filial: uf inválida (2 letras).' }); }
+
+      if (fid) {
+        await conn.query(
+          `UPDATE SF_CLIENTE_FILIAL
+              SET NOME = ?, ENDERECO = ?, CIDADE = ?, UF = ?,
+                  CONTATO_NOME = ?, CONTATO_TELEFONE = ?, ACTIVE = 1
+            WHERE ID = ? AND ID_CLIENTE = ?`,
+          [nome, endereco, fCidade, fUf, fContatoNome, fContatoTelefone, fid, idFinal]
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO SF_CLIENTE_FILIAL
+           (ID_CLIENTE, NOME, ENDERECO, CIDADE, UF, CONTATO_NOME, CONTATO_TELEFONE, ACTIVE)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+          [idFinal, nome, endereco, fCidade, fUf, fContatoNome, fContatoTelefone]
+        );
+      }
+    }
+
+    await conn.commit();
+    return res.status(200).json({ success: true, id: idFinal });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, message: 'Já existe cliente com este documento.' });
+    }
+
+    return res.status(500).json({ success: false, message: 'Erro ao salvar cliente.', error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// PUT /api/clientes/:id
+app.put('/api/clientes/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const razao = str(req.body?.razao_social);
+    const documento = normalizarDocumento(req.body?.documento);
+    const grupo = str(req.body?.grupo_economico) || null;
+
+    const cidade = str(req.body?.cidade);
+    const uf = normalizarUF(req.body?.uf);
+
+    const contatoNome = str(req.body?.contato_nome) || null;
+    const contatoTelefone = str(req.body?.contato_telefone) || null;
+    const contatoEmail = str(req.body?.contato_email) || null;
+
+    const cultura = str(req.body?.cultura_principal) || null;
+    const hectares = Number(req.body?.hectares_estimados);
+    const obs = str(req.body?.observacoes) || null;
+
+    if (!razao) return res.status(400).json({ success: false, message: 'razao_social é obrigatório.' });
+    if (!documento) return res.status(400).json({ success: false, message: 'documento é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    const [r] = await pool.query(
+      `UPDATE SF_CLIENTE
+          SET RAZAO_SOCIAL = ?, DOCUMENTO = ?, GRUPO_ECONOMICO = ?,
+              CIDADE = ?, UF = ?,
+              CONTATO_NOME = ?, CONTATO_TELEFONE = ?, CONTATO_EMAIL = ?,
+              CULTURA_PRINCIPAL = ?, HECTARES_ESTIMADOS = ?, OBSERVACOES = ?
+        WHERE ID = ?`,
+      [
+        razao, documento, grupo,
+        cidade, uf,
+        contatoNome, contatoTelefone, contatoEmail,
+        cultura, Number.isFinite(hectares) ? hectares : null, obs,
+        id
+      ]
+    );
+
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Cliente não encontrado.' });
+    return res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, message: 'Já existe cliente com este documento.' });
+    }
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar cliente.', error: err.message });
+  }
+});
+
+// DELETE /api/clientes/:id
+app.delete('/api/clientes/:id(\\d+)', async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const id = Number(req.params.id);
+
+    await conn.beginTransaction();
+
+    // desativa filiais ativas
+    await conn.query(
+      `UPDATE SF_CLIENTE_FILIAL SET ACTIVE = 0 WHERE ID_CLIENTE = ? AND ACTIVE = 1`,
+      [id]
+    );
+
+    // desativa cliente
+    const [r] = await conn.query(
+      `UPDATE SF_CLIENTE SET ACTIVE = 0 WHERE ID = ? AND ACTIVE = 1`,
+      [id]
+    );
+
+    if (r.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Cliente não encontrado ou já desativado.' });
+    }
+
+    await conn.commit();
+    return res.json({ success: true });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    return res.status(500).json({ success: false, message: 'Erro ao desativar cliente.', error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+// GET /api/clientes/:id/filiais
+app.get('/api/clientes/:id(\\d+)/filiais', async (req, res) => {
+  try {
+    const idCliente = Number(req.params.id);
+
+    const [rows] = await pool.query(
+      `SELECT ID, ID_CLIENTE, NOME, ENDERECO, CIDADE, UF, CONTATO_NOME, CONTATO_TELEFONE, ACTIVE, CREATED_AT, UPDATED_AT
+         FROM SF_CLIENTE_FILIAL
+        WHERE ID_CLIENTE = ? AND ACTIVE = 1
+        ORDER BY NOME ASC`,
+      [idCliente]
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao listar filiais.', error: err.message });
+  }
+});
+
+// POST /api/clientes/:id/filiais
+app.post('/api/clientes/:id(\\d+)/filiais', async (req, res) => {
+  try {
+    const idCliente = Number(req.params.id);
+
+    const nome = str(req.body?.nome);
+    const endereco = str(req.body?.endereco) || null;
+    const cidade = str(req.body?.cidade);
+    const uf = normalizarUF(req.body?.uf);
+    const contatoNome = str(req.body?.contato_nome) || null;
+    const contatoTelefone = str(req.body?.contato_telefone) || null;
+
+    if (!nome) return res.status(400).json({ success: false, message: 'nome é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    const [r] = await pool.query(
+      `INSERT INTO SF_CLIENTE_FILIAL
+       (ID_CLIENTE, NOME, ENDERECO, CIDADE, UF, CONTATO_NOME, CONTATO_TELEFONE, ACTIVE)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+      [idCliente, nome, endereco, cidade, uf, contatoNome, contatoTelefone]
+    );
+
+    return res.status(201).json({ success: true, item: { id: r.insertId } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao criar filial.', error: err.message });
+  }
+});
+
+// PUT /api/filiais/:id
+app.put('/api/filiais/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const nome = str(req.body?.nome);
+    const endereco = str(req.body?.endereco) || null;
+    const cidade = str(req.body?.cidade);
+    const uf = normalizarUF(req.body?.uf);
+    const contatoNome = str(req.body?.contato_nome) || null;
+    const contatoTelefone = str(req.body?.contato_telefone) || null;
+
+    if (!nome) return res.status(400).json({ success: false, message: 'nome é obrigatório.' });
+    if (!cidade) return res.status(400).json({ success: false, message: 'cidade é obrigatória.' });
+    if (!uf) return res.status(400).json({ success: false, message: 'uf inválida (2 letras).' });
+
+    const [r] = await pool.query(
+      `UPDATE SF_CLIENTE_FILIAL
+          SET NOME = ?, ENDERECO = ?, CIDADE = ?, UF = ?, CONTATO_NOME = ?, CONTATO_TELEFONE = ?
+        WHERE ID = ?`,
+      [nome, endereco, cidade, uf, contatoNome, contatoTelefone, id]
+    );
+
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Filial não encontrada.' });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao atualizar filial.', error: err.message });
+  }
+});
+
+// DELETE /api/filiais/:id
+app.delete('/api/filiais/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [r] = await pool.query(`UPDATE SF_CLIENTE_FILIAL SET ACTIVE = 0 WHERE ID = ? AND ACTIVE = 1`, [id]);
+    if (r.affectedRows === 0) return res.status(404).json({ success: false, message: 'Filial não encontrada ou já desativada.' });
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Erro ao desativar filial.', error: err.message });
+  }
+});
+
+// Leitura de email automatico as 06:00 e as 20:00 //
+
+const MS_TENANT_ID = process.env.MS_TENANT_ID;
+const MS_CLIENT_ID = process.env.MS_CLIENT_ID;
+const MS_CLIENT_SECRET = process.env.MS_CLIENT_SECRET;
+const MS_USER_EMAIL = process.env.MS_USER_EMAIL;
+
+async function obterAccessTokenGraph() {
+  const url = `https://login.microsoftonline.com/${MS_TENANT_ID}/oauth2/v2.0/token`;
+  const params = new URLSearchParams();
+  params.append('client_id', MS_CLIENT_ID);
+  params.append('client_secret', MS_CLIENT_SECRET);
+  params.append('scope', 'https://graph.microsoft.com/.default');
+  params.append('grant_type', 'client_credentials');
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    body: params,
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error('Falha ao obter token Graph: ' + txt);
+  }
+
+  const data = await resp.json();
+  return data.access_token;
+}
+
+async function graphRequest(path, options = {}) {
+  const token = await obterAccessTokenGraph();
+  const url = `https://graph.microsoft.com/v1.0${path}`;
+
+  const resp = await fetch(url, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Graph erro ${resp.status}: ${txt}`);
+  }
+
+  return resp.json();
+}
+
+async function processarEmailsOffice365() {
+  const conn = await pool.getConnection();
+
+  try {
+    // 1) Carrega remetentes
+    const [remRows] = await conn.query(
+      `SELECT ID, EMAIL
+         FROM SF_EMAIL_REMETENTE
+        WHERE ATIVO = 1`
+    );
+
+    if (!remRows.length) {
+      console.log('Nenhum remetente configurado.');
+      conn.release();
+      return;
+    }
+
+    const remetentes = remRows.map(r => ({
+      id: r.ID,
+      email: (r.EMAIL || '').toLowerCase().trim(),
+    }));
+
+    // 2) Carrega destinatários por remetente
+    const [destRows] = await conn.query(
+      `SELECT ID_REMETENTE, EMAIL_DESTINATARIO
+         FROM SF_EMAIL_DESTINATARIOS
+        WHERE ATIVO = 1`
+    );
+
+    const mapaDestinatarios = new Map();
+    for (const d of destRows) {
+      const idRem = d.ID_REMETENTE;
+      const emailDest = (d.EMAIL_DESTINATARIO || '').toLowerCase().trim();
+      if (!mapaDestinatarios.has(idRem)) {
+        mapaDestinatarios.set(idRem, new Set());
+      }
+      mapaDestinatarios.get(idRem).add(emailDest);
+    }
+
+    if (!destRows.length) {
+      console.log('Nenhum destinatário configurado para os remetentes.');
+      conn.release();
+      return;
+    }
+
+    // 3) Busca emails recentes na caixa de entrada
+    // Exemplo: últimas 48h, apenas não deletados
+    const filtroData = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const path =
+      `/users/${encodeURIComponent(MS_USER_EMAIL)}/mailFolders/Inbox/messages` +
+      `?$top=50&$filter=receivedDateTime ge ${filtroData}`;
+
+    const data = await graphRequest(path);
+    const mensagens = Array.isArray(data.value) ? data.value : [];
+
+    console.log(`Encontradas ${mensagens.length} mensagens na Inbox.`);
+
+    for (const msg of mensagens) {
+      const messageId = msg.id;
+      const assunto = msg.subject || '';
+      const recebidoEm = msg.receivedDateTime || null;
+
+      const fromEmail =
+        msg.from?.emailAddress?.address?.toLowerCase().trim() || '';
+      const toRecipients = Array.isArray(msg.toRecipients)
+        ? msg.toRecipients
+        : [];
+
+      // tenta casar remetente
+      const remetente = remetentes.find(r => r.email === fromEmail);
+      if (!remetente) continue;
+
+      const listaDestinatarios = mapaDestinatarios.get(remetente.id);
+      if (!listaDestinatarios || !listaDestinatarios.size) continue;
+
+      for (const dest of toRecipients) {
+        const destEmail =
+          dest.emailAddress?.address?.toLowerCase().trim() || '';
+        if (!listaDestinatarios.has(destEmail)) continue;
+
+        // verifica se já foi processado (pela tabela, não pelo Outlook)
+        const [ja] = await conn.query(
+          `SELECT ID, LIDO_TABELA
+             FROM SF_EMAIL_PROCESSADO
+            WHERE MESSAGE_ID = ? AND DESTINATARIO_EMAIL = ?
+            LIMIT 1`,
+          [messageId, destEmail]
+        );
+
+        if (ja.length && ja[0].LIDO_TABELA === 1) {
+          continue; // já processado
+        }
+
+        let idProcessado;
+        if (!ja.length) {
+          const [ins] = await conn.query(
+            `INSERT INTO SF_EMAIL_PROCESSADO
+              (MESSAGE_ID, REMETENTE_EMAIL, DESTINATARIO_EMAIL,
+               ASSUNTO, RECEBIDO_EM, LIDO_TABELA, LIDO_OUTLOOK)
+             VALUES (?, ?, ?, ?, ?, 0, 0)`,
+            [
+              messageId,
+              fromEmail,
+              destEmail,
+              assunto,
+              recebidoEm ? new Date(recebidoEm) : null,
+            ]
+          );
+          idProcessado = ins.insertId;
+        } else {
+          idProcessado = ja[0].ID;
+        }
+
+        // 4) Baixar anexos e salvar
+        await baixarESalvarAnexos(conn, idProcessado, messageId);
+
+        // 5) Marca como lido na tabela
+        await conn.query(
+          `UPDATE SF_EMAIL_PROCESSADO
+              SET LIDO_TABELA = 1
+            WHERE ID = ?`,
+          [idProcessado]
+        );
+
+        // 6) Opcional: marcar como lido no Outlook
+        try {
+          await marcarEmailComoLidoOutlook(messageId);
+          await conn.query(
+            `UPDATE SF_EMAIL_PROCESSADO
+                SET LIDO_OUTLOOK = 1
+              WHERE ID = ?`,
+            [idProcessado]
+          );
+        } catch (e) {
+          console.error(
+            'Falha ao marcar como lido no Outlook (continua assim mesmo):',
+            e.message
+          );
+        }
+      }
+    }
+
+    conn.release();
+  } catch (err) {
+    conn.release();
+    console.error('Erro em processarEmailsOffice365:', err);
+  }
+}
+
+async function baixarESalvarAnexos(conn, emailProcessadoId, messageId) {
+  // pega a lista de attachments
+  const path = `/users/${encodeURIComponent(
+    MS_USER_EMAIL
+  )}/messages/${messageId}/attachments`;
+
+  const data = await graphRequest(path);
+  const anexos = Array.isArray(data.value) ? data.value : [];
+
+  for (const at of anexos) {
+    // fileAttachment tem contentBytes
+    if (
+      at['@odata.type'] !== '#microsoft.graph.fileAttachment' ||
+      !at.contentBytes
+    ) {
+      continue;
+    }
+
+    const nomeOriginal = at.name || 'anexo';
+    const contentType = at.contentType || null;
+    const buffer = Buffer.from(at.contentBytes, 'base64');
+
+    const { caminhoAbsoluto, caminhoRelativo, nomeFinal } =
+      gerarCaminhoAnexo(nomeOriginal);
+
+    // grava arquivo no volume
+    await fs.promises.writeFile(caminhoAbsoluto, buffer);
+
+    await conn.query(
+      `INSERT INTO SF_EMAIL_ANEXO
+        (EMAIL_PROCESSADO_ID, NOME_ORIGINAL, NOME_SALVO,
+         CAMINHO_RELATIVO, TAMANHO_BYTES, CONTENT_TYPE)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        emailProcessadoId,
+        nomeOriginal,
+        nomeFinal,
+        caminhoRelativo,
+        buffer.length,
+        contentType,
+      ]
+    );
+  }
+}
+
+async function marcarEmailComoLidoOutlook(messageId) {
+  const path = `/users/${encodeURIComponent(
+    MS_USER_EMAIL
+  )}/messages/${messageId}`;
+  const token = await obterAccessTokenGraph();
+  const url = `https://graph.microsoft.com/v1.0${path}`;
+
+  const resp = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ isRead: true }),
+  });
+
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Erro ao marcar email como lido: ${txt}`);
+  }
+}
+
+// todos os dias às 06:00
+cron.schedule('0 6 * * *', () => {
+  console.log('Rodando job de leitura de emails (06:00)...');
+  processarEmailsOffice365();
+});
+
+// todos os dias às 20:00
+cron.schedule('0 20 * * *', () => {
+  console.log('Rodando job de leitura de emails (20:00)...');
+  processarEmailsOffice365();
+});
+
+app.post('/cron/processar-emails-office365', async (req, res) => {
+  processarEmailsOffice365()
+    .then(() => res.json({ ok: true }))
+    .catch(err => {
+      console.error(err);
+      res.status(500).json({ ok: false, erro: err.message });
+    });
+});
+
+app.post('/test-emails-office365', async (req, res) => {
+  console.log('Testando leitura de emails...');
+  await processarEmailsOffice365();
+  res.json({ ok: true, message: 'Job executado!' });
+});
+
+function textoLivre(v) {
+  return String(v ?? '').trim();
+}
+
+function normalizarDocumentoPDF(v) {
+  return String(v ?? '').replace(/\D+/g, '').trim();
+}
+
+function parseDecimalBr(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return 0;
+  return Number(s.replace(/\./g, '').replace(',', '.')) || 0;
+}
+
+function dataBrParaMysql(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return null;
+
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+
+  const [, dd, mm, yyyy] = m;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// importação Nota PDF
+
+app.get('/api/estoque/produtos', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+         id AS ID,
+         codigo AS CODIGO,
+         descricao AS DESCRICAO,
+         unidade AS UNIDADE
+       FROM SF_PRODUTOS
+       WHERE ativo = 1
+       ORDER BY descricao ASC`
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    console.error('Erro /api/estoque/produtos GET:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar produtos.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/estoque/produtos', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const descricao = textoLivre(req.body?.descricao).toUpperCase();
+    const unidade = textoLivre(req.body?.unidade).toUpperCase() || null;
+    let codigo = textoLivre(req.body?.codigo).toUpperCase();
+
+    if (!descricao) {
+      return res.status(400).json({ success: false, message: 'Descrição é obrigatória.' });
+    }
+
+    await conn.beginTransaction();
+
+    if (!codigo) {
+      codigo = await gerarProximoCodigoProduto(conn);
+    }
+
+    const [r] = await conn.query(
+      `INSERT INTO SF_PRODUTOS (codigo, descricao, unidade, ativo)
+       VALUES (?, ?, ?, 1)`,
+      [codigo, descricao, unidade]
+    );
+
+    await conn.commit();
+
+    return res.status(201).json({
+      success: true,
+      item: {
+        ID: r.insertId,
+        CODIGO: codigo,
+        DESCRICAO: descricao,
+        UNIDADE: unidade
+      }
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/estoque/produtos POST:', err);
+
+    if (err?.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({
+        success: false,
+        message: 'Já existe produto com esse código.'
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao cadastrar produto.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
+  try {
+    const cnpjEmitente = normalizarDocumentoPDF(req.body?.emitenteCnpj);
+    const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
+
+    if (!cnpjEmitente) {
+      return res.status(400).json({
+        success: false,
+        message: 'CNPJ do emitente é obrigatório.'
+      });
+    }
+
+    const [fornecedorRows] = await pool.query(
+      `SELECT id, razao_social, cnpj
+       FROM SF_FORNECEDOR
+       WHERE cnpj = ?
+       LIMIT 1`,
+      [cnpjEmitente]
+    );
+
+    const fornecedor = fornecedorRows[0] || null;
+
+    if (!fornecedor || !itens.length) {
+      return res.json({
+        success: true,
+        fornecedorEncontrado: !!fornecedor,
+        fornecedor,
+        itens: itens.map(item => ({
+          codigo: item.codigo || '',
+          descricao: item.descricao || '',
+          vinculado: false,
+          multiplosVinculos: false,
+          produtosVinculados: [],
+          produto: null
+        }))
+      });
+    }
+
+    const codigos = [...new Set(
+      itens.map(item => textoLivre(item.codigo)).filter(Boolean)
+    )];
+
+    if (!codigos.length) {
+      return res.json({
+        success: true,
+        fornecedorEncontrado: true,
+        fornecedor,
+        itens: itens.map(item => ({
+          codigo: item.codigo || '',
+          descricao: item.descricao || '',
+          vinculado: false,
+          multiplosVinculos: false,
+          produtosVinculados: [],
+          produto: null
+        }))
+      });
+    }
+
+    const placeholders = codigos.map(() => '?').join(',');
+
+    const [amarracoes] = await pool.query(
+      `
+      SELECT
+        A.id AS ID,
+        A.produto_fornecedor_codigo AS COD_PRODUTO_NF,
+        A.produto_fornecedor_descricao AS DESCRICAO_PRODUTO_NF,
+        A.produto_sistema_id AS ID_PRODUTO,
+        P.codigo AS CODIGO_SISTEMA,
+        P.descricao AS DESCRICAO_SISTEMA,
+        P.unidade AS UNIDADE_SISTEMA
+      FROM SF_PRODUTOS_AMARRACAO A
+      INNER JOIN SF_PRODUTOS P
+              ON P.id = A.produto_sistema_id
+      WHERE A.fornecedor_id = ?
+        AND A.produto_fornecedor_codigo IN (${placeholders})
+      ORDER BY P.descricao ASC
+      `,
+      [fornecedor.id, ...codigos]
+    );
+
+    const mapa = new Map();
+
+    for (const am of amarracoes) {
+      const chave = textoLivre(am.COD_PRODUTO_NF);
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave).push({
+        ID_AMARRACAO: am.ID,
+        ID: am.ID_PRODUTO,
+        CODIGO: am.CODIGO_SISTEMA,
+        DESCRICAO: am.DESCRICAO_SISTEMA,
+        UNIDADE: am.UNIDADE_SISTEMA
+      });
+    }
+
+    return res.json({
+      success: true,
+      fornecedorEncontrado: true,
+      fornecedor,
+      itens: itens.map(item => {
+        const codigo = textoLivre(item.codigo);
+        const vinculados = mapa.get(codigo) || [];
+
+        return {
+          codigo: item.codigo || '',
+          descricao: item.descricao || '',
+          vinculado: vinculados.length > 0,
+          multiplosVinculos: vinculados.length > 1,
+          produtosVinculados: vinculados,
+          produto: vinculados.length === 1 ? vinculados[0] : null
+        };
+      })
+    });
+  } catch (err) {
+    console.error('Erro /api/estoque/importacao-pdf/validar:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao validar importação do PDF.',
+      error: err.message
+    });
+  }
+});
+
+
+async function gerarProximoCodigoProduto(connOuPool = pool) {
+  const [rows] = await connOuPool.query(`
+    SELECT MAX(CAST(codigo AS UNSIGNED)) AS ULTIMO
+    FROM SF_PRODUTOS
+    WHERE codigo REGEXP '^[0-9]+$'
+  `);
+
+  const ultimo = Number(rows?.[0]?.ULTIMO || 0);
+  const proximo = ultimo + 1;
+
+  return String(proximo).padStart(6, '0');
+}
+
+app.get('/api/estoque/produtos/proximo-codigo', async (req, res) => {
+  try {
+    const codigo = await gerarProximoCodigoProduto(pool);
+
+    return res.json({
+      success: true,
+      codigo
+    });
+  } catch (err) {
+    console.error('Erro /api/estoque/produtos/proximo-codigo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao gerar próximo código do produto.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/estoque/produtos-amarracao/adicionar', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const idFornecedor = Number(req.body?.id_fornecedor);
+    const codProdutoNf = textoLivre(req.body?.cod_produto_nf);
+    const descricaoProdutoNf = textoLivre(req.body?.descricao_produto_nf).toUpperCase() || null;
+    const idProduto = Number(req.body?.id_produto);
+    const usuario = textoLivre(req.body?.usuario);
+
+    if (!idFornecedor) {
+      return res.status(400).json({ success: false, message: 'Fornecedor é obrigatório.' });
+    }
+
+    if (!codProdutoNf) {
+      return res.status(400).json({ success: false, message: 'Código do produto da nota é obrigatório.' });
+    }
+
+    if (!idProduto) {
+      return res.status(400).json({ success: false, message: 'Produto do sistema é obrigatório.' });
+    }
+
+    await conn.beginTransaction();
+
+    const [jaExiste] = await conn.query(
+      `
+      SELECT id
+      FROM SF_PRODUTOS_AMARRACAO
+      WHERE fornecedor_id = ?
+        AND produto_fornecedor_codigo = ?
+        AND produto_sistema_id = ?
+      LIMIT 1
+      `,
+      [idFornecedor, codProdutoNf, idProduto]
+    );
+
+    if (jaExiste.length) {
+      await conn.rollback();
+      return res.json({
+        success: true,
+        id: jaExiste[0].id,
+        jaExistia: true,
+        message: 'Vínculo já existente.'
+      });
+    }
+
+    const [r] = await conn.query(
+      `
+      INSERT INTO SF_PRODUTOS_AMARRACAO
+      (
+        fornecedor_id,
+        produto_fornecedor_codigo,
+        produto_fornecedor_descricao,
+        produto_sistema_id
+      )
+      VALUES (?, ?, ?, ?)
+      `,
+      [idFornecedor, codProdutoNf, descricaoProdutoNf, idProduto]
+    );
+
+    await conn.query(
+      `
+      INSERT INTO SF_PRODUTOS_AMARRACAO_LOG
+      (
+        amarracao_id,
+        fornecedor_id,
+        produto_fornecedor_codigo,
+        produto_fornecedor_descricao,
+        produto_sistema_id_anterior,
+        produto_sistema_id_novo,
+        acao,
+        usuario
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'CRIAR', ?)
+      `,
+      [r.insertId, idFornecedor, codProdutoNf, descricaoProdutoNf, null, idProduto, usuario || null]
+    );
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      id: r.insertId,
+      jaExistia: false,
+      message: 'Vínculo salvo com sucesso.'
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/estoque/produtos-amarracao/adicionar:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao adicionar vínculo.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+
+app.put('/api/estoque/produtos-amarracao/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const idAmarracao = Number(req.params.id);
+    const idProduto = Number(req.body?.id_produto);
+    const usuario = textoLivre(req.body?.usuario);
+
+    if (!idAmarracao) {
+      return res.status(400).json({ success: false, message: 'ID da amarração é obrigatório.' });
+    }
+
+    if (!idProduto) {
+      return res.status(400).json({ success: false, message: 'Produto do sistema é obrigatório.' });
+    }
+
+    await conn.beginTransaction();
+
+    const [rows] = await conn.query(
+      `
+      SELECT id, fornecedor_id, produto_fornecedor_codigo, produto_fornecedor_descricao, produto_sistema_id
+      FROM SF_PRODUTOS_AMARRACAO
+      WHERE id = ?
+      LIMIT 1
+      `,
+      [idAmarracao]
+    );
+
+    const atual = rows[0];
+
+    if (!atual) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Amarração não encontrada.' });
+    }
+
+    await conn.query(
+      `
+      UPDATE SF_PRODUTOS_AMARRACAO
+      SET produto_sistema_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+      `,
+      [idProduto, idAmarracao]
+    );
+
+    await conn.query(
+      `
+      INSERT INTO SF_PRODUTOS_AMARRACAO_LOG
+      (
+        amarracao_id,
+        fornecedor_id,
+        produto_fornecedor_codigo,
+        produto_fornecedor_descricao,
+        produto_sistema_id_anterior,
+        produto_sistema_id_novo,
+        acao,
+        usuario
+      )
+      VALUES (?, ?, ?, ?, ?, ?, 'EDITAR', ?)
+      `,
+      [
+        atual.id,
+        atual.fornecedor_id,
+        atual.produto_fornecedor_codigo,
+        atual.produto_fornecedor_descricao,
+        atual.produto_sistema_id,
+        idProduto,
+        usuario || null
+      ]
+    );
+
+    await conn.commit();
+
+    return res.json({ success: true });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro PUT /api/estoque/produtos-amarracao/:id:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao editar vínculo.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const emitente = textoLivre(req.body?.emitente).toUpperCase();
+    const emitenteCnpj = normalizarDocumentoPDF(req.body?.emitenteCnpj);
+    const destinatarioCnpj = normalizarDocumentoPDF(req.body?.destinatarioCnpj);
+    const numeroNota = textoLivre(req.body?.numeroNota);
+    const serie = textoLivre(req.body?.serie) || null;
+    const dataEmissao = dataBrParaMysql(req.body?.dataEmissao);
+    const usuarioRegistro = textoLivre(req.body?.usuarioRegistro);
+    const local = textoLivre(req.body?.local).toUpperCase() || null;
+    const idLocalAlmoxarifado = Number(req.body?.idLocalAlmoxarifado) || null;
+    const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
+
+    if (!emitenteCnpj) {
+      return res.status(400).json({
+        success: false,
+        message: 'CNPJ do emitente é obrigatório.'
+      });
+    }
+
+    if (!numeroNota) {
+      return res.status(400).json({
+        success: false,
+        message: 'Número da nota é obrigatório.'
+      });
+    }
+
+    if (!dataEmissao) {
+      return res.status(400).json({
+        success: false,
+        message: 'Data de emissão inválida.'
+      });
+    }
+
+    if (!idLocalAlmoxarifado) {
+      return res.status(400).json({
+        success: false,
+        message: 'Local de armazenagem é obrigatório.'
+      });
+    }
+
+    if (!itens.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nenhum item informado para importação.'
+      });
+    }
+
+    await conn.beginTransaction();
+
+    const [localRows] = await conn.query(
+      `
+      SELECT ID, NOME
+      FROM SF_LOCAL_ALMOXARIFADO
+      WHERE ID = ?
+      LIMIT 1
+      `,
+      [idLocalAlmoxarifado]
+    );
+
+    const localSelecionado = localRows[0] || null;
+
+    if (!localSelecionado) {
+      throw new Error('Local de armazenagem não encontrado.');
+    }
+
+    const nomeLocal = textoLivre(localSelecionado.NOME).toUpperCase() || local;
+
+    let [fornecedorRows] = await conn.query(
+      `
+      SELECT id, razao_social, cnpj
+      FROM SF_FORNECEDOR
+      WHERE cnpj = ?
+      LIMIT 1
+      `,
+      [emitenteCnpj]
+    );
+
+    let fornecedor = fornecedorRows[0] || null;
+
+    if (!fornecedor) {
+      const [rFornecedor] = await conn.query(
+        `
+        INSERT INTO SF_FORNECEDOR (razao_social, cnpj)
+        VALUES (?, ?)
+        `,
+        [emitente || emitenteCnpj, emitenteCnpj]
+      );
+
+      [fornecedorRows] = await conn.query(
+        `
+        SELECT id, razao_social, cnpj
+        FROM SF_FORNECEDOR
+        WHERE id = ?
+        LIMIT 1
+        `,
+        [rFornecedor.insertId]
+      );
+
+      fornecedor = fornecedorRows[0] || null;
+    }
+
+    const [entradaExistente] = await conn.query(
+      `
+      SELECT id
+      FROM SF_PRODUTO_ENTRADA
+      WHERE cnpj_emitente = ?
+        AND nota = ?
+        AND (
+          (serie IS NULL AND ? IS NULL)
+          OR serie = ?
+        )
+      LIMIT 1
+      `,
+      [emitenteCnpj, numeroNota, serie, serie]
+    );
+
+    if (entradaExistente.length) {
+      throw new Error(
+        `A nota ${numeroNota} série ${serie || 'SEM SÉRIE'} do emitente ${emitenteCnpj} já foi importada.`
+      );
+    }
+
+    for (const item of itens) {
+      const codProdutoNf = textoLivre(item.codigo);
+      const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase() || null;
+      const unidade = textoLivre(item.unidade).toUpperCase() || null;
+      const idProduto = Number(item.id_produto);
+      const codProdutoSistema = textoLivre(item.cod_produto_sistema).toUpperCase();
+      const qtd = parseDecimalBr(item.quantidade);
+      const valorUnit = parseDecimalBr(item.valorUnitario);
+      const valorTotal = parseDecimalBr(item.valorTotal);
+
+      if (!codProdutoNf) {
+        throw new Error('Existe item sem código do produto na nota.');
+      }
+
+      if (!idProduto) {
+        throw new Error(`O item ${codProdutoNf} está sem produto do sistema vinculado.`);
+      }
+
+      if (!codProdutoSistema) {
+        throw new Error(`O item ${codProdutoNf} está sem código do produto do sistema.`);
+      }
+
+      const [produtoRows] = await conn.query(
+        `
+        SELECT id, codigo, descricao, unidade
+        FROM SF_PRODUTOS
+        WHERE id = ?
+          AND ativo = 1
+        LIMIT 1
+        `,
+        [idProduto]
+      );
+
+      const produtoSistema = produtoRows[0] || null;
+
+      if (!produtoSistema) {
+        throw new Error(`Produto do sistema não encontrado para o item ${codProdutoNf}.`);
+      }
+
+      const [amarracaoExistente] = await conn.query(
+        `
+        SELECT id
+        FROM SF_PRODUTOS_AMARRACAO
+        WHERE fornecedor_id = ?
+          AND produto_fornecedor_codigo = ?
+          AND produto_sistema_id = ?
+        LIMIT 1
+        `,
+        [fornecedor.id, codProdutoNf, idProduto]
+      );
+
+      if (!amarracaoExistente.length) {
+        const [rAmarracao] = await conn.query(
+          `
+          INSERT INTO SF_PRODUTOS_AMARRACAO
+          (
+            fornecedor_id,
+            produto_fornecedor_codigo,
+            produto_fornecedor_descricao,
+            produto_sistema_id
+          )
+          VALUES (?, ?, ?, ?)
+          `,
+          [fornecedor.id, codProdutoNf, descricaoProdutoNf, idProduto]
+        );
+
+        await conn.query(
+          `
+          INSERT INTO SF_PRODUTOS_AMARRACAO_LOG
+          (
+            amarracao_id,
+            fornecedor_id,
+            produto_fornecedor_codigo,
+            produto_fornecedor_descricao,
+            produto_sistema_id_anterior,
+            produto_sistema_id_novo,
+            acao,
+            usuario
+          )
+          VALUES (?, ?, ?, ?, ?, ?, 'CRIAR_IMPORTACAO', ?)
+          `,
+          [
+            rAmarracao.insertId,
+            fornecedor.id,
+            codProdutoNf,
+            descricaoProdutoNf,
+            null,
+            idProduto,
+            usuarioRegistro || null
+          ]
+        );
+      }
+
+      await conn.query(
+        `
+        INSERT INTO SF_PRODUTO_ENTRADA
+        (
+          fornecedor_id,
+          nota,
+          serie,
+          cnpj_emitente,
+          cnpj_remetente,
+          data_emissao,
+          data_registro,
+          usuario_registro,
+          qtd_nf,
+          valor_unitario_nf,
+          valor_total_nf,
+          cod_produto_nf,
+          descricao_produto_nf,
+          unidade_nf,
+          cod_produto_sistema,
+          produto_sistema_id,
+          LOCAL,
+          ID_LOCAL_ALMOXARIFADO,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        `,
+        [
+          fornecedor.id,
+          numeroNota,
+          serie,
+          emitenteCnpj,
+          destinatarioCnpj || null,
+          dataEmissao,
+          usuarioRegistro || null,
+          qtd,
+          valorUnit,
+          valorTotal,
+          codProdutoNf,
+          descricaoProdutoNf,
+          unidade,
+          codProdutoSistema,
+          idProduto,
+          nomeLocal,
+          idLocalAlmoxarifado
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Importação realizada com sucesso.',
+      fornecedor
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/estoque/importacao-pdf/confirmar:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao confirmar importação do PDF.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+
+
+app.get('/api/locais-almoxarifado', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ID, NOME
+      FROM SF_LOCAL_ALMOXARIFADO
+      WHERE ATIVO = 1
+      ORDER BY NOME ASC
+    `);
+
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ erro: 'Erro ao listar locais.' });
+  }
+});
+
+app.post('/api/locais-almoxarifado', async (req, res) => {
+  try {
+    const nome = String(req.body?.nome || '').trim().toUpperCase();
+
+    if (!nome) {
+      return res.status(400).json({ erro: 'Informe o nome do local.' });
+    }
+
+    const [existente] = await pool.query(
+      `SELECT ID FROM SF_LOCAL_ALMOXARIFADO WHERE UPPER(NOME) = ? LIMIT 1`,
+      [nome]
+    );
+
+    if (existente.length) {
+      return res.status(409).json({ erro: 'Já existe um local com esse nome.' });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO SF_LOCAL_ALMOXARIFADO (NOME) VALUES (?)`,
+      [nome]
+    );
+
+    res.json({
+      ok: true,
+      id: result.insertId,
+      nome
+    });
+  } catch (error) {
+    console.error(error);
+
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ erro: 'Já existe um local com esse nome.' });
+    }
+
+    res.status(500).json({ erro: 'Erro ao cadastrar local.' });
+  }
+});
+
 app.get('/api/estoque/controle/escritorio', async (req, res) => {
   let conn;
 
@@ -45,3 +2748,13 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
+
+// =====================
+// Inicia servidor (sempre por último)
+// =====================
+app.listen(PORT, () => {
+  console.log(`🚀 API rodando na porta ${PORT}`);
+  console.log('✅ Teste: /health');
+});
+
