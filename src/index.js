@@ -2369,6 +2369,8 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     const serie = textoLivre(req.body?.serie) || null;
     const dataEmissao = dataBrParaMysql(req.body?.dataEmissao);
     const usuarioRegistro = textoLivre(req.body?.usuarioRegistro);
+    const local = textoLivre(req.body?.local).toUpperCase() || null;
+    const idLocalAlmoxarifado = Number(req.body?.idLocalAlmoxarifado) || null;
     const itens = Array.isArray(req.body?.itens) ? req.body.itens : [];
 
     if (!emitenteCnpj) {
@@ -2392,6 +2394,13 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
       });
     }
 
+    if (!idLocalAlmoxarifado) {
+      return res.status(400).json({
+        success: false,
+        message: 'Local de armazenagem é obrigatório.'
+      });
+    }
+
     if (!itens.length) {
       return res.status(400).json({
         success: false,
@@ -2400,6 +2409,24 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     }
 
     await conn.beginTransaction();
+
+    const [localRows] = await conn.query(
+      `
+      SELECT ID, NOME
+      FROM SF_LOCAIS_ALMOXARIFADO
+      WHERE ID = ?
+      LIMIT 1
+      `,
+      [idLocalAlmoxarifado]
+    );
+
+    const localSelecionado = localRows[0] || null;
+
+    if (!localSelecionado) {
+      throw new Error('Local de armazenagem não encontrado.');
+    }
+
+    const nomeLocal = textoLivre(localSelecionado.NOME).toUpperCase() || local;
 
     let [fornecedorRows] = await conn.query(
       `
@@ -2569,9 +2596,11 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           unidade_nf,
           cod_produto_sistema,
           produto_sistema_id,
+          LOCAL,
+          ID_LOCAL_ALMOXARIFADO,
           created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `,
         [
           fornecedor.id,
@@ -2588,7 +2617,9 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           descricaoProdutoNf,
           unidade,
           codProdutoSistema,
-          idProduto
+          idProduto,
+          nomeLocal,
+          idLocalAlmoxarifado
         ]
       );
     }
@@ -2613,6 +2644,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     conn.release();
   }
 });
+
 
 app.get('/api/locais-almoxarifado', async (req, res) => {
   try {
