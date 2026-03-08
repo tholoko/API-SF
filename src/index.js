@@ -2028,9 +2028,9 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
     }
 
     const [fornecedorRows] = await pool.query(
-      `SELECT id, razao_social, cnpj
+      `SELECT ID, RAZAO_SOCIAL, CNPJ
          FROM SF_FORNECEDOR
-        WHERE cnpj = ?
+        WHERE CNPJ = ?
         LIMIT 1`,
       [cnpjEmitente]
     );
@@ -2090,6 +2090,7 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
       [fornecedor.id, ...codigos]
     );
 
+
     const mapa = new Map(amarracoes.map(a => [a.COD_PRODUTO_NF, a]));
 
     return res.json({
@@ -2120,7 +2121,6 @@ app.post('/api/estoque/importacao-pdf/validar', async (req, res) => {
     });
   }
 });
-
 
 app.post('/api/estoque/produtos-amarracao', async (req, res) => {
   try {
