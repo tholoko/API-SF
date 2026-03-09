@@ -2645,8 +2645,6 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
   }
 });
 
-
-
 app.get('/api/locais-almoxarifado', async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -2746,6 +2744,80 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     });
   } finally {
     if (conn) conn.release();
+  }
+});
+
+app.get('/api/estoque/produto-entrada/:produtoId', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const produtoId = Number(req.params.produtoId);
+    if (!produtoId) {
+      return res.status(400).json({ success: false, message: 'Produto inválido.' });
+    }
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        pe.id,
+        pe.nota,
+        pe.serie,
+        pe.data_emissao,
+        pe.data_registro,
+        pe.usuario_registro,
+        pe.qtd_nf,
+        pe.valor_unitario_nf,
+        pe.valor_total_nf,
+        pe.cod_produto_nf,
+        pe.descricao_produto_nf,
+        pe.unidade_nf,
+        pe.cod_produto_sistema,
+        pe.produto_sistema_id,
+        pe.local,
+        pe.id_local_almoxarifado,
+        pe.cnpj_emitente,
+        f.razao_social AS fornecedor
+      FROM SF_PRODUTO_ENTRADA pe
+      LEFT JOIN SF_FORNECEDOR f ON f.id = pe.fornecedor_id
+      WHERE pe.produto_sistema_id = ?
+      ORDER BY pe.data_emissao DESC, pe.id DESC
+      `,
+      [produtoId]
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    console.error('Erro ao listar entradas:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao listar entradas.', error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+app.delete('/api/estoque/produto-entrada/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const id = Number(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID da entrada inválido.' });
+    }
+
+    await conn.query(
+      `DELETE FROM SF_PRODUTO_ENTRADA WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Entrada excluída com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao excluir entrada:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao excluir entrada.', error: err.message });
+  } finally {
+    conn.release();
   }
 });
 
