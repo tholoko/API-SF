@@ -2801,19 +2801,24 @@ app.put('/api/estoque/produto-entrada/:id', async (req, res) => {
     const id = Number(req.params.id);
     const qtd = parseDecimalBr(req.body?.qtd_nf);
     const valorUnit = parseDecimalBr(req.body?.valor_unitario_nf);
+    const usuario = req.body?.usuario || req.user?.nome || req.user?.email || 'Não informado';
     const valorTotal = Number(qtd || 0) * Number(valorUnit || 0);
 
     if (!id) {
       return res.status(400).json({ success: false, message: 'ID da entrada inválido.' });
     }
 
-    if (!qtd || qtd <= 0) {
-      return res.status(400).json({ success: false, message: 'Quantidade inválida.' });
+    const [rows] = await conn.query(
+      `SELECT * FROM SF_PRODUTO_ENTRADA WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    const atual = rows?.[0];
+    if (!atual) {
+      return res.status(404).json({ success: false, message: 'Entrada não encontrada.' });
     }
 
-    if (valorUnit < 0) {
-      return res.status(400).json({ success: false, message: 'Valor unitário inválido.' });
-    }
+    await conn.beginTransaction();
 
     await conn.query(
       `
@@ -2827,11 +2832,27 @@ app.put('/api/estoque/produto-entrada/:id', async (req, res) => {
       [qtd, valorUnit, valorTotal, id]
     );
 
-    return res.json({
-      success: true,
-      message: 'Entrada atualizada com sucesso.'
+    const depois = {
+      ...atual,
+      qtd_nf: qtd,
+      valor_unitario_nf: valorUnit,
+      valor_total_nf: valorTotal
+    };
+
+    await registrarLogProdutoEntrada(conn, {
+      idEntrada: id,
+      acao: 'UPDATE',
+      usuario,
+      antes: atual,
+      depois,
+      observacao: 'Edição manual da entrada'
     });
+
+    await conn.commit();
+
+    return res.json({ success: true, message: 'Entrada atualizada com sucesso.' });
   } catch (err) {
+    await conn.rollback();
     console.error('Erro ao editar entrada:', err);
     return res.status(500).json({ success: false, message: 'Erro ao editar entrada.', error: err.message });
   } finally {
@@ -2839,33 +2860,149 @@ app.put('/api/estoque/produto-entrada/:id', async (req, res) => {
   }
 });
 
-
 app.delete('/api/estoque/produto-entrada/:id', async (req, res) => {
   const conn = await pool.getConnection();
 
   try {
     const id = Number(req.params.id);
+    const usuario = req.body?.usuario || req.user?.nome || req.user?.email || 'Não informado';
 
     if (!id) {
       return res.status(400).json({ success: false, message: 'ID da entrada inválido.' });
     }
+
+    const [rows] = await conn.query(
+      `SELECT * FROM SF_PRODUTO_ENTRADA WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    const atual = rows?.[0];
+    if (!atual) {
+      return res.status(404).json({ success: false, message: 'Entrada não encontrada.' });
+    }
+
+    await conn.beginTransaction();
+
+    await registrarLogProdutoEntrada(conn, {
+      idEntrada: id,
+      acao: 'DELETE',
+      usuario,
+      antes: atual,
+      depois: null,
+      observacao: 'Exclusão manual da entrada'
+    });
 
     await conn.query(
       `DELETE FROM SF_PRODUTO_ENTRADA WHERE id = ? LIMIT 1`,
       [id]
     );
 
-    return res.json({
-      success: true,
-      message: 'Entrada excluída com sucesso.'
-    });
+    await conn.commit();
+
+    return res.json({ success: true, message: 'Entrada excluída com sucesso.' });
   } catch (err) {
+    await conn.rollback();
     console.error('Erro ao excluir entrada:', err);
     return res.status(500).json({ success: false, message: 'Erro ao excluir entrada.', error: err.message });
   } finally {
     conn.release();
   }
 });
+
+
+async function registrarLogProdutoEntrada(conn, {
+  idEntrada,
+  acao,
+  usuario,
+  antes = null,
+  depois = null,
+  observacao = null
+}) {
+  await conn.query(
+    `
+    INSERT INTO SF_PRODUTO_ENTRADA_LOG (
+      ID_ENTRADA,
+      ACAO,
+      USUARIO,
+      QTD_NF_ANTES,
+      QTD_NF_DEPOIS,
+      VALOR_UNITARIO_NF_ANTES,
+      VALOR_UNITARIO_NF_DEPOIS,
+      VALOR_TOTAL_NF_ANTES,
+      VALOR_TOTAL_NF_DEPOIS,
+      DADOS_ANTES,
+      DADOS_DEPOIS,
+      OBSERVACAO
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      Number(idEntrada),
+      String(acao || '').toUpperCase(),
+      usuario || null,
+      antes?.qtd_nf ?? null,
+      depois?.qtd_nf ?? null,
+      antes?.valor_unitario_nf ?? null,
+      depois?.valor_unitario_nf ?? null,
+      antes?.valor_total_nf ?? null,
+      depois?.valor_total_nf ?? null,
+      antes ? JSON.stringify(antes) : null,
+      depois ? JSON.stringify(depois) : null,
+      observacao || null
+    ]
+  );
+}
+
+app.get('/api/estoque/produto-entrada-log/produto/:produtoId', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const produtoId = Number(req.params.produtoId);
+
+    if (!produtoId) {
+      return res.status(400).json({ success: false, message: 'Produto inválido.' });
+    }
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        l.ID,
+        l.ID_ENTRADA,
+        l.ACAO,
+        l.USUARIO,
+        l.DATA_ALTERACAO,
+        l.QTD_NF_ANTES,
+        l.QTD_NF_DEPOIS,
+        l.VALOR_UNITARIO_NF_ANTES,
+        l.VALOR_UNITARIO_NF_DEPOIS,
+        l.VALOR_TOTAL_NF_ANTES,
+        l.VALOR_TOTAL_NF_DEPOIS,
+        l.OBSERVACAO,
+        e.produto_sistema_id,
+        e.cod_produto_nf,
+        e.descricao_produto_nf,
+        e.nota,
+        e.serie
+      FROM SF_PRODUTO_ENTRADA_LOG l
+      INNER JOIN SF_PRODUTO_ENTRADA e ON e.id = l.ID_ENTRADA
+      WHERE e.produto_sistema_id = ?
+      ORDER BY l.DATA_ALTERACAO DESC, l.ID DESC
+      `,
+      [produtoId]
+    );
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    console.error('Erro ao buscar histórico da entrada:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar histórico da entrada.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
 
 
 // =====================
