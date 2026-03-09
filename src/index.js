@@ -3009,6 +3009,41 @@ function textolivreTr(v, max = 255) {
   return String(v ?? '').trim().slice(0, max);
 }
 
+async function validarProdutoSistema(conn, idProduto) {
+  const [rows] = await conn.query(
+    `
+    SELECT
+      p.id,
+      p.codigo,
+      p.descricao,
+      p.unidade,
+      p.ativo
+    FROM SF_PRODUTOS p
+    WHERE p.id = ?
+    LIMIT 1
+    `,
+    [Number(idProduto)]
+  );
+
+  return rows[0] || null;
+}
+
+async function validarLocalAlmoxarifado(conn, idLocal) {
+  const [rows] = await conn.query(
+    `
+    SELECT
+      l.ID,
+      l.NOME
+    FROM SF_LOCAL_ALMOXARIFADO l
+    WHERE l.ID = ?
+    LIMIT 1
+    `,
+    [Number(idLocal)]
+  );
+
+  return rows[0] || null;
+}
+
 async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTransferenciaId = null) {
   const paramsEntradas = [Number(idProduto), Number(idLocalOrigem)];
   const [rowsEntradas] = await conn.query(
@@ -3102,6 +3137,15 @@ app.get('/api/estoque/produto-entrada-log/produto/:produtoId', async (req, res) 
       return res.status(400).json({ success: false, message: 'Produto inválido.' });
     }
 
+    const produto = await validarProdutoSistema(conn, produtoId);
+
+    if (!produto) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
     const [rows] = await conn.query(
       `
       SELECT
@@ -3121,7 +3165,8 @@ app.get('/api/estoque/produto-entrada-log/produto/:produtoId', async (req, res) 
         e.cod_produto_nf,
         e.descricao_produto_nf,
         e.nota,
-        e.serie
+        e.serie,
+        e.ID_LOCAL_ALMOXARIFADO
       FROM SF_PRODUTO_ENTRADA_LOG l
       INNER JOIN SF_PRODUTO_ENTRADA e ON e.id = l.ID_ENTRADA
       WHERE e.produto_sistema_id = ?
@@ -3130,7 +3175,11 @@ app.get('/api/estoque/produto-entrada-log/produto/:produtoId', async (req, res) 
       [produtoId]
     );
 
-    return res.json({ success: true, items: rows });
+    return res.json({
+      success: true,
+      produto,
+      items: rows
+    });
   } catch (err) {
     console.error('Erro ao buscar histórico da entrada:', err);
     return res.status(500).json({
@@ -3159,10 +3208,28 @@ app.get('/api/estoque/transferencias/saldo', async (req, res) => {
 
     conn = await pool.getConnection();
 
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalAlmoxarifado(conn, idLocalOrigem);
+    if (!localOrigem) {
+      return res.status(404).json({
+        success: false,
+        message: 'Local de origem não encontrado.'
+      });
+    }
+
     const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
 
     return res.json({
       success: true,
+      produto,
+      localOrigem,
       ...saldoInfo
     });
   } catch (err) {
@@ -3194,17 +3261,35 @@ app.get('/api/estoque/transferencias', async (req, res) => {
 
     conn = await pool.getConnection();
 
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalAlmoxarifado(conn, idLocalOrigem);
+    if (!localOrigem) {
+      return res.status(404).json({
+        success: false,
+        message: 'Local de origem não encontrado.'
+      });
+    }
+
     const [rows] = await conn.query(
       `
       SELECT
         t.ID,
         t.ID_PRODUTO,
+        p.codigo AS CODIGO_PRODUTO,
+        p.descricao AS DESCRICAO_PRODUTO,
+        COALESCE(t.UNIDADE, p.unidade) AS UNIDADE,
         t.ID_LOCAL_ORIGEM,
         lo.NOME AS LOCAL_ORIGEM,
         t.ID_LOCAL_DESTINO,
         ld.NOME AS LOCAL_DESTINO,
         t.QUANTIDADE,
-        t.UNIDADE,
         t.OBSERVACAO,
         t.STATUS_TRANSFERENCIA,
         t.USUARIO_CADASTRO,
@@ -3212,6 +3297,8 @@ app.get('/api/estoque/transferencias', async (req, res) => {
         t.USUARIO_ALTERACAO,
         t.DATA_ALTERACAO
       FROM SF_ESTOQUE_TRANSFERENCIA t
+      INNER JOIN SF_PRODUTOS p
+        ON p.id = t.ID_PRODUTO
       LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
         ON lo.ID = t.ID_LOCAL_ORIGEM
       LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
@@ -3227,6 +3314,8 @@ app.get('/api/estoque/transferencias', async (req, res) => {
 
     return res.json({
       success: true,
+      produto,
+      localOrigem,
       saldo: saldoInfo.saldo,
       qtdEntrada: saldoInfo.qtdEntrada,
       qtdTransferida: saldoInfo.qtdTransferida,
@@ -3281,8 +3370,51 @@ app.post('/api/estoque/transferencias', async (req, res) => {
     conn = await pool.getConnection();
     await conn.beginTransaction();
 
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    if (Number(produto.ativo ?? 1) !== 1) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'O produto informado está inativo.'
+      });
+    }
+
+    const localOrigem = await validarLocalAlmoxarifado(conn, idLocalOrigem);
+    if (!localOrigem) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Local de origem não encontrado.'
+      });
+    }
+
+    const localDestino = await validarLocalAlmoxarifado(conn, idLocalDestino);
+    if (!localDestino) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Local de destino não encontrado.'
+      });
+    }
+
     const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
     const saldoAntes = saldoInfo.saldo;
+
+    if (saldoInfo.qtdEntrada <= 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Não existe entrada desse produto nesse local para transferir.'
+      });
+    }
 
     if (quantidade > saldoAntes) {
       await conn.rollback();
@@ -3312,7 +3444,7 @@ app.post('/api/estoque/transferencias', async (req, res) => {
         idLocalOrigem,
         idLocalDestino,
         quantidade,
-        unidade || null,
+        unidade || produto.unidade || null,
         observacao || null,
         usuario
       ]
@@ -3418,6 +3550,33 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
       });
     }
 
+    const produto = await validarProdutoSistema(conn, atual.ID_PRODUTO);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Produto vinculado à transferência não foi encontrado.'
+      });
+    }
+
+    const localOrigem = await validarLocalAlmoxarifado(conn, atual.ID_LOCAL_ORIGEM);
+    if (!localOrigem) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Local de origem da transferência não encontrado.'
+      });
+    }
+
+    const localDestino = await validarLocalAlmoxarifado(conn, idLocalDestino);
+    if (!localDestino) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Local de destino não encontrado.'
+      });
+    }
+
     if (Number(atual.ID_LOCAL_ORIGEM) === idLocalDestino) {
       await conn.rollback();
       return res.status(400).json({
@@ -3433,8 +3592,9 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
       idTransferencia
     );
 
-    const saldoAntes = saldoInfo.saldo + Number(atual.QUANTIDADE ?? 0);
-    const saldoMaximoPermitido = saldoInfo.saldo + Number(atual.QUANTIDADE ?? 0);
+    const quantidadeAtual = Number(atual.QUANTIDADE ?? 0);
+    const saldoAntes = saldoInfo.saldo + quantidadeAtual;
+    const saldoMaximoPermitido = saldoInfo.saldo + quantidadeAtual;
 
     if (quantidadeNova > saldoMaximoPermitido) {
       await conn.rollback();
@@ -3451,6 +3611,7 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
         ID_LOCAL_DESTINO = ?,
         QUANTIDADE = ?,
         OBSERVACAO = ?,
+        UNIDADE = ?,
         USUARIO_ALTERACAO = ?,
         DATA_ALTERACAO = NOW()
       WHERE ID = ?
@@ -3459,6 +3620,7 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
         idLocalDestino,
         quantidadeNova,
         observacao || null,
+        atual.UNIDADE || produto.unidade || null,
         usuario,
         idTransferencia
       ]
@@ -3546,6 +3708,15 @@ app.delete('/api/estoque/transferencias/:id', async (req, res) => {
       });
     }
 
+    const produto = await validarProdutoSistema(conn, atual.ID_PRODUTO);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Produto vinculado à transferência não foi encontrado.'
+      });
+    }
+
     const saldoInfo = await obterSaldoTransferivel(
       conn,
       atual.ID_PRODUTO,
@@ -3628,6 +3799,8 @@ app.get('/api/estoque/transferencias/:id/logs', async (req, res) => {
         l.ID_TRANSFERENCIA,
         l.ACAO,
         l.ID_PRODUTO,
+        p.codigo AS CODIGO_PRODUTO,
+        p.descricao AS DESCRICAO_PRODUTO,
         l.ID_LOCAL_ORIGEM,
         lo.NOME AS LOCAL_ORIGEM,
         l.ID_LOCAL_DESTINO,
@@ -3639,6 +3812,8 @@ app.get('/api/estoque/transferencias/:id/logs', async (req, res) => {
         l.OBSERVACAO,
         l.DATA_HORA
       FROM SF_ESTOQUE_TRANSFERENCIA_LOG l
+      LEFT JOIN SF_PRODUTOS p
+        ON p.id = l.ID_PRODUTO
       LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
         ON lo.ID = l.ID_LOCAL_ORIGEM
       LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
