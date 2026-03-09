@@ -2654,7 +2654,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           id: rEntrada.insertId,
           ...payloadEntradaLog
         },
-        observacao: 'Registro criado via importação de PDF'
+        observacao: 'Registro criado via importação de Nota Fiscal'
       });
     }
 
@@ -2746,6 +2746,7 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
         pe.produto_sistema_id AS id,
         COALESCE(p.codigo, pe.cod_produto_sistema) AS codigo_item,
         COALESCE(p.descricao, pe.descricao_produto_nf) AS descricao_item,
+        p.unidade AS unidade,
         SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_disponivel,
         0 AS qtd_em_pedido,
         pe.LOCAL AS local,
@@ -2759,6 +2760,7 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
         pe.produto_sistema_id,
         COALESCE(p.codigo, pe.cod_produto_sistema),
         COALESCE(p.descricao, pe.descricao_produto_nf),
+        p.unidade,
         pe.LOCAL,
         pe.ID_LOCAL_ALMOXARIFADO
       ORDER BY COALESCE(p.codigo, pe.cod_produto_sistema) ASC
@@ -2781,6 +2783,7 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 app.get('/api/estoque/produto-entrada/:produtoId', async (req, res) => {
   const conn = await pool.getConnection();
