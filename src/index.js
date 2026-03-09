@@ -2990,6 +2990,108 @@ async function registrarLogProdutoEntrada(conn, {
   );
 }
 
+function parseDecimal(value) {
+  if (value === null || value === undefined || value === '') return 0;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+
+  const s = String(value).trim();
+  if (!s) return 0;
+
+  const normalizado = s.includes(',')
+    ? s.replace(/\./g, '').replace(',', '.')
+    : s;
+
+  const n = Number(normalizado);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function textoLivre(v, max = 255) {
+  return String(v ?? '').trim().slice(0, max);
+}
+
+async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTransferenciaId = null) {
+  const paramsEntradas = [Number(idProduto), Number(idLocalOrigem)];
+  const [rowsEntradas] = await conn.query(
+    `
+    SELECT COALESCE(SUM(COALESCE(pe.qtd_nf, 0)), 0) AS qtd_entrada
+    FROM SF_PRODUTO_ENTRADA pe
+    WHERE pe.produto_sistema_id = ?
+      AND pe.ID_LOCAL_ALMOXARIFADO = ?
+    `,
+    paramsEntradas
+  );
+
+  const paramsTransferidas = [Number(idProduto), Number(idLocalOrigem)];
+  let sqlTransferidas = `
+    SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_transferida
+    FROM SF_ESTOQUE_TRANSFERENCIA t
+    WHERE t.ID_PRODUTO = ?
+      AND t.ID_LOCAL_ORIGEM = ?
+      AND t.STATUS_TRANSFERENCIA = 'ATIVA'
+  `;
+
+  if (ignoreTransferenciaId) {
+    sqlTransferidas += ` AND t.ID <> ?`;
+    paramsTransferidas.push(Number(ignoreTransferenciaId));
+  }
+
+  const [rowsTransferidas] = await conn.query(sqlTransferidas, paramsTransferidas);
+
+  const qtdEntrada = Number(rowsEntradas?.[0]?.qtd_entrada ?? 0);
+  const qtdTransferida = Number(rowsTransferidas?.[0]?.qtd_transferida ?? 0);
+  const saldo = qtdEntrada - qtdTransferida;
+
+  return {
+    qtdEntrada,
+    qtdTransferida,
+    saldo: saldo < 0 ? 0 : saldo
+  };
+}
+
+async function inserirLogTransferencia(conn, {
+  idTransferencia,
+  acao,
+  idProduto,
+  idLocalOrigem,
+  idLocalDestino = null,
+  saldoAntes,
+  quantidadeTransferida,
+  saldoDepois,
+  usuario,
+  observacao
+}) {
+  await conn.query(
+    `
+    INSERT INTO SF_ESTOQUE_TRANSFERENCIA_LOG
+      (
+        ID_TRANSFERENCIA,
+        ACAO,
+        ID_PRODUTO,
+        ID_LOCAL_ORIGEM,
+        ID_LOCAL_DESTINO,
+        SALDO_ANTES,
+        QUANTIDADE_TRANSFERIDA,
+        SALDO_DEPOIS,
+        USUARIO,
+        OBSERVACAO
+      )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      Number(idTransferencia),
+      textoLivre(acao, 20),
+      Number(idProduto),
+      Number(idLocalOrigem),
+      idLocalDestino ? Number(idLocalDestino) : null,
+      parseDecimal(saldoAntes),
+      parseDecimal(quantidadeTransferida),
+      parseDecimal(saldoDepois),
+      textoLivre(usuario, 150) || null,
+      textoLivre(observacao, 255) || null
+    ]
+  );
+}
+
 app.get('/api/estoque/produto-entrada-log/produto/:produtoId', async (req, res) => {
   const conn = await pool.getConnection();
 
@@ -3040,6 +3142,530 @@ app.get('/api/estoque/produto-entrada-log/produto/:produtoId', async (req, res) 
     conn.release();
   }
 });
+
+app.get('/api/estoque/transferencias/saldo', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.query.idProduto);
+    const idLocalOrigem = Number(req.query.idLocalOrigem);
+
+    if (!idProduto || !idLocalOrigem) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto e idLocalOrigem.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
+
+    return res.json({
+      success: true,
+      ...saldoInfo
+    });
+  } catch (err) {
+    console.error('Erro ao calcular saldo transferível:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao calcular saldo transferível.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/estoque/transferencias', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.query.idProduto);
+    const idLocalOrigem = Number(req.query.idLocalOrigem);
+
+    if (!idProduto || !idLocalOrigem) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto e idLocalOrigem.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        t.ID,
+        t.ID_PRODUTO,
+        t.ID_LOCAL_ORIGEM,
+        lo.NOME AS LOCAL_ORIGEM,
+        t.ID_LOCAL_DESTINO,
+        ld.NOME AS LOCAL_DESTINO,
+        t.QUANTIDADE,
+        t.UNIDADE,
+        t.OBSERVACAO,
+        t.STATUS_TRANSFERENCIA,
+        t.USUARIO_CADASTRO,
+        t.DATA_CADASTRO,
+        t.USUARIO_ALTERACAO,
+        t.DATA_ALTERACAO
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
+        ON lo.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+        ON ld.ID = t.ID_LOCAL_DESTINO
+      WHERE t.ID_PRODUTO = ?
+        AND t.ID_LOCAL_ORIGEM = ?
+      ORDER BY t.DATA_CADASTRO DESC, t.ID DESC
+      `,
+      [idProduto, idLocalOrigem]
+    );
+
+    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
+
+    return res.json({
+      success: true,
+      saldo: saldoInfo.saldo,
+      qtdEntrada: saldoInfo.qtdEntrada,
+      qtdTransferida: saldoInfo.qtdTransferida,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar transferências:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar transferências.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/estoque/transferencias', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.body.idProduto);
+    const idLocalOrigem = Number(req.body.idLocalOrigem);
+    const idLocalDestino = Number(req.body.idLocalDestino);
+    const quantidade = parseDecimal(req.body.quantidade);
+    const unidade = textoLivre(req.body.unidade, 10);
+    const observacao = textoLivre(req.body.observacao, 255);
+    const usuario = textoLivre(req.body.usuario, 150) || 'SISTEMA';
+
+    if (!idProduto || !idLocalOrigem || !idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto, idLocalOrigem e idLocalDestino.'
+      });
+    }
+
+    if (idLocalOrigem === idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'O local de destino deve ser diferente do local de origem.'
+      });
+    }
+
+    if (!(quantidade > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida para transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
+    const saldoAntes = saldoInfo.saldo;
+
+    if (quantidade > saldoAntes) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Quantidade excede o saldo disponível (${saldoAntes}).`
+      });
+    }
+
+    const [result] = await conn.query(
+      `
+      INSERT INTO SF_ESTOQUE_TRANSFERENCIA
+        (
+          ID_PRODUTO,
+          ID_LOCAL_ORIGEM,
+          ID_LOCAL_DESTINO,
+          QUANTIDADE,
+          UNIDADE,
+          OBSERVACAO,
+          STATUS_TRANSFERENCIA,
+          USUARIO_CADASTRO
+        )
+      VALUES (?, ?, ?, ?, ?, ?, 'ATIVA', ?)
+      `,
+      [
+        idProduto,
+        idLocalOrigem,
+        idLocalDestino,
+        quantidade,
+        unidade || null,
+        observacao || null,
+        usuario
+      ]
+    );
+
+    const idTransferencia = result.insertId;
+    const saldoDepois = saldoAntes - quantidade;
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'CRIACAO',
+      idProduto,
+      idLocalOrigem,
+      idLocalDestino,
+      saldoAntes,
+      quantidadeTransferida: quantidade,
+      saldoDepois,
+      usuario,
+      observacao
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      id: idTransferencia,
+      message: 'Transferência registrada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao registrar transferência:', err);
+
+    try { if (conn) await conn.rollback(); } catch {}
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao registrar transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.put('/api/estoque/transferencias/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const idLocalDestino = Number(req.body.idLocalDestino);
+    const quantidadeNova = parseDecimal(req.body.quantidade);
+    const observacao = textoLivre(req.body.observacao, 255);
+    const usuario = textoLivre(req.body.usuario, 150) || 'SISTEMA';
+
+    if (!idTransferencia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o ID da transferência.'
+      });
+    }
+
+    if (!idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o local de destino.'
+      });
+    }
+
+    if (!(quantidadeNova > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rowsAtual] = await conn.query(
+      `
+      SELECT *
+      FROM SF_ESTOQUE_TRANSFERENCIA
+      WHERE ID = ?
+      LIMIT 1
+      `,
+      [idTransferencia]
+    );
+
+    const atual = rowsAtual[0];
+
+    if (!atual) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada.'
+      });
+    }
+
+    if (atual.STATUS_TRANSFERENCIA !== 'ATIVA') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Apenas transferências ativas podem ser editadas.'
+      });
+    }
+
+    if (Number(atual.ID_LOCAL_ORIGEM) === idLocalDestino) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'O local de destino deve ser diferente do local de origem.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoTransferivel(
+      conn,
+      atual.ID_PRODUTO,
+      atual.ID_LOCAL_ORIGEM,
+      idTransferencia
+    );
+
+    const saldoAntes = saldoInfo.saldo + Number(atual.QUANTIDADE ?? 0);
+    const saldoMaximoPermitido = saldoInfo.saldo + Number(atual.QUANTIDADE ?? 0);
+
+    if (quantidadeNova > saldoMaximoPermitido) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Quantidade excede o saldo disponível (${saldoMaximoPermitido}).`
+      });
+    }
+
+    await conn.query(
+      `
+      UPDATE SF_ESTOQUE_TRANSFERENCIA
+      SET
+        ID_LOCAL_DESTINO = ?,
+        QUANTIDADE = ?,
+        OBSERVACAO = ?,
+        USUARIO_ALTERACAO = ?,
+        DATA_ALTERACAO = NOW()
+      WHERE ID = ?
+      `,
+      [
+        idLocalDestino,
+        quantidadeNova,
+        observacao || null,
+        usuario,
+        idTransferencia
+      ]
+    );
+
+    const saldoDepois = saldoAntes - quantidadeNova;
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'EDICAO',
+      idProduto: atual.ID_PRODUTO,
+      idLocalOrigem: atual.ID_LOCAL_ORIGEM,
+      idLocalDestino,
+      saldoAntes,
+      quantidadeTransferida: quantidadeNova,
+      saldoDepois,
+      usuario,
+      observacao
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Transferência atualizada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao editar transferência:', err);
+
+    try { if (conn) await conn.rollback(); } catch {}
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao editar transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.delete('/api/estoque/transferencias/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const usuario = textoLivre(req.body?.usuario || req.query?.usuario, 150) || 'SISTEMA';
+    const observacao = textoLivre(req.body?.observacao || 'Exclusão de transferência.', 255);
+
+    if (!idTransferencia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o ID da transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rowsAtual] = await conn.query(
+      `
+      SELECT *
+      FROM SF_ESTOQUE_TRANSFERENCIA
+      WHERE ID = ?
+      LIMIT 1
+      `,
+      [idTransferencia]
+    );
+
+    const atual = rowsAtual[0];
+
+    if (!atual) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada.'
+      });
+    }
+
+    if (atual.STATUS_TRANSFERENCIA !== 'ATIVA') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Esta transferência já está excluída.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoTransferivel(
+      conn,
+      atual.ID_PRODUTO,
+      atual.ID_LOCAL_ORIGEM,
+      idTransferencia
+    );
+
+    const saldoAntes = saldoInfo.saldo;
+    const saldoDepois = saldoAntes + Number(atual.QUANTIDADE ?? 0);
+
+    await conn.query(
+      `
+      UPDATE SF_ESTOQUE_TRANSFERENCIA
+      SET
+        STATUS_TRANSFERENCIA = 'EXCLUIDA',
+        USUARIO_ALTERACAO = ?,
+        DATA_ALTERACAO = NOW(),
+        OBSERVACAO = CASE
+          WHEN OBSERVACAO IS NULL OR OBSERVACAO = '' THEN ?
+          ELSE CONCAT(OBSERVACAO, ' | ', ?)
+        END
+      WHERE ID = ?
+      `,
+      [usuario, observacao, observacao, idTransferencia]
+    );
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'EXCLUSAO',
+      idProduto: atual.ID_PRODUTO,
+      idLocalOrigem: atual.ID_LOCAL_ORIGEM,
+      idLocalDestino: atual.ID_LOCAL_DESTINO,
+      saldoAntes,
+      quantidadeTransferida: atual.QUANTIDADE,
+      saldoDepois,
+      usuario,
+      observacao
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Transferência excluída com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao excluir transferência:', err);
+
+    try { if (conn) await conn.rollback(); } catch {}
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/estoque/transferencias/:id/logs', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+
+    if (!idTransferencia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o ID da transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        l.ID,
+        l.ID_TRANSFERENCIA,
+        l.ACAO,
+        l.ID_PRODUTO,
+        l.ID_LOCAL_ORIGEM,
+        lo.NOME AS LOCAL_ORIGEM,
+        l.ID_LOCAL_DESTINO,
+        ld.NOME AS LOCAL_DESTINO,
+        l.SALDO_ANTES,
+        l.QUANTIDADE_TRANSFERIDA,
+        l.SALDO_DEPOIS,
+        l.USUARIO,
+        l.OBSERVACAO,
+        l.DATA_HORA
+      FROM SF_ESTOQUE_TRANSFERENCIA_LOG l
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
+        ON lo.ID = l.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+        ON ld.ID = l.ID_LOCAL_DESTINO
+      WHERE l.ID_TRANSFERENCIA = ?
+      ORDER BY l.DATA_HORA DESC, l.ID DESC
+      `,
+      [idTransferencia]
+    );
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar logs da transferência:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar logs da transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 
 
