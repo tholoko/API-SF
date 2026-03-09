@@ -2645,43 +2645,17 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         ]
       );
 
-      await conn.query(
-        `
-        INSERT INTO SF_PRODUTO_ENTRADA_LOG
-        (
-          ID_ENTRADA,
-          ACAO,
-          USUARIO,
-          QTD_NF_ANTES,
-          QTD_NF_DEPOIS,
-          VALOR_UNITARIO_NF_ANTES,
-          VALOR_UNITARIO_NF_DEPOIS,
-          VALOR_TOTAL_NF_ANTES,
-          VALOR_TOTAL_NF_DEPOIS,
-          DADOS_ANTES,
-          DADOS_DEPOIS,
-          OBSERVACAO
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-        [
-          rEntrada.insertId,
-          'INSERT',
-          usuarioRegistro || null,
-          null,
-          qtd,
-          null,
-          valorUnit,
-          null,
-          valorTotal,
-          null,
-          JSON.stringify({
-            id: rEntrada.insertId,
-            ...payloadEntradaLog
-          }),
-          'Registro criado via importação de PDF'
-        ]
-      );
+      await registrarLogProdutoEntrada(conn, {
+        idEntrada: rEntrada.insertId,
+        acao: 'INSERT',
+        usuario: usuarioRegistro || null,
+        antes: null,
+        depois: {
+          id: rEntrada.insertId,
+          ...payloadEntradaLog
+        },
+        observacao: 'Registro criado via importação de PDF'
+      });
     }
 
     await conn.commit();
