@@ -2487,8 +2487,9 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
       const codProdutoNf = textoLivre(item.codigo);
       const descricaoProdutoNf = textoLivre(item.descricao).toUpperCase() || null;
       const unidade = textoLivre(item.unidade).toUpperCase() || null;
-      const idProduto = Number(item.id_produto);
-      const codProdutoSistema = textoLivre(item.cod_produto_sistema).toUpperCase();
+      const idProduto = Number(item.idproduto || item.id_produto);
+      const codProdutoSistema = textoLivre(item.codprodutosistema || item.cod_produto_sistema).toUpperCase();
+      const descricaoProdutoSistema = textoLivre(item.descricaoprodutosistema || item.descricao_produto_sistema).toUpperCase() || null;
       const qtd = parseDecimalBr(item.quantidade);
       const valorUnit = parseDecimalBr(item.valorUnitario);
       const valorTotal = parseDecimalBr(item.valorTotal);
@@ -2576,7 +2577,28 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
         );
       }
 
-      await conn.query(
+      const payloadEntradaLog = {
+        fornecedor_id: fornecedor.id,
+        nota: numeroNota,
+        serie,
+        cnpj_emitente: emitenteCnpj,
+        cnpj_remetente: destinatarioCnpj || null,
+        data_emissao: dataEmissao,
+        usuario_registro: usuarioRegistro || null,
+        qtd_nf: qtd,
+        valor_unitario_nf: valorUnit,
+        valor_total_nf: valorTotal,
+        cod_produto_nf: codProdutoNf,
+        descricao_produto_nf: descricaoProdutoNf,
+        unidade_nf: unidade,
+        cod_produto_sistema: codProdutoSistema,
+        descricao_produto_sistema: descricaoProdutoSistema,
+        produto_sistema_id: idProduto,
+        local: nomeLocal,
+        id_local_almoxarifado: idLocalAlmoxarifado
+      };
+
+      const [rEntrada] = await conn.query(
         `
         INSERT INTO SF_PRODUTO_ENTRADA
         (
@@ -2622,6 +2644,44 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
           idLocalAlmoxarifado
         ]
       );
+
+      await conn.query(
+        `
+        INSERT INTO SF_PRODUTO_ENTRADA_LOG
+        (
+          ID_ENTRADA,
+          ACAO,
+          USUARIO,
+          QTD_NF_ANTES,
+          QTD_NF_DEPOIS,
+          VALOR_UNITARIO_NF_ANTES,
+          VALOR_UNITARIO_NF_DEPOIS,
+          VALOR_TOTAL_NF_ANTES,
+          VALOR_TOTAL_NF_DEPOIS,
+          DADOS_ANTES,
+          DADOS_DEPOIS,
+          OBSERVACAO
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          rEntrada.insertId,
+          'INSERT',
+          usuarioRegistro || null,
+          null,
+          qtd,
+          null,
+          valorUnit,
+          null,
+          valorTotal,
+          null,
+          JSON.stringify({
+            id: rEntrada.insertId,
+            ...payloadEntradaLog
+          }),
+          'Registro criado via importação de PDF'
+        ]
+      );
     }
 
     await conn.commit();
@@ -2644,6 +2704,7 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
     conn.release();
   }
 });
+
 
 app.get('/api/locais-almoxarifado', async (req, res) => {
   try {
