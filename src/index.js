@@ -2743,27 +2743,58 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     const [rows] = await conn.query(
       `
       SELECT
-        pe.produto_sistema_id AS id,
-        COALESCE(p.codigo, pe.cod_produto_sistema) AS codigo_item,
-        COALESCE(p.descricao, pe.descricao_produto_nf) AS descricao_item,
-        p.unidade AS unidade,
-        SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_disponivel,
+        base.id,
+        base.codigo_item,
+        base.descricao_item,
+        base.unidade,
+        CASE
+          WHEN (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0)) < 0 THEN 0
+          ELSE (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0))
+        END AS qtd_disponivel,
+        COALESCE(tr.qtd_transferida, 0) AS qtd_transferida,
         0 AS qtd_em_pedido,
-        pe.LOCAL AS local,
-        pe.ID_LOCAL_ALMOXARIFADO AS id_local_almoxarifado
-      FROM SF_PRODUTO_ENTRADA pe
-      LEFT JOIN SF_PRODUTOS p
-        ON p.id = pe.produto_sistema_id
-      WHERE UPPER(CONVERT(COALESCE(pe.LOCAL, '') USING utf8mb4)) COLLATE utf8mb4_general_ci LIKE '%ESCRITORIO%'
-         OR UPPER(CONVERT(COALESCE(pe.LOCAL, '') USING utf8mb4)) COLLATE utf8mb4_general_ci LIKE '%ESCRITÓRIO%'
-      GROUP BY
-        pe.produto_sistema_id,
-        COALESCE(p.codigo, pe.cod_produto_sistema),
-        COALESCE(p.descricao, pe.descricao_produto_nf),
-        p.unidade,
-        pe.LOCAL,
-        pe.ID_LOCAL_ALMOXARIFADO
-      ORDER BY COALESCE(p.codigo, pe.cod_produto_sistema) ASC
+        base.local,
+        base.id_local_almoxarifado
+      FROM (
+        SELECT
+          pe.produto_sistema_id AS id,
+          COALESCE(p.codigo, pe.cod_produto_sistema) AS codigo_item,
+          COALESCE(p.descricao, pe.descricao_produto_nf) AS descricao_item,
+          COALESCE(p.unidade, pe.unidade_nf, 'UN') AS unidade,
+          SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada,
+          pe.LOCAL AS local,
+          pe.ID_LOCAL_ALMOXARIFADO AS id_local_almoxarifado
+        FROM SF_PRODUTO_ENTRADA pe
+        LEFT JOIN SF_PRODUTOS p
+          ON p.id = pe.produto_sistema_id
+        WHERE (
+          UPPER(CONVERT(COALESCE(pe.LOCAL, '') USING utf8mb4)) COLLATE utf8mb4_general_ci LIKE '%ESCRITORIO%'
+          OR UPPER(CONVERT(COALESCE(pe.LOCAL, '') USING utf8mb4)) COLLATE utf8mb4_general_ci LIKE '%ESCRITÓRIO%'
+        )
+          AND pe.produto_sistema_id IS NOT NULL
+          AND pe.ID_LOCAL_ALMOXARIFADO IS NOT NULL
+        GROUP BY
+          pe.produto_sistema_id,
+          COALESCE(p.codigo, pe.cod_produto_sistema),
+          COALESCE(p.descricao, pe.descricao_produto_nf),
+          COALESCE(p.unidade, pe.unidade_nf, 'UN'),
+          pe.LOCAL,
+          pe.ID_LOCAL_ALMOXARIFADO
+      ) base
+      LEFT JOIN (
+        SELECT
+          t.ID_PRODUTO,
+          t.ID_LOCAL_ORIGEM,
+          SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
+        FROM SF_ESTOQUE_TRANSFERENCIA t
+        WHERE t.STATUS_TRANSFERENCIA = 'ATIVA'
+        GROUP BY
+          t.ID_PRODUTO,
+          t.ID_LOCAL_ORIGEM
+      ) tr
+        ON tr.ID_PRODUTO = base.id
+       AND tr.ID_LOCAL_ORIGEM = base.id_local_almoxarifado
+      ORDER BY base.codigo_item ASC
       `
     );
 
@@ -2783,6 +2814,7 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 
 app.get('/api/estoque/produto-entrada/:produtoId', async (req, res) => {
