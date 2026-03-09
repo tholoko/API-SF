@@ -2794,6 +2794,52 @@ app.get('/api/estoque/produto-entrada/:produtoId', async (req, res) => {
   }
 });
 
+app.put('/api/estoque/produto-entrada/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const id = Number(req.params.id);
+    const qtd = parseDecimalBr(req.body?.qtd_nf);
+    const valorUnit = parseDecimalBr(req.body?.valor_unitario_nf);
+    const valorTotal = Number(qtd || 0) * Number(valorUnit || 0);
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID da entrada inválido.' });
+    }
+
+    if (!qtd || qtd <= 0) {
+      return res.status(400).json({ success: false, message: 'Quantidade inválida.' });
+    }
+
+    if (valorUnit < 0) {
+      return res.status(400).json({ success: false, message: 'Valor unitário inválido.' });
+    }
+
+    await conn.query(
+      `
+      UPDATE SF_PRODUTO_ENTRADA
+      SET
+        qtd_nf = ?,
+        valor_unitario_nf = ?,
+        valor_total_nf = ?
+      WHERE id = ?
+      `,
+      [qtd, valorUnit, valorTotal, id]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Entrada atualizada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao editar entrada:', err);
+    return res.status(500).json({ success: false, message: 'Erro ao editar entrada.', error: err.message });
+  } finally {
+    conn.release();
+  }
+});
+
+
 app.delete('/api/estoque/produto-entrada/:id', async (req, res) => {
   const conn = await pool.getConnection();
 
