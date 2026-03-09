@@ -3005,7 +3005,7 @@ function parseDecimal(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function textoLivre(v, max = 255) {
+function textolivreTr(v, max = 255) {
   return String(v ?? '').trim().slice(0, max);
 }
 
@@ -3079,15 +3079,15 @@ async function inserirLogTransferencia(conn, {
     `,
     [
       Number(idTransferencia),
-      textoLivre(acao, 20),
+      textolivreTr(acao, 20),
       Number(idProduto),
       Number(idLocalOrigem),
       idLocalDestino ? Number(idLocalDestino) : null,
       parseDecimal(saldoAntes),
       parseDecimal(quantidadeTransferida),
       parseDecimal(saldoDepois),
-      textoLivre(usuario, 150) || null,
-      textoLivre(observacao, 255) || null
+      textolivreTr(usuario, 150) || null,
+      textolivreTr(observacao, 255) || null
     ]
   );
 }
@@ -3253,9 +3253,9 @@ app.post('/api/estoque/transferencias', async (req, res) => {
     const idLocalOrigem = Number(req.body.idLocalOrigem);
     const idLocalDestino = Number(req.body.idLocalDestino);
     const quantidade = parseDecimal(req.body.quantidade);
-    const unidade = textoLivre(req.body.unidade, 10);
-    const observacao = textoLivre(req.body.observacao, 255);
-    const usuario = textoLivre(req.body.usuario, 150) || 'SISTEMA';
+    const unidade = textolivreTr(req.body.unidade, 10);
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
 
     if (!idProduto || !idLocalOrigem || !idLocalDestino) {
       return res.status(400).json({
@@ -3363,8 +3363,8 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
     const idTransferencia = Number(req.params.id);
     const idLocalDestino = Number(req.body.idLocalDestino);
     const quantidadeNova = parseDecimal(req.body.quantidade);
-    const observacao = textoLivre(req.body.observacao, 255);
-    const usuario = textoLivre(req.body.usuario, 150) || 'SISTEMA';
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
 
     if (!idTransferencia) {
       return res.status(400).json({
@@ -3505,8 +3505,8 @@ app.delete('/api/estoque/transferencias/:id', async (req, res) => {
 
   try {
     const idTransferencia = Number(req.params.id);
-    const usuario = textoLivre(req.body?.usuario || req.query?.usuario, 150) || 'SISTEMA';
-    const observacao = textoLivre(req.body?.observacao || 'Exclusão de transferência.', 255);
+    const usuario = textolivreTr(req.body?.usuario || req.query?.usuario, 150) || 'SISTEMA';
+    const observacao = textolivreTr(req.body?.observacao || 'Exclusão de transferência.', 255);
 
     if (!idTransferencia) {
       return res.status(400).json({
