@@ -2990,6 +2990,8 @@ async function registrarLogProdutoEntrada(conn, {
   );
 }
 
+// APIs transferencias
+
 function parseDecimal(value) {
   if (value === null || value === undefined || value === '') return 0;
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -3086,9 +3088,6 @@ async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTran
 async function inserirLogTransferencia(conn, {
   idTransferencia,
   acao,
-  idProduto,
-  idLocalOrigem,
-  idLocalDestino = null,
   saldoAntes,
   quantidadeTransferida,
   saldoDepois,
@@ -3101,26 +3100,20 @@ async function inserirLogTransferencia(conn, {
       (
         ID_TRANSFERENCIA,
         ACAO,
-        ID_PRODUTO,
-        ID_LOCAL_ORIGEM,
-        ID_LOCAL_DESTINO,
         SALDO_ANTES,
-        QUANTIDADE_TRANSFERIDA,
         SALDO_DEPOIS,
+        QUANTIDADE_TRANSFERIDA,
         USUARIO,
         OBSERVACAO
       )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
     [
       Number(idTransferencia),
       textolivreTr(acao, 20),
-      Number(idProduto),
-      Number(idLocalOrigem),
-      idLocalDestino ? Number(idLocalDestino) : null,
       parseDecimal(saldoAntes),
-      parseDecimal(quantidadeTransferida),
       parseDecimal(saldoDepois),
+      parseDecimal(quantidadeTransferida),
       textolivreTr(usuario, 150) || null,
       textolivreTr(observacao, 255) || null
     ]
@@ -3282,6 +3275,7 @@ app.get('/api/estoque/transferencias', async (req, res) => {
       SELECT
         t.ID,
         t.ID_PRODUTO,
+        t.ID_ENTRADA_ORIGEM,
         p.codigo AS CODIGO_PRODUTO,
         p.descricao AS DESCRICAO_PRODUTO,
         COALESCE(t.UNIDADE, p.unidade) AS UNIDADE,
@@ -3405,16 +3399,33 @@ app.post('/api/estoque/transferencias', async (req, res) => {
       });
     }
 
-    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
-    const saldoAntes = saldoInfo.saldo;
+    const [rowsEntradaOrigem] = await conn.query(
+      `
+      SELECT
+        pe.id,
+        pe.unidade_nf,
+        pe.ID_LOCAL_ALMOXARIFADO
+      FROM SF_PRODUTO_ENTRADA pe
+      WHERE pe.produto_sistema_id = ?
+        AND pe.ID_LOCAL_ALMOXARIFADO = ?
+      ORDER BY pe.id ASC
+      LIMIT 1
+      `,
+      [idProduto, idLocalOrigem]
+    );
 
-    if (saldoInfo.qtdEntrada <= 0) {
+    const entradaOrigem = rowsEntradaOrigem[0] || null;
+
+    if (!entradaOrigem) {
       await conn.rollback();
       return res.status(400).json({
         success: false,
         message: 'Não existe entrada desse produto nesse local para transferir.'
       });
     }
+
+    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
+    const saldoAntes = saldoInfo.saldo;
 
     if (quantidade > saldoAntes) {
       await conn.rollback();
@@ -3429,6 +3440,7 @@ app.post('/api/estoque/transferencias', async (req, res) => {
       INSERT INTO SF_ESTOQUE_TRANSFERENCIA
         (
           ID_PRODUTO,
+          ID_ENTRADA_ORIGEM,
           ID_LOCAL_ORIGEM,
           ID_LOCAL_DESTINO,
           QUANTIDADE,
@@ -3437,14 +3449,15 @@ app.post('/api/estoque/transferencias', async (req, res) => {
           STATUS_TRANSFERENCIA,
           USUARIO_CADASTRO
         )
-      VALUES (?, ?, ?, ?, ?, ?, 'ATIVA', ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'ATIVA', ?)
       `,
       [
         idProduto,
+        Number(entradaOrigem.id),
         idLocalOrigem,
         idLocalDestino,
         quantidade,
-        unidade || produto.unidade || null,
+        unidade || produto.unidade || entradaOrigem.unidade_nf || null,
         observacao || null,
         usuario
       ]
@@ -3456,9 +3469,6 @@ app.post('/api/estoque/transferencias', async (req, res) => {
     await inserirLogTransferencia(conn, {
       idTransferencia,
       acao: 'CRIACAO',
-      idProduto,
-      idLocalOrigem,
-      idLocalDestino,
       saldoAntes,
       quantidadeTransferida: quantidade,
       saldoDepois,
@@ -3631,9 +3641,6 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
     await inserirLogTransferencia(conn, {
       idTransferencia,
       acao: 'EDICAO',
-      idProduto: atual.ID_PRODUTO,
-      idLocalOrigem: atual.ID_LOCAL_ORIGEM,
-      idLocalDestino,
       saldoAntes,
       quantidadeTransferida: quantidadeNova,
       saldoDepois,
@@ -3708,15 +3715,6 @@ app.delete('/api/estoque/transferencias/:id', async (req, res) => {
       });
     }
 
-    const produto = await validarProdutoSistema(conn, atual.ID_PRODUTO);
-    if (!produto) {
-      await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Produto vinculado à transferência não foi encontrado.'
-      });
-    }
-
     const saldoInfo = await obterSaldoTransferivel(
       conn,
       atual.ID_PRODUTO,
@@ -3746,9 +3744,6 @@ app.delete('/api/estoque/transferencias/:id', async (req, res) => {
     await inserirLogTransferencia(conn, {
       idTransferencia,
       acao: 'EXCLUSAO',
-      idProduto: atual.ID_PRODUTO,
-      idLocalOrigem: atual.ID_LOCAL_ORIGEM,
-      idLocalDestino: atual.ID_LOCAL_DESTINO,
       saldoAntes,
       quantidadeTransferida: atual.QUANTIDADE,
       saldoDepois,
@@ -3798,13 +3793,6 @@ app.get('/api/estoque/transferencias/:id/logs', async (req, res) => {
         l.ID,
         l.ID_TRANSFERENCIA,
         l.ACAO,
-        l.ID_PRODUTO,
-        p.codigo AS CODIGO_PRODUTO,
-        p.descricao AS DESCRICAO_PRODUTO,
-        l.ID_LOCAL_ORIGEM,
-        lo.NOME AS LOCAL_ORIGEM,
-        l.ID_LOCAL_DESTINO,
-        ld.NOME AS LOCAL_DESTINO,
         l.SALDO_ANTES,
         l.QUANTIDADE_TRANSFERIDA,
         l.SALDO_DEPOIS,
@@ -3812,12 +3800,6 @@ app.get('/api/estoque/transferencias/:id/logs', async (req, res) => {
         l.OBSERVACAO,
         l.DATA_HORA
       FROM SF_ESTOQUE_TRANSFERENCIA_LOG l
-      LEFT JOIN SF_PRODUTOS p
-        ON p.id = l.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
-        ON lo.ID = l.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
-        ON ld.ID = l.ID_LOCAL_DESTINO
       WHERE l.ID_TRANSFERENCIA = ?
       ORDER BY l.DATA_HORA DESC, l.ID DESC
       `,
@@ -3840,9 +3822,6 @@ app.get('/api/estoque/transferencias/:id/logs', async (req, res) => {
     if (conn) conn.release();
   }
 });
-
-
-
 
 // =====================
 // Inicia servidor (sempre por último)
