@@ -2734,12 +2734,60 @@ app.post('/api/locais-almoxarifado', async (req, res) => {
   }
 });
 
-// Registar entrada no estoque
+// Consultar estoque
 app.get('/api/estoque/controle/escritorio', async (req, res) => {
   let conn;
 
   try {
+    const usuarioLogado = textolivreTr(
+      req.query.usuario || req.headers['x-usuario-logado'],
+      150
+    );
+
+    if (!usuarioLogado) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o usuário logado.'
+      });
+    }
+
     conn = await pool.getConnection();
+
+    const [rowsUsuario] = await conn.query(
+      `
+      SELECT
+        u.*
+      FROM SF_USUARIO u
+      WHERE UPPER(TRIM(u.nome)) = UPPER(TRIM(?))
+      LIMIT 1
+      `,
+      [usuarioLogado]
+    );
+
+    const usuarioDb = rowsUsuario[0] || null;
+
+    if (!usuarioDb) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário logado não encontrado na SF_USUARIO.'
+      });
+    }
+
+    const centroCustoUsuario = String(
+      usuarioDb.CENTRO_CUSTO ?? usuarioDb.centro_custo ?? ''
+    ).trim();
+
+    if (!centroCustoUsuario) {
+      return res.status(400).json({
+        success: false,
+        message: 'O usuário logado não possui centro de custo vinculado.'
+      });
+    }
+
+    console.log('[ESTOQUE ESCRITORIO] Usuário e centro de custo identificados', {
+      usuarioLogado,
+      centroCustoUsuario
+    });
 
     const [rows] = await conn.query(
       `
@@ -2768,10 +2816,8 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
         FROM SF_PRODUTO_ENTRADA pe
         LEFT JOIN SF_PRODUTOS p
           ON p.id = pe.produto_sistema_id
-        WHERE (
-          UPPER(CONVERT(COALESCE(pe.LOCAL, '') USING utf8mb4)) COLLATE utf8mb4_general_ci LIKE '%ESCRITORIO%'
-          OR UPPER(CONVERT(COALESCE(pe.LOCAL, '') USING utf8mb4)) COLLATE utf8mb4_general_ci LIKE '%ESCRITÓRIO%'
-        )
+        WHERE
+          UPPER(TRIM(COALESCE(pe.LOCAL, ''))) = UPPER(TRIM(?))
           AND pe.produto_sistema_id IS NOT NULL
           AND pe.ID_LOCAL_ALMOXARIFADO IS NOT NULL
         GROUP BY
@@ -2796,11 +2842,14 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
         ON tr.ID_PRODUTO = base.id
        AND tr.ID_LOCAL_ORIGEM = base.id_local_almoxarifado
       ORDER BY base.codigo_item ASC
-      `
+      `,
+      [centroCustoUsuario]
     );
 
     return res.json({
       success: true,
+      usuario: usuarioLogado,
+      centroCusto: centroCustoUsuario,
       items: rows
     });
   } catch (err) {
@@ -2815,7 +2864,6 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     if (conn) conn.release();
   }
 });
-
 
 app.get('/api/estoque/produto-entrada/:produtoId', async (req, res) => {
   const conn = await pool.getConnection();
