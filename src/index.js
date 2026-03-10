@@ -3930,7 +3930,6 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
     if (!transferencia) {
       await conn.rollback();
-      console.log('[RECEBIMENTO] Transferência não encontrada', { idTransferencia });
 
       return res.status(404).json({
         success: false,
@@ -3938,21 +3937,19 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       });
     }
 
-    const statusTransferencia = String(transferencia.STATUS_TRANSFERENCIA || '').trim().toUpperCase();
+    const statusTransferencia = String(
+      transferencia.STATUS_TRANSFERENCIA ?? transferencia.STATUSTRANSFERENCIA ?? ''
+    ).trim().toUpperCase();
 
     console.log('[RECEBIMENTO] Validando status da transferência', {
       idTransferencia,
-      statusOriginal: transferencia.STATUS_TRANSFERENCIA,
+      statusOriginal: transferencia.STATUS_TRANSFERENCIA ?? transferencia.STATUSTRANSFERENCIA ?? null,
       statusNormalizado: statusTransferencia,
       statusPermitidos: ['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO']
     });
 
     if (!['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO'].includes(statusTransferencia)) {
       await conn.rollback();
-      console.log('[RECEBIMENTO] Status não permitido para recebimento', {
-        idTransferencia,
-        statusTransferencia
-      });
 
       return res.status(400).json({
         success: false,
@@ -3981,9 +3978,6 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
     if (!usuarioDb) {
       await conn.rollback();
-      console.log('[RECEBIMENTO] Usuário não encontrado na SF_USUARIO', {
-        usuario
-      });
 
       return res.status(403).json({
         success: false,
@@ -3991,24 +3985,30 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       });
     }
 
-    const centroCustoUsuario = String(usuarioDb.centro_custo ?? '').trim();
-    const localDestino = String(transferencia.ID_LOCAL_DESTINO ?? '').trim();
+    const centroCustoUsuario = String(
+      usuarioDb.CENTRO_CUSTO ?? usuarioDb.centro_custo ?? ''
+    ).trim().toUpperCase();
+
+    const localDestinoNome = String(
+      transferencia.LOCAL_DESTINO_NOME ?? ''
+    ).trim().toUpperCase();
 
     console.log('[RECEBIMENTO] Validando vínculo usuário x destino', {
       usuario,
       centroCustoUsuario,
-      localDestino,
-      localDestinoNome: transferencia.LOCAL_DESTINO_NOME ?? null,
-      centroCustoConfere: !!centroCustoUsuario && centroCustoUsuario === localDestino
+      localDestinoNome,
+      idLocalDestino: transferencia.ID_LOCAL_DESTINO,
+      centroCustoConfere: !!centroCustoUsuario && centroCustoUsuario === localDestinoNome
     });
 
-    if (!centroCustoUsuario || centroCustoUsuario !== localDestino) {
+    if (!centroCustoUsuario || centroCustoUsuario !== localDestinoNome) {
       await conn.rollback();
+
       console.log('[RECEBIMENTO] Usuário sem permissão para receber', {
         usuario,
         centroCustoUsuario,
-        localDestino,
-        localDestinoNome: transferencia.LOCAL_DESTINO_NOME ?? null
+        localDestinoNome,
+        idLocalDestino: transferencia.ID_LOCAL_DESTINO
       });
 
       return res.status(403).json({
@@ -4037,13 +4037,6 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       [usuario, usuario, idTransferencia]
     );
 
-    console.log('[RECEBIMENTO] Inserindo log da transferência', {
-      idTransferencia,
-      acao: 'RECEBIMENTO',
-      usuario,
-      observacaoFinal: observacao || `Recebimento confirmado por ${usuario}.`
-    });
-
     await inserirLogTransferencia(conn, {
       idTransferencia,
       acao: 'RECEBIMENTO',
@@ -4052,6 +4045,11 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       saldoDepois: 0,
       usuario,
       observacao: observacao || `Recebimento confirmado por ${usuario}.`
+    });
+
+    console.log('[RECEBIMENTO] Log de recebimento inserido', {
+      idTransferencia,
+      usuario
     });
 
     await conn.commit();
@@ -4087,7 +4085,10 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
     });
   } finally {
     if (conn) conn.release();
-    console.log('[RECEBIMENTO] Conexão finalizada', { idTransferencia: Number(req.params.id) });
+
+    console.log('[RECEBIMENTO] Conexão finalizada', {
+      idTransferencia: Number(req.params.id)
+    });
   }
 });
 
