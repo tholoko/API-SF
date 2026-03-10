@@ -3236,15 +3236,26 @@ async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTran
     paramsEntradas
   );
 
+  const paramsRecebidas = [Number(idProduto), Number(idLocalOrigem)];
+  const [rowsRecebidas] = await conn.query(
+    `
+    SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_recebida
+    FROM SF_ESTOQUE_TRANSFERENCIA t
+    WHERE t.ID_PRODUTO = ?
+      AND t.ID_LOCAL_DESTINO = ?
+      AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECEBIDO'
+    `,
+    paramsRecebidas
+  );
+
   const paramsTransferidas = [Number(idProduto), Number(idLocalOrigem)];
   let sqlTransferidas = `
     SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_transferida
     FROM SF_ESTOQUE_TRANSFERENCIA t
     WHERE t.ID_PRODUTO = ?
       AND t.ID_LOCAL_ORIGEM = ?
-      AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
+      AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
   `;
-
 
   if (ignoreTransferenciaId) {
     sqlTransferidas += ` AND t.ID <> ?`;
@@ -3254,15 +3265,18 @@ async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTran
   const [rowsTransferidas] = await conn.query(sqlTransferidas, paramsTransferidas);
 
   const qtdEntrada = Number(rowsEntradas?.[0]?.qtd_entrada ?? 0);
+  const qtdRecebida = Number(rowsRecebidas?.[0]?.qtd_recebida ?? 0);
   const qtdTransferida = Number(rowsTransferidas?.[0]?.qtd_transferida ?? 0);
-  const saldo = qtdEntrada - qtdTransferida;
+  const saldo = qtdEntrada + qtdRecebida - qtdTransferida;
 
   return {
     qtdEntrada,
+    qtdRecebida,
     qtdTransferida,
     saldo: saldo < 0 ? 0 : saldo
   };
 }
+
 
 async function inserirLogTransferencia(conn, {
   idTransferencia,
