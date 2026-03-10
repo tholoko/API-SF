@@ -3886,7 +3886,17 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
     const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
     const observacao = textolivreTr(req.body.observacao, 255);
 
+    console.log('[RECEBIMENTO] Início da requisição', {
+      params: req.params,
+      body: req.body,
+      idTransferencia,
+      usuario,
+      observacao
+    });
+
     if (!idTransferencia) {
+      console.log('[RECEBIMENTO] ID inválido', { idTransferencia });
+
       return res.status(400).json({
         success: false,
         message: 'Informe o ID da transferência.'
@@ -3912,16 +3922,38 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
     const transferencia = rowsTransferencia[0] || null;
 
+    console.log('[RECEBIMENTO] Transferência carregada', {
+      idTransferencia,
+      encontrada: !!transferencia,
+      transferencia
+    });
+
     if (!transferencia) {
       await conn.rollback();
+      console.log('[RECEBIMENTO] Transferência não encontrada', { idTransferencia });
+
       return res.status(404).json({
         success: false,
         message: 'Transferência não encontrada.'
       });
     }
 
-    if (!['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO'].includes(String(transferencia.STATUS_TRANSFERENCIA || '').toUpperCase())) {
+    const statusTransferencia = String(transferencia.STATUS_TRANSFERENCIA || '').trim().toUpperCase();
+
+    console.log('[RECEBIMENTO] Validando status da transferência', {
+      idTransferencia,
+      statusOriginal: transferencia.STATUS_TRANSFERENCIA,
+      statusNormalizado: statusTransferencia,
+      statusPermitidos: ['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO']
+    });
+
+    if (!['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO'].includes(statusTransferencia)) {
       await conn.rollback();
+      console.log('[RECEBIMENTO] Status não permitido para recebimento', {
+        idTransferencia,
+        statusTransferencia
+      });
+
       return res.status(400).json({
         success: false,
         message: 'Somente transferências em trânsito ou aguardando recebimento podem ser recebidas.'
@@ -3941,8 +3973,18 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
     const usuarioDb = rowsUsuario[0] || null;
 
+    console.log('[RECEBIMENTO] Usuário carregado', {
+      usuarioInformado: usuario,
+      encontrado: !!usuarioDb,
+      usuarioDb
+    });
+
     if (!usuarioDb) {
       await conn.rollback();
+      console.log('[RECEBIMENTO] Usuário não encontrado na SF_USUARIO', {
+        usuario
+      });
+
       return res.status(403).json({
         success: false,
         message: 'Usuário logado não encontrado na SF_USUARIO.'
@@ -3952,13 +3994,34 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
     const centroCustoUsuario = String(usuarioDb.centro_custo ?? '').trim();
     const localDestino = String(transferencia.ID_LOCAL_DESTINO ?? '').trim();
 
+    console.log('[RECEBIMENTO] Validando vínculo usuário x destino', {
+      usuario,
+      centroCustoUsuario,
+      localDestino,
+      localDestinoNome: transferencia.LOCAL_DESTINO_NOME ?? null,
+      centroCustoConfere: !!centroCustoUsuario && centroCustoUsuario === localDestino
+    });
+
     if (!centroCustoUsuario || centroCustoUsuario !== localDestino) {
       await conn.rollback();
+      console.log('[RECEBIMENTO] Usuário sem permissão para receber', {
+        usuario,
+        centroCustoUsuario,
+        localDestino,
+        localDestinoNome: transferencia.LOCAL_DESTINO_NOME ?? null
+      });
+
       return res.status(403).json({
         success: false,
         message: 'O usuário logado não pertence ao centro de custo do local de destino da transferência.'
       });
     }
+
+    console.log('[RECEBIMENTO] Atualizando transferência para RECEBIDO', {
+      idTransferencia,
+      usuario,
+      quantidade: Number(transferencia.QUANTIDADE ?? 0)
+    });
 
     await conn.query(
       `
@@ -3974,6 +4037,13 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       [usuario, usuario, idTransferencia]
     );
 
+    console.log('[RECEBIMENTO] Inserindo log da transferência', {
+      idTransferencia,
+      acao: 'RECEBIMENTO',
+      usuario,
+      observacaoFinal: observacao || `Recebimento confirmado por ${usuario}.`
+    });
+
     await inserirLogTransferencia(conn, {
       idTransferencia,
       acao: 'RECEBIMENTO',
@@ -3986,15 +4056,30 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
     await conn.commit();
 
+    console.log('[RECEBIMENTO] Recebimento concluído com sucesso', {
+      idTransferencia,
+      usuario
+    });
+
     return res.json({
       success: true,
       message: 'Recebimento da transferência registrado com sucesso.'
     });
   } catch (err) {
-    console.error('Erro ao registrar recebimento da transferência:', err);
+    console.error('[RECEBIMENTO] Erro ao registrar recebimento da transferência:', {
+      message: err.message,
+      stack: err.stack
+    });
+
     try {
       if (conn) await conn.rollback();
-    } catch {}
+    } catch (rollbackErr) {
+      console.error('[RECEBIMENTO] Erro no rollback:', {
+        message: rollbackErr.message,
+        stack: rollbackErr.stack
+      });
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Erro ao registrar recebimento da transferência.',
@@ -4002,8 +4087,10 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
     });
   } finally {
     if (conn) conn.release();
+    console.log('[RECEBIMENTO] Conexão finalizada', { idTransferencia: Number(req.params.id) });
   }
 });
+
 
 
 // =====================
