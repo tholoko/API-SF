@@ -2801,7 +2801,7 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     if (!localUsuario) {
       return res.status(404).json({
         success: false,
-        message: 'Local/almoxarifado do centro de custo do usuário não foi encontrado.'
+        message: 'Sem movimentações para o seu estoque/centro de custo.'
       });
     }
 
