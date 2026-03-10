@@ -2734,6 +2734,7 @@ app.post('/api/locais-almoxarifado', async (req, res) => {
   }
 });
 
+// Registar entrada no estoque
 app.get('/api/estoque/controle/escritorio', async (req, res) => {
   let conn;
 
@@ -2787,7 +2788,7 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
           t.ID_LOCAL_ORIGEM,
           SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
         FROM SF_ESTOQUE_TRANSFERENCIA t
-        WHERE t.STATUS_TRANSFERENCIA = 'ATIVA'
+        WHERE t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
         GROUP BY
           t.ID_PRODUTO,
           t.ID_LOCAL_ORIGEM
@@ -2814,7 +2815,6 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     if (conn) conn.release();
   }
 });
-
 
 
 app.get('/api/estoque/produto-entrada/:produtoId', async (req, res) => {
@@ -3096,8 +3096,9 @@ async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTran
     FROM SF_ESTOQUE_TRANSFERENCIA t
     WHERE t.ID_PRODUTO = ?
       AND t.ID_LOCAL_ORIGEM = ?
-      AND t.STATUS_TRANSFERENCIA = 'ATIVA'
+      AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
   `;
+
 
   if (ignoreTransferenciaId) {
     sqlTransferidas += ` AND t.ID <> ?`;
@@ -3317,6 +3318,11 @@ app.get('/api/estoque/transferencias', async (req, res) => {
         ld.NOME AS LOCAL_DESTINO,
         t.QUANTIDADE,
         t.OBSERVACAO,
+        t.TIPO_TRANSFERENCIA,
+        t.RESPONSAVEL_TRANSPORTE,
+        t.RESPONSAVEL_ENTREGA,
+        t.USUARIO_RECEBIMENTO,
+        t.DATA_HORA_RECEBIMENTO,
         t.STATUS_TRANSFERENCIA,
         t.USUARIO_CADASTRO,
         t.DATA_CADASTRO,
@@ -3372,10 +3378,28 @@ app.post('/api/estoque/transferencias', async (req, res) => {
     const observacao = textolivreTr(req.body.observacao, 255);
     const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
 
+    const tipoTransferencia = textolivreTr(req.body.tipoTransferencia, 20).toUpperCase();
+    const responsavelTransporte = textolivreTr(req.body.responsavelTransporte, 150);
+    const responsavelEntrega = textolivreTr(req.body.responsavelEntrega, 150);
+
     if (!idProduto || !idLocalOrigem || !idLocalDestino) {
       return res.status(400).json({
         success: false,
         message: 'Informe idProduto, idLocalOrigem e idLocalDestino.'
+      });
+    }
+
+    if (!['LOCAL', 'EXTERNA'].includes(tipoTransferencia)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um tipo de transferência válido: LOCAL ou EXTERNA.'
+      });
+    }
+
+    if (tipoTransferencia === 'EXTERNA' && (!responsavelTransporte || !responsavelEntrega)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe quem levará o material e para quem será entregue.'
       });
     }
 
@@ -3399,44 +3423,29 @@ app.post('/api/estoque/transferencias', async (req, res) => {
     const produto = await validarProdutoSistema(conn, idProduto);
     if (!produto) {
       await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Produto não encontrado na SF_PRODUTOS.'
-      });
+      return res.status(404).json({ success: false, message: 'Produto não encontrado na SF_PRODUTOS.' });
     }
 
     if (Number(produto.ativo ?? 1) !== 1) {
       await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'O produto informado está inativo.'
-      });
+      return res.status(400).json({ success: false, message: 'O produto informado está inativo.' });
     }
 
     const localOrigem = await validarLocalAlmoxarifado(conn, idLocalOrigem);
     if (!localOrigem) {
       await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Local de origem não encontrado.'
-      });
+      return res.status(404).json({ success: false, message: 'Local de origem não encontrado.' });
     }
 
     const localDestino = await validarLocalAlmoxarifado(conn, idLocalDestino);
     if (!localDestino) {
       await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Local de destino não encontrado.'
-      });
+      return res.status(404).json({ success: false, message: 'Local de destino não encontrado.' });
     }
 
     const [rowsEntradaOrigem] = await conn.query(
       `
-      SELECT
-        pe.id,
-        pe.unidade_nf,
-        pe.ID_LOCAL_ALMOXARIFADO
+      SELECT pe.id, pe.unidade_nf, pe.ID_LOCAL_ALMOXARIFADO
       FROM SF_PRODUTO_ENTRADA pe
       WHERE pe.produto_sistema_id = ?
         AND pe.ID_LOCAL_ALMOXARIFADO = ?
@@ -3447,7 +3456,6 @@ app.post('/api/estoque/transferencias', async (req, res) => {
     );
 
     const entradaOrigem = rowsEntradaOrigem[0] || null;
-
     if (!entradaOrigem) {
       await conn.rollback();
       return res.status(400).json({
@@ -3467,6 +3475,11 @@ app.post('/api/estoque/transferencias', async (req, res) => {
       });
     }
 
+    const statusTransferencia =
+      tipoTransferencia === 'LOCAL'
+        ? 'AGUARDANDO_RECEBIMENTO'
+        : 'EM_TRANSITO';
+
     const [result] = await conn.query(
       `
       INSERT INTO SF_ESTOQUE_TRANSFERENCIA
@@ -3478,10 +3491,13 @@ app.post('/api/estoque/transferencias', async (req, res) => {
           QUANTIDADE,
           UNIDADE,
           OBSERVACAO,
+          TIPO_TRANSFERENCIA,
+          RESPONSAVEL_TRANSPORTE,
+          RESPONSAVEL_ENTREGA,
           STATUS_TRANSFERENCIA,
           USUARIO_CADASTRO
         )
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'ATIVA', ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         idProduto,
@@ -3491,6 +3507,10 @@ app.post('/api/estoque/transferencias', async (req, res) => {
         quantidade,
         unidade || produto.unidade || entradaOrigem.unidade_nf || null,
         observacao || null,
+        tipoTransferencia,
+        tipoTransferencia === 'EXTERNA' ? responsavelTransporte : null,
+        tipoTransferencia === 'EXTERNA' ? responsavelEntrega : null,
+        statusTransferencia,
         usuario
       ]
     );
@@ -3505,7 +3525,7 @@ app.post('/api/estoque/transferencias', async (req, res) => {
       quantidadeTransferida: quantidade,
       saldoDepois,
       usuario,
-      observacao
+      observacao: `Tipo: ${tipoTransferencia}; Status inicial: ${statusTransferencia}${observacao ? `; Obs: ${observacao}` : ''}`
     });
 
     await conn.commit();
@@ -3513,13 +3533,14 @@ app.post('/api/estoque/transferencias', async (req, res) => {
     return res.json({
       success: true,
       id: idTransferencia,
+      statusTransferencia,
       message: 'Transferência registrada com sucesso.'
     });
   } catch (err) {
     console.error('Erro ao registrar transferência:', err);
-
-    try { if (conn) await conn.rollback(); } catch {}
-
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
     return res.status(500).json({
       success: false,
       message: 'Erro ao registrar transferência.',
@@ -3584,13 +3605,14 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
       });
     }
 
-    if (atual.STATUS_TRANSFERENCIA !== 'ATIVA') {
+    if (atual.STATUS_TRANSFERENCIA !== 'AGUARDANDO_RECEBIMENTO') {
       await conn.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Apenas transferências ativas podem ser editadas.'
+        message: 'Apenas transferências aguardando recebimento podem ser editadas.'
       });
     }
+
 
     const produto = await validarProdutoSistema(conn, atual.ID_PRODUTO);
     if (!produto) {
@@ -3739,13 +3761,14 @@ app.delete('/api/estoque/transferencias/:id', async (req, res) => {
       });
     }
 
-    if (atual.STATUS_TRANSFERENCIA !== 'ATIVA') {
+    if (atual.STATUS_TRANSFERENCIA !== 'AGUARDANDO_RECEBIMENTO') {
       await conn.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Esta transferência já está excluída.'
+        message: 'Apenas transferências aguardando recebimento podem ser excluídas.'
       });
     }
+
 
     const saldoInfo = await obterSaldoTransferivel(
       conn,
@@ -3854,6 +3877,134 @@ app.get('/api/estoque/transferencias/:id/logs', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
+app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+    const observacao = textolivreTr(req.body.observacao, 255);
+
+    if (!idTransferencia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o ID da transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rowsTransferencia] = await conn.query(
+      `
+      SELECT
+        t.*,
+        ld.NOME AS LOCAL_DESTINO_NOME
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+        ON ld.ID = t.ID_LOCAL_DESTINO
+      WHERE t.ID = ?
+      LIMIT 1
+      `,
+      [idTransferencia]
+    );
+
+    const transferencia = rowsTransferencia[0] || null;
+
+    if (!transferencia) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada.'
+      });
+    }
+
+    if (!['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO'].includes(String(transferencia.STATUS_TRANSFERENCIA || '').toUpperCase())) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente transferências em trânsito ou aguardando recebimento podem ser recebidas.'
+      });
+    }
+
+    const [rowsUsuario] = await conn.query(
+      `
+      SELECT
+        u.*
+      FROM SF_USUARIO u
+      WHERE UPPER(TRIM(u.nome)) = UPPER(TRIM(?))
+      LIMIT 1
+      `,
+      [usuario]
+    );
+
+    const usuarioDb = rowsUsuario[0] || null;
+
+    if (!usuarioDb) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Usuário logado não encontrado na SF_USUARIO.'
+      });
+    }
+
+    const centroCustoUsuario = String(usuarioDb.centro_custo ?? '').trim();
+    const localDestino = String(transferencia.ID_LOCAL_DESTINO ?? '').trim();
+
+    if (!centroCustoUsuario || centroCustoUsuario !== localDestino) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'O usuário logado não pertence ao centro de custo do local de destino da transferência.'
+      });
+    }
+
+    await conn.query(
+      `
+      UPDATE SF_ESTOQUE_TRANSFERENCIA
+      SET
+        STATUS_TRANSFERENCIA = 'RECEBIDO',
+        USUARIO_RECEBIMENTO = ?,
+        DATA_HORA_RECEBIMENTO = NOW(),
+        USUARIO_ALTERACAO = ?,
+        DATA_ALTERACAO = NOW()
+      WHERE ID = ?
+      `,
+      [usuario, usuario, idTransferencia]
+    );
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'RECEBIMENTO',
+      saldoAntes: 0,
+      quantidadeTransferida: Number(transferencia.QUANTIDADE ?? 0),
+      saldoDepois: 0,
+      usuario,
+      observacao: observacao || `Recebimento confirmado por ${usuario}.`
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Recebimento da transferência registrado com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao registrar recebimento da transferência:', err);
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao registrar recebimento da transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 // =====================
 // Inicia servidor (sempre por último)
