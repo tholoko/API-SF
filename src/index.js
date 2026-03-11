@@ -1680,7 +1680,6 @@ async function processarEmailsOffice365() {
     );
 
     if (!remRows.length) {
-      console.log('Nenhum remetente configurado.');
       conn.release();
       return;
     }
@@ -1708,7 +1707,6 @@ async function processarEmailsOffice365() {
     }
 
     if (!destRows.length) {
-      console.log('Nenhum destinatário configurado para os remetentes.');
       conn.release();
       return;
     }
@@ -1723,7 +1721,6 @@ async function processarEmailsOffice365() {
     const data = await graphRequest(path);
     const mensagens = Array.isArray(data.value) ? data.value : [];
 
-    console.log(`Encontradas ${mensagens.length} mensagens na Inbox.`);
 
     for (const msg of mensagens) {
       const messageId = msg.id;
@@ -1886,13 +1883,11 @@ async function marcarEmailComoLidoOutlook(messageId) {
 
 // todos os dias às 06:00
 cron.schedule('0 6 * * *', () => {
-  console.log('Rodando job de leitura de emails (06:00)...');
   processarEmailsOffice365();
 });
 
 // todos os dias às 20:00
 cron.schedule('0 20 * * *', () => {
-  console.log('Rodando job de leitura de emails (20:00)...');
   processarEmailsOffice365();
 });
 
@@ -1906,7 +1901,6 @@ app.post('/cron/processar-emails-office365', async (req, res) => {
 });
 
 app.post('/test-emails-office365', async (req, res) => {
-  console.log('Testando leitura de emails...');
   await processarEmailsOffice365();
   res.json({ ok: true, message: 'Job executado!' });
 });
@@ -3912,16 +3906,10 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
     const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
     const observacao = textolivreTr(req.body.observacao, 255);
 
-    console.log('[RECEBIMENTO] Início da requisição', {
-      params: req.params,
-      body: req.body,
-      idTransferencia,
-      usuario,
-      observacao
-    });
+
 
     if (!idTransferencia) {
-      console.log('[RECEBIMENTO] ID inválido', { idTransferencia });
+
 
       return res.status(400).json({
         success: false,
@@ -3948,11 +3936,6 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
     const transferencia = rowsTransferencia[0] || null;
 
-    console.log('[RECEBIMENTO] Transferência carregada', {
-      idTransferencia,
-      encontrada: !!transferencia,
-      transferencia
-    });
 
     if (!transferencia) {
       await conn.rollback();
@@ -3967,12 +3950,7 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       transferencia.STATUS_TRANSFERENCIA ?? transferencia.STATUSTRANSFERENCIA ?? ''
     ).trim().toUpperCase();
 
-    console.log('[RECEBIMENTO] Validando status da transferência', {
-      idTransferencia,
-      statusOriginal: transferencia.STATUS_TRANSFERENCIA ?? transferencia.STATUSTRANSFERENCIA ?? null,
-      statusNormalizado: statusTransferencia,
-      statusPermitidos: ['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO']
-    });
+
 
     if (!['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO'].includes(statusTransferencia)) {
       await conn.rollback();
@@ -3996,11 +3974,7 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
     const usuarioDb = rowsUsuario[0] || null;
 
-    console.log('[RECEBIMENTO] Usuário carregado', {
-      usuarioInformado: usuario,
-      encontrado: !!usuarioDb,
-      usuarioDb
-    });
+
 
     if (!usuarioDb) {
       await conn.rollback();
@@ -4019,23 +3993,12 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       transferencia.LOCAL_DESTINO_NOME ?? ''
     ).trim().toUpperCase();
 
-    console.log('[RECEBIMENTO] Validando vínculo usuário x destino', {
-      usuario,
-      centroCustoUsuario,
-      localDestinoNome,
-      idLocalDestino: transferencia.ID_LOCAL_DESTINO,
-      centroCustoConfere: !!centroCustoUsuario && centroCustoUsuario === localDestinoNome
-    });
+
 
     if (!centroCustoUsuario || centroCustoUsuario !== localDestinoNome) {
       await conn.rollback();
 
-      console.log('[RECEBIMENTO] Usuário sem permissão para receber', {
-        usuario,
-        centroCustoUsuario,
-        localDestinoNome,
-        idLocalDestino: transferencia.ID_LOCAL_DESTINO
-      });
+
 
       return res.status(403).json({
         success: false,
@@ -4043,11 +4006,6 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       });
     }
 
-    console.log('[RECEBIMENTO] Atualizando transferência para RECEBIDO', {
-      idTransferencia,
-      usuario,
-      quantidade: Number(transferencia.QUANTIDADE ?? 0)
-    });
 
     await conn.query(
       `
@@ -4073,17 +4031,9 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
       observacao: observacao || `Recebimento confirmado por ${usuario}.`
     });
 
-    console.log('[RECEBIMENTO] Log de recebimento inserido', {
-      idTransferencia,
-      usuario
-    });
 
     await conn.commit();
 
-    console.log('[RECEBIMENTO] Recebimento concluído com sucesso', {
-      idTransferencia,
-      usuario
-    });
 
     return res.json({
       success: true,
@@ -4112,9 +4062,6 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
   } finally {
     if (conn) conn.release();
 
-    console.log('[RECEBIMENTO] Conexão finalizada', {
-      idTransferencia: Number(req.params.id)
-    });
   }
 });
 
