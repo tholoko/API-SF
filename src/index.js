@@ -4012,7 +4012,7 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
     }
 
     const centroCustoUsuario = String(
-      usuarioDb.CENTRO_CUSTO ?? usuarioDb.centro_custo ?? ''
+      usuarioDb.LOCAL_TRABALHO ?? usuarioDb.LOCAL_TRABALHO ?? ''
     ).trim().toUpperCase();
 
     const localDestinoNome = String(
@@ -4139,7 +4139,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       SELECT
         u.ID,
         u.nome,
-        u.CENTRO_CUSTO
+        u.LOCAL_TRABALHO
       FROM SF_USUARIO u
       WHERE UPPER(TRIM(u.nome)) = UPPER(TRIM(?))
       LIMIT 1
@@ -4156,7 +4156,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       });
     }
 
-    const centroCustoUsuario = String(usuarioDb.CENTRO_CUSTO ?? '').trim().toUpperCase();
+    const centroCustoUsuario = String(usuarioDb.LOCAL_TRABALHO ?? '').trim().toUpperCase();
 
     if (!centroCustoUsuario) {
       return res.status(400).json({
