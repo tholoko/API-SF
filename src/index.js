@@ -4072,13 +4072,6 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
   try {
     const usuario = textolivreTr(req.query.usuario, 150) || 'SISTEMA';
 
-    if (!usuario) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe o usuário logado.'
-      });
-    }
-
     conn = await pool.getConnection();
 
     const [rowsUsuario] = await conn.query(
@@ -4112,7 +4105,26 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       });
     }
 
-    const [rows] = await conn.query(
+    const [rowsCentro] = await conn.query(
+      `
+      SELECT ID, NOME
+      FROM SF_LOCAL_TRABALHO
+      WHERE UPPER(TRIM(NOME)) = ?
+      LIMIT 1
+      `,
+      [centroCustoUsuario]
+    );
+
+    const centro = rowsCentro[0] || null;
+
+    if (!centro) {
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo não encontrado.'
+      });
+    }
+
+    const [notificacoesPendentes] = await conn.query(
       `
       SELECT
         t.ID,
@@ -4122,7 +4134,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
         p.descricao AS DESCRICAO_PRODUTO,
         COALESCE(t.UNIDADE, p.unidade, 'UN') AS UNIDADE,
         t.ID_LOCAL_ORIGEM,
-        lo.NOME AS LOCAL_ORIGEM,
+        COALESCE(loa.NOME, lot.NOME) AS LOCAL_ORIGEM,
         t.ID_LOCAL_DESTINO,
         ld.NOME AS LOCAL_DESTINO,
         t.QUANTIDADE,
@@ -4140,31 +4152,64 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       FROM SF_ESTOQUE_TRANSFERENCIA t
       INNER JOIN SF_PRODUTOS p
         ON p.id = t.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
-        ON lo.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO loa
+        ON loa.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_TRABALHO lot
+        ON lot.ID = t.ID_LOCAL_ORIGEM
       LEFT JOIN SF_LOCAL_TRABALHO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
-      WHERE UPPER(TRIM(COALESCE(ld.NOME, ''))) = ?
-        AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
-      ORDER BY
-        CASE
-          WHEN t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO') THEN 0
-          ELSE 1
-        END,
-        t.DATA_CADASTRO DESC,
-        t.ID DESC
+      WHERE t.ID_LOCAL_DESTINO = ?
+        AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
+      ORDER BY t.DATA_CADASTRO DESC, t.ID DESC
       `,
-      [centroCustoUsuario]
+      [centro.ID]
     );
 
-    const notificacoesPendentes = rows.filter(item =>
-      ['AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO'].includes(
-        String(item.STATUS_TRANSFERENCIA ?? '').trim().toUpperCase()
-      )
-    );
-
-    const itemsRecebidos = rows.filter(item =>
-      String(item.STATUS_TRANSFERENCIA ?? '').trim().toUpperCase() === 'RECEBIDO'
+    const [items] = await conn.query(
+      `
+      SELECT
+        p.id AS ID_PRODUTO,
+        p.codigo AS CODIGO_PRODUTO,
+        p.descricao AS DESCRICAO_PRODUTO,
+        COALESCE(p.unidade, 'UN') AS UNIDADE,
+        centro.ID AS ID_LOCAL_DESTINO,
+        centro.NOME AS LOCAL_DESTINO,
+        COALESCE(rec.qtd_recebida, 0) AS QTD_RECEBIDA,
+        COALESCE(env.qtd_enviada, 0) AS QTD_ENVIADA,
+        CASE
+          WHEN COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0) < 0 THEN 0
+          ELSE COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0)
+        END AS QUANTIDADE
+      FROM SF_PRODUTOS p
+      INNER JOIN (
+        SELECT
+          t.ID_PRODUTO,
+          SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_recebida
+        FROM SF_ESTOQUE_TRANSFERENCIA t
+        WHERE t.ID_LOCAL_DESTINO = ?
+          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECEBIDO'
+        GROUP BY t.ID_PRODUTO
+      ) rec ON rec.ID_PRODUTO = p.id
+      LEFT JOIN (
+        SELECT
+          t.ID_PRODUTO,
+          SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_enviada
+        FROM SF_ESTOQUE_TRANSFERENCIA t
+        WHERE t.ID_LOCAL_ORIGEM = ?
+          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
+        GROUP BY t.ID_PRODUTO
+      ) env ON env.ID_PRODUTO = p.id
+      CROSS JOIN (
+        SELECT ID, NOME
+        FROM SF_LOCAL_TRABALHO
+        WHERE ID = ?
+      ) centro
+      WHERE (
+        COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0)
+      ) > 0
+      ORDER BY p.codigo ASC, p.descricao ASC
+      `,
+      [centro.ID, centro.ID, centro.ID]
     );
 
     return res.json({
@@ -4172,11 +4217,10 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       usuario,
       centroCusto: centroCustoUsuario,
       notificacoesPendentes,
-      items: itemsRecebidos
+      items
     });
   } catch (err) {
     console.error('Erro ao carregar estoque do centro de custo:', err);
-
     return res.status(500).json({
       success: false,
       message: 'Erro ao carregar estoque do centro de custo.',
@@ -4237,6 +4281,336 @@ app.post('/api/locais-centrocusto', async (req, res) => {
     }
 
     res.status(500).json({ erro: 'Erro ao cadastrar local.' });
+  }
+});
+
+async function obterSaldoCentroCusto(conn, idProduto, idLocalOrigem, ignoreTransferenciaId = null) {
+  const paramsRecebidas = [Number(idProduto), Number(idLocalOrigem)];
+  const [rowsRecebidas] = await conn.query(
+    `
+    SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_recebida
+    FROM SF_ESTOQUE_TRANSFERENCIA t
+    WHERE t.ID_PRODUTO = ?
+      AND t.ID_LOCAL_DESTINO = ?
+      AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECEBIDO'
+    `,
+    paramsRecebidas
+  );
+
+  const paramsEnviadas = [Number(idProduto), Number(idLocalOrigem)];
+  let sqlEnviadas = `
+    SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_enviada
+    FROM SF_ESTOQUE_TRANSFERENCIA t
+    WHERE t.ID_PRODUTO = ?
+      AND t.ID_LOCAL_ORIGEM = ?
+      AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
+  `;
+
+  if (ignoreTransferenciaId) {
+    sqlEnviadas += ' AND t.ID <> ?';
+    paramsEnviadas.push(Number(ignoreTransferenciaId));
+  }
+
+  const [rowsEnviadas] = await conn.query(sqlEnviadas, paramsEnviadas);
+
+  const qtdRecebida = Number(rowsRecebidas?.[0]?.qtd_recebida ?? 0);
+  const qtdEnviada = Number(rowsEnviadas?.[0]?.qtd_enviada ?? 0);
+  const saldo = qtdRecebida - qtdEnviada;
+
+  return {
+    qtdRecebida,
+    qtdEnviada,
+    saldo: saldo < 0 ? 0 : saldo
+  };
+}
+
+app.get('/api/estoque/centro-custo/saldo', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.query.idProduto);
+    const idLocalOrigem = Number(req.query.idLocalOrigem);
+
+    if (!idProduto || !idLocalOrigem) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto e idLocalOrigem.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalCentrocusto(conn, idLocalOrigem);
+    if (!localOrigem) {
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de origem não encontrado.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoCentroCusto(conn, idProduto, idLocalOrigem);
+
+    return res.json({
+      success: true,
+      produto,
+      localOrigem,
+      ...saldoInfo
+    });
+  } catch (err) {
+    console.error('Erro ao calcular saldo do centro de custo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao calcular saldo do centro de custo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/estoque/centro-custo/transferencias', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.query.idProduto);
+    const idLocalOrigem = Number(req.query.idLocalOrigem);
+
+    if (!idProduto || !idLocalOrigem) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto e idLocalOrigem.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalCentrocusto(conn, idLocalOrigem);
+    if (!localOrigem) {
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de origem não encontrado.'
+      });
+    }
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        t.ID,
+        t.ID_PRODUTO,
+        t.ID_ENTRADA_ORIGEM,
+        p.codigo AS CODIGO_PRODUTO,
+        p.descricao AS DESCRICAO_PRODUTO,
+        COALESCE(t.UNIDADE, p.unidade) AS UNIDADE,
+        t.ID_LOCAL_ORIGEM,
+        lo.NOME AS LOCAL_ORIGEM,
+        t.ID_LOCAL_DESTINO,
+        ld.NOME AS LOCAL_DESTINO,
+        t.QUANTIDADE,
+        t.OBSERVACAO,
+        t.TIPO_TRANSFERENCIA,
+        t.RESPONSAVEL_TRANSPORTE,
+        t.RESPONSAVEL_ENTREGA,
+        t.USUARIO_RECEBIMENTO,
+        t.DATA_HORA_RECEBIMENTO,
+        t.STATUS_TRANSFERENCIA,
+        t.USUARIO_CADASTRO,
+        t.DATA_CADASTRO,
+        t.USUARIO_ALTERACAO,
+        t.DATA_ALTERACAO
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      INNER JOIN SF_PRODUTOS p
+        ON p.id = t.ID_PRODUTO
+      LEFT JOIN SF_LOCAL_TRABALHO lo
+        ON lo.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_TRABALHO ld
+        ON ld.ID = t.ID_LOCAL_DESTINO
+      WHERE t.ID_PRODUTO = ?
+        AND t.ID_LOCAL_ORIGEM = ?
+      ORDER BY t.DATA_CADASTRO DESC, t.ID DESC
+      `,
+      [idProduto, idLocalOrigem]
+    );
+
+    const saldoInfo = await obterSaldoCentroCusto(conn, idProduto, idLocalOrigem);
+
+    return res.json({
+      success: true,
+      produto,
+      localOrigem,
+      saldo: saldoInfo.saldo,
+      qtdRecebida: saldoInfo.qtdRecebida,
+      qtdEnviada: saldoInfo.qtdEnviada,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar transferências do centro de custo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar transferências do centro de custo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/estoque/centro-custo/transferencias', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.body.idProduto);
+    const idLocalOrigem = Number(req.body.idLocalOrigem);
+    const idLocalDestino = Number(req.body.idLocalDestino);
+    const quantidade = parseDecimal(req.body.quantidade);
+    const unidade = textolivreTr(req.body.unidade, 10);
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+
+    if (!idProduto || !idLocalOrigem || !idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto, idLocalOrigem e idLocalDestino.'
+      });
+    }
+
+    if (idLocalOrigem === idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'O local de destino deve ser diferente do local de origem.'
+      });
+    }
+
+    if (!(quantidade > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida para transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalCentrocusto(conn, idLocalOrigem);
+    if (!localOrigem) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de origem não encontrado.'
+      });
+    }
+
+    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
+    if (!localDestino) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de destino não encontrado.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoCentroCusto(conn, idProduto, idLocalOrigem);
+    const saldoAntes = saldoInfo.saldo;
+
+    if (quantidade > saldoAntes) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Quantidade excede o saldo disponível (${saldoAntes}).`
+      });
+    }
+
+    const [result] = await conn.query(
+      `
+      INSERT INTO SF_ESTOQUE_TRANSFERENCIA
+        (
+          ID_PRODUTO,
+          ID_ENTRADA_ORIGEM,
+          ID_LOCAL_ORIGEM,
+          ID_LOCAL_DESTINO,
+          QUANTIDADE,
+          UNIDADE,
+          OBSERVACAO,
+          TIPO_TRANSFERENCIA,
+          RESPONSAVEL_TRANSPORTE,
+          RESPONSAVEL_ENTREGA,
+          STATUS_TRANSFERENCIA,
+          USUARIO_CADASTRO
+        )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        idProduto,
+        null,
+        idLocalOrigem,
+        idLocalDestino,
+        quantidade,
+        unidade || produto.unidade || null,
+        observacao || null,
+        'LOCAL',
+        null,
+        null,
+        'AGUARDANDO_RECEBIMENTO',
+        usuario
+      ]
+    );
+
+    const idTransferencia = result.insertId;
+    const saldoDepois = saldoAntes - quantidade;
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'CRIACAO',
+      saldoAntes,
+      quantidadeTransferida: quantidade,
+      saldoDepois,
+      usuario,
+      observacao: observacao || 'Transferência entre centros de custo.'
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      id: idTransferencia,
+      message: 'Transferência entre centros de custo registrada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao registrar transferência centro de custo:', err);
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao registrar transferência do centro de custo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
