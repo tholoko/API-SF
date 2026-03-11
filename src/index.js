@@ -4614,6 +4614,272 @@ app.post('/api/estoque/centro-custo/transferencias', async (req, res) => {
   }
 });
 
+app.put('/api/estoque/centro-custo/transferencias/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const idProduto = Number(req.body.idProduto);
+    const idLocalOrigem = Number(req.body.idLocalOrigem);
+    const idLocalDestino = Number(req.body.idLocalDestino);
+    const quantidade = parseDecimal(req.body.quantidade);
+    const unidade = textolivreTr(req.body.unidade, 10);
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+
+    if (!idTransferencia || !idProduto || !idLocalOrigem || !idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe id, idProduto, idLocalOrigem e idLocalDestino.'
+      });
+    }
+
+    if (idLocalOrigem === idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'O local de destino deve ser diferente do local de origem.'
+      });
+    }
+
+    if (!(quantidade > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida para transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rowsTransferencia] = await conn.query(
+      `
+      SELECT *
+      FROM SF_ESTOQUE_TRANSFERENCIA
+      WHERE ID = ?
+      LIMIT 1
+      `,
+      [idTransferencia]
+    );
+
+    const transferencia = rowsTransferencia[0] || null;
+
+    if (!transferencia) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada.'
+      });
+    }
+
+    if (Number(transferencia.ID_PRODUTO) !== idProduto || Number(transferencia.ID_LOCAL_ORIGEM) !== idLocalOrigem) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'A transferência informada não pertence ao produto/local de origem enviado.'
+      });
+    }
+
+    const statusAtual = String(transferencia.STATUS_TRANSFERENCIA ?? '').trim().toUpperCase();
+    if (statusAtual !== 'AGUARDANDO_RECEBIMENTO') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente transferências aguardando recebimento podem ser editadas.'
+      });
+    }
+
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalCentrocusto(conn, idLocalOrigem);
+    if (!localOrigem) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de origem não encontrado.'
+      });
+    }
+
+    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
+    if (!localDestino) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de destino não encontrado.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoCentroCusto(conn, idProduto, idLocalOrigem, idTransferencia);
+    const saldoAntes = Number(saldoInfo.saldo ?? 0);
+    const quantidadeAnterior = Number(transferencia.QUANTIDADE ?? 0);
+    const saldoDisponivelEdicao = saldoAntes + quantidadeAnterior;
+
+    if (quantidade > saldoDisponivelEdicao) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Quantidade excede o saldo disponível (${saldoDisponivelEdicao}).`
+      });
+    }
+
+    await conn.query(
+      `
+      UPDATE SF_ESTOQUE_TRANSFERENCIA
+      SET
+        ID_LOCAL_DESTINO = ?,
+        QUANTIDADE = ?,
+        UNIDADE = ?,
+        OBSERVACAO = ?,
+        USUARIO_ALTERACAO = ?,
+        DATA_ALTERACAO = NOW()
+      WHERE ID = ?
+      `,
+      [
+        idLocalDestino,
+        quantidade,
+        unidade || transferencia.UNIDADE || produto.unidade || null,
+        observacao || null,
+        usuario,
+        idTransferencia
+      ]
+    );
+
+    const saldoDepois = saldoDisponivelEdicao - quantidade;
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'EDICAO',
+      saldoAntes: saldoDisponivelEdicao,
+      quantidadeTransferida: quantidade,
+      saldoDepois,
+      usuario,
+      observacao: observacao || 'Transferência entre centros de custo alterada.'
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      id: idTransferencia,
+      message: 'Transferência entre centros de custo alterada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao editar transferência centro de custo:', err);
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao editar transferência do centro de custo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.delete('/api/estoque/centro-custo/transferencias/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const usuario = textolivreTr(req.body?.usuario, 150) || 'SISTEMA';
+    const observacao = textolivreTr(req.body?.observacao, 255);
+
+    if (!idTransferencia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o id da transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rowsTransferencia] = await conn.query(
+      `
+      SELECT *
+      FROM SF_ESTOQUE_TRANSFERENCIA
+      WHERE ID = ?
+      LIMIT 1
+      `,
+      [idTransferencia]
+    );
+
+    const transferencia = rowsTransferencia[0] || null;
+
+    if (!transferencia) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada.'
+      });
+    }
+
+    const statusAtual = String(transferencia.STATUS_TRANSFERENCIA ?? '').trim().toUpperCase();
+    if (statusAtual !== 'AGUARDANDO_RECEBIMENTO') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente transferências aguardando recebimento podem ser excluídas.'
+      });
+    }
+
+    const idProduto = Number(transferencia.ID_PRODUTO);
+    const idLocalOrigem = Number(transferencia.ID_LOCAL_ORIGEM);
+    const quantidade = Number(transferencia.QUANTIDADE ?? 0);
+
+    const saldoInfo = await obterSaldoCentroCusto(conn, idProduto, idLocalOrigem, idTransferencia);
+    const saldoAntes = Number(saldoInfo.saldo ?? 0) + quantidade;
+    const saldoDepois = Number(saldoInfo.saldo ?? 0);
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'EXCLUSAO',
+      saldoAntes,
+      quantidadeTransferida: quantidade,
+      saldoDepois,
+      usuario,
+      observacao: observacao || 'Transferência entre centros de custo excluída.'
+    });
+
+    await conn.query(
+      `
+      DELETE FROM SF_ESTOQUE_TRANSFERENCIA
+      WHERE ID = ?
+      `,
+      [idTransferencia]
+    );
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      id: idTransferencia,
+      message: 'Transferência entre centros de custo excluída com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao excluir transferência centro de custo:', err);
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir transferência do centro de custo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
 
 // =====================
 // Inicia servidor (sempre por último)
