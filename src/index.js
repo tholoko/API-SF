@@ -4229,7 +4229,6 @@ app.get('/api/locais-centrocusto', async (req, res) => {
     const [rows] = await pool.query(`
       SELECT ID, NOME
       FROM SF_LOCAL_TRABALHO
-      WHERE ATIVO = 1
       ORDER BY NOME ASC
     `);
 
