@@ -4195,7 +4195,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
         ON p.id = t.ID_PRODUTO
       LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
         ON lo.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+      LEFT JOIN SF_LOCAL_TRABALHO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE UPPER(TRIM(COALESCE(ld.NOME, ''))) = ?
         AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
