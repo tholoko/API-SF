@@ -4224,8 +4224,59 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
   }
 });
 
+app.get('/api/locais-centrocusto', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ID, NOME
+      FROM SF_LOCAL_TRABALHO
+      WHERE ATIVO = 1
+      ORDER BY NOME ASC
+    `);
 
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ erro: 'Erro ao listar locais.' });
+  }
+});
 
+app.post('/api/locais-centrocusto', async (req, res) => {
+  try {
+    const nome = String(req.body?.nome || '').trim().toUpperCase();
+
+    if (!nome) {
+      return res.status(400).json({ erro: 'Informe o nome do local.' });
+    }
+
+    const [existente] = await pool.query(
+      `SELECT ID FROM SF_LOCAL_TRABALHO WHERE UPPER(NOME) = ? LIMIT 1`,
+      [nome]
+    );
+
+    if (existente.length) {
+      return res.status(409).json({ erro: 'Já existe um local com esse nome.' });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO SF_LOCAL_TRABALHO (NOME) VALUES (?)`,
+      [nome]
+    );
+
+    res.json({
+      ok: true,
+      id: result.insertId,
+      nome
+    });
+  } catch (error) {
+    console.error(error);
+
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ erro: 'Já existe um local com esse nome.' });
+    }
+
+    res.status(500).json({ erro: 'Erro ao cadastrar local.' });
+  }
+});
 
 
 // =====================
