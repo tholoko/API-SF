@@ -3064,7 +3064,7 @@ async function validarLocalAlmoxarifado(conn, idLocal) {
     SELECT
       l.ID,
       l.NOME
-    FROM SF_LOCAL_ALMOXARIFADO l
+    FROM SF_LOCAL_TRABALHO l
     WHERE l.ID = ?
     LIMIT 1
     `,
@@ -3341,9 +3341,9 @@ app.get('/api/estoque/transferencias', async (req, res) => {
       FROM SF_ESTOQUE_TRANSFERENCIA t
       INNER JOIN SF_PRODUTOS p
         ON p.id = t.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
+      LEFT JOIN SF_LOCAL_TRABALHO lo
         ON lo.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+      LEFT JOIN SF_LOCAL_TRABALHO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID_PRODUTO = ?
         AND t.ID_LOCAL_ORIGEM = ?
@@ -3922,7 +3922,7 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
         t.*,
         ld.NOME AS LOCAL_DESTINO_NOME
       FROM SF_ESTOQUE_TRANSFERENCIA t
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+      LEFT JOIN SF_LOCAL_TRABALHO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID = ?
       LIMIT 1
@@ -4177,9 +4177,9 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       FROM SF_ESTOQUE_TRANSFERENCIA t
       INNER JOIN SF_PRODUTOS p
         ON p.id = t.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
+      LEFT JOIN SF_LOCAL_TRABALHO lo
         ON lo.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+      LEFT JOIN SF_LOCAL_TRABALHO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE UPPER(TRIM(COALESCE(ld.NOME, ''))) = ?
         AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
