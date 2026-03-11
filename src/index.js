@@ -4107,7 +4107,8 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
   let conn;
 
   try {
-    const usuario = textolivreTr(req.query.usuario, 150);
+    const usuario = textolivreTr(req.query.usuario, 150) || 'SISTEMA';
+
     if (!usuario) {
       return res.status(400).json({
         success: false,
@@ -4117,98 +4118,102 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
 
     conn = await pool.getConnection();
 
-    const rowsUsuario = await conn.query(
+    const [rowsUsuario] = await conn.query(
       `
       SELECT
         u.ID,
-        u.NOME,
-        u.CENTROCUSTO
-      FROM SFUSUARIO u
-      WHERE UPPER(TRIM(u.NOME)) = UPPER(TRIM(?))
+        u.nome,
+        u.CENTRO_CUSTO
+      FROM SF_USUARIO u
+      WHERE UPPER(TRIM(u.nome)) = UPPER(TRIM(?))
       LIMIT 1
       `,
       [usuario]
     );
 
-    const usuarioDb = rowsUsuario?.[0] ?? null;
+    const usuarioDb = rowsUsuario[0] || null;
+
     if (!usuarioDb) {
       return res.status(404).json({
         success: false,
-        message: 'Usuário não encontrado na SFUSUARIO.'
+        message: 'Usuário logado não encontrado na SF_USUARIO.'
       });
     }
 
-    const centroCustoUsuario = String(usuarioDb.CENTROCUSTO ?? '').trim().toUpperCase();
+    const centroCustoUsuario = String(usuarioDb.CENTRO_CUSTO ?? '').trim().toUpperCase();
+
     if (!centroCustoUsuario) {
       return res.status(400).json({
         success: false,
-        message: 'Usuário sem centro de custo vinculado.'
+        message: 'O usuário logado não possui centro de custo vinculado.'
       });
     }
 
-    const rows = await conn.query(
+    const [rows] = await conn.query(
       `
       SELECT
         t.ID,
-        t.IDPRODUTO,
-        t.IDLOCALORIGEM,
-        t.IDLOCALDESTINO,
-        p.codigo AS CODIGOPRODUTO,
-        p.descricao AS DESCRICAOPRODUTO,
+        t.ID_PRODUTO,
+        t.ID_ENTRADA_ORIGEM,
+        p.codigo AS CODIGO_PRODUTO,
+        p.descricao AS DESCRICAO_PRODUTO,
         COALESCE(t.UNIDADE, p.unidade, 'UN') AS UNIDADE,
-        lo.NOME AS LOCALORIGEM,
-        ld.NOME AS LOCALDESTINO,
+        t.ID_LOCAL_ORIGEM,
+        lo.NOME AS LOCAL_ORIGEM,
+        t.ID_LOCAL_DESTINO,
+        ld.NOME AS LOCAL_DESTINO,
         t.QUANTIDADE,
         t.OBSERVACAO,
-        t.TIPOTRANSFERENCIA,
-        t.RESPONSAVELTRANSPORTE,
-        t.RESPONSAVELENTREGA,
-        t.USUARIOCADASTRO,
-        t.DATACADASTRO,
-        t.USUARIORECEBIMENTO,
-        t.DATAHORARECEBIMENTO,
-        t.STATUSTRANSFERENCIA
-      FROM SFESTOQUETRANSFERENCIA t
-      INNER JOIN SFPRODUTOS p
-        ON p.id = t.IDPRODUTO
-      LEFT JOIN SFLOCALALMOXARIFADO lo
-        ON lo.ID = t.IDLOCALORIGEM
-      LEFT JOIN SFLOCALALMOXARIFADO ld
-        ON ld.ID = t.IDLOCALDESTINO
+        t.TIPO_TRANSFERENCIA,
+        t.RESPONSAVEL_TRANSPORTE,
+        t.RESPONSAVEL_ENTREGA,
+        t.USUARIO_RECEBIMENTO,
+        t.DATA_HORA_RECEBIMENTO,
+        t.STATUS_TRANSFERENCIA,
+        t.USUARIO_CADASTRO,
+        t.DATA_CADASTRO,
+        t.USUARIO_ALTERACAO,
+        t.DATA_ALTERACAO
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      INNER JOIN SF_PRODUTOS p
+        ON p.id = t.ID_PRODUTO
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
+        ON lo.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+        ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE UPPER(TRIM(COALESCE(ld.NOME, ''))) = ?
-        AND t.STATUSTRANSFERENCIA IN ('AGUARDANDORECEBIMENTO', 'EMTRANSITO', 'RECEBIDO')
+        AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
       ORDER BY
         CASE
-          WHEN t.STATUSTRANSFERENCIA IN ('AGUARDANDORECEBIMENTO', 'EMTRANSITO') THEN 0
+          WHEN t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO') THEN 0
           ELSE 1
         END,
-        t.DATACADASTRO DESC,
+        t.DATA_CADASTRO DESC,
         t.ID DESC
       `,
       [centroCustoUsuario]
     );
 
-    const pendentes = rows.filter(item =>
-      ['AGUARDANDORECEBIMENTO', 'EMTRANSITO'].includes(
-        String(item.STATUSTRANSFERENCIA ?? '').trim().toUpperCase()
+    const notificacoesPendentes = rows.filter(item =>
+      ['AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO'].includes(
+        String(item.STATUS_TRANSFERENCIA ?? '').trim().toUpperCase()
       )
     );
 
-    const recebidos = rows.filter(item =>
-      String(item.STATUSTRANSFERENCIA ?? '').trim().toUpperCase() === 'RECEBIDO'
+    const itemsRecebidos = rows.filter(item =>
+      String(item.STATUS_TRANSFERENCIA ?? '').trim().toUpperCase() === 'RECEBIDO'
     );
 
     return res.json({
       success: true,
-      usuario: {
-        nome: usuarioDb.NOME,
-        centroCusto: usuarioDb.CENTROCUSTO
-      },
-      notificacoesPendentes: pendentes,
-      items: recebidos
+      usuario,
+      centroCusto: centroCustoUsuario,
+      notificacoesPendentes,
+      items: itemsRecebidos
     });
   } catch (err) {
     console.error('Erro ao carregar estoque do centro de custo:', err);
+
     return res.status(500).json({
       success: false,
       message: 'Erro ao carregar estoque do centro de custo.',
@@ -4218,6 +4223,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 
 
