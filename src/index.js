@@ -3064,7 +3064,7 @@ async function validarLocalAlmoxarifado(conn, idLocal) {
     SELECT
       l.ID,
       l.NOME
-    FROM SF_LOCAL_ALMOXARIFADO l
+    FROM SF_LOCAL_TRABALHO l
     WHERE l.ID = ?
     LIMIT 1
     `,
