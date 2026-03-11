@@ -4181,7 +4181,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
           ELSE COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0)
         END AS QUANTIDADE
       FROM SF_PRODUTOS p
-      INNER JOIN (
+      LEFT JOIN (
         SELECT
           t.ID_PRODUTO,
           SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_recebida
@@ -4204,13 +4204,17 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
         FROM SF_LOCAL_TRABALHO
         WHERE ID = ?
       ) centro
-      WHERE (
-        COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0)
-      ) > 0
+      WHERE EXISTS (
+        SELECT 1
+        FROM SF_ESTOQUE_TRANSFERENCIA t
+        WHERE t.ID_PRODUTO = p.id
+          AND (t.ID_LOCAL_DESTINO = ? OR t.ID_LOCAL_ORIGEM = ?)
+      )
       ORDER BY p.codigo ASC, p.descricao ASC
       `,
-      [centro.ID, centro.ID, centro.ID]
+      [centro.ID, centro.ID, centro.ID, centro.ID, centro.ID]
     );
+
 
     return res.json({
       success: true,
