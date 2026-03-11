@@ -3938,7 +3938,7 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
         t.*,
         ld.NOME AS LOCAL_DESTINO_NOME
       FROM SF_ESTOQUE_TRANSFERENCIA t
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
+      LEFT JOIN SF_LOCAL_TRABALHO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID = ?
       LIMIT 1
