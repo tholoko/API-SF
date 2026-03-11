@@ -3064,6 +3064,22 @@ async function validarLocalAlmoxarifado(conn, idLocal) {
     SELECT
       l.ID,
       l.NOME
+    FROM SF_LOCAL_ALMOXARIFADO l
+    WHERE l.ID = ?
+    LIMIT 1
+    `,
+    [Number(idLocal)]
+  );
+
+  return rows[0] || null;
+}
+
+async function validarLocalCentrocusto(conn, idLocal) {
+  const [rows] = await conn.query(
+    `
+    SELECT
+      l.ID,
+      l.NOME
     FROM SF_LOCAL_TRABALHO l
     WHERE l.ID = ?
     LIMIT 1
@@ -3447,7 +3463,7 @@ app.post('/api/estoque/transferencias', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Local de origem não encontrado.' });
     }
 
-    const localDestino = await validarLocalAlmoxarifado(conn, idLocalDestino);
+    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
     if (!localDestino) {
       await conn.rollback();
       return res.status(404).json({ success: false, message: 'Local de destino não encontrado.' });
@@ -3642,7 +3658,7 @@ app.put('/api/estoque/transferencias/:id', async (req, res) => {
       });
     }
 
-    const localDestino = await validarLocalAlmoxarifado(conn, idLocalDestino);
+    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
     if (!localDestino) {
       await conn.rollback();
       return res.status(404).json({
