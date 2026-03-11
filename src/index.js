@@ -2739,214 +2739,64 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
   let conn;
 
   try {
-    const usuarioLogado = textolivreTr(
-      req.query.usuario || req.headers['x-usuario-logado'],
-      150
-    );
-
-    if (!usuarioLogado) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe o usuário logado.'
-      });
-    }
-
     conn = await pool.getConnection();
 
-    const [rowsUsuario] = await conn.query(
-      `
-      SELECT
-        u.*
-      FROM SF_USUARIO u
-      WHERE UPPER(TRIM(u.nome)) = UPPER(TRIM(?))
-      LIMIT 1
-      `,
-      [usuarioLogado]
-    );
-
-    const usuarioDb = rowsUsuario[0] || null;
-
-    if (!usuarioDb) {
-      return res.status(404).json({
-        success: false,
-        message: 'Usuário logado não encontrado na SF_USUARIO.'
-      });
-    }
-
-    const centroCustoUsuario = String(
-      usuarioDb.CENTRO_CUSTO ?? usuarioDb.centro_custo ?? ''
-    ).trim();
-
-    if (!centroCustoUsuario) {
-      return res.status(400).json({
-        success: false,
-        message: 'O usuário logado não possui centro de custo vinculado.'
-      });
-    }
-
-    const [rowsLocal] = await conn.query(
-      `
-      SELECT
-        l.ID,
-        l.NOME
-      FROM SF_LOCAL_ALMOXARIFADO l
-      WHERE UPPER(TRIM(l.NOME)) = UPPER(TRIM(?))
-      LIMIT 1
-      `,
-      [centroCustoUsuario]
-    );
-
-    const localUsuario = rowsLocal[0] || null;
-
-    if (!localUsuario) {
-      return res.status(404).json({
-        success: false,
-        message: 'Sem movimentações para o seu estoque/centro de custo.'
-      });
-    }
-
-    const idLocalUsuario = Number(localUsuario.ID);
-
-    console.log('[ESTOQUE ESCRITORIO] Usuário identificado', {
-      usuarioLogado,
-      centroCustoUsuario,
-      idLocalUsuario,
-      localNome: localUsuario.NOME
-    });
-
-    const [rows] = await conn.query(
-      `
+    const [rows] = await conn.query(`
       SELECT
         base.id,
         base.codigo_item,
         base.descricao_item,
         base.unidade,
         base.qtd_entrada,
-        base.qtd_recebida_transferencia,
-        base.qtd_saida_transferencia,
+        COALESCE(tr.qtd_transferida, 0) AS qtd_transferida,
         CASE
-          WHEN (
-            base.qtd_entrada
-            + base.qtd_recebida_transferencia
-            - base.qtd_saida_transferencia
-          ) < 0 THEN 0
-          ELSE (
-            base.qtd_entrada
-            + base.qtd_recebida_transferencia
-            - base.qtd_saida_transferencia
-          )
+          WHEN (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0)) < 0 THEN 0
+          ELSE (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0))
         END AS qtd_disponivel,
         base.local,
         base.id_local_almoxarifado,
         0 AS qtd_em_pedido
       FROM (
         SELECT
-          mov.id_produto AS id,
-          COALESCE(p.codigo, mov.codigo_item_origem) AS codigo_item,
-          COALESCE(p.descricao, mov.descricao_item_origem) AS descricao_item,
-          COALESCE(p.unidade, mov.unidade_origem, 'UN') AS unidade,
-          SUM(mov.qtd_entrada) AS qtd_entrada,
-          SUM(mov.qtd_recebida_transferencia) AS qtd_recebida_transferencia,
-          SUM(mov.qtd_saida_transferencia) AS qtd_saida_transferencia,
-          MAX(mov.local) AS local,
-          mov.id_local_almoxarifado
-        FROM (
-          SELECT
-            pe.produto_sistema_id AS id_produto,
-            COALESCE(pe.cod_produto_sistema, '') AS codigo_item_origem,
-            COALESCE(pe.descricao_produto_nf, '') AS descricao_item_origem,
-            COALESCE(pe.unidade_nf, 'UN') AS unidade_origem,
-            SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada,
-            0 AS qtd_recebida_transferencia,
-            0 AS qtd_saida_transferencia,
-            pe.LOCAL AS local,
-            pe.ID_LOCAL_ALMOXARIFADO AS id_local_almoxarifado
-          FROM SF_PRODUTO_ENTRADA pe
-          WHERE pe.produto_sistema_id IS NOT NULL
-            AND pe.ID_LOCAL_ALMOXARIFADO = ?
-          GROUP BY
-            pe.produto_sistema_id,
-            pe.cod_produto_sistema,
-            pe.descricao_produto_nf,
-            pe.unidade_nf,
-            pe.LOCAL,
-            pe.ID_LOCAL_ALMOXARIFADO
-
-          UNION ALL
-
-          SELECT
-            t.ID_PRODUTO AS id_produto,
-            '' AS codigo_item_origem,
-            '' AS descricao_item_origem,
-            COALESCE(t.UNIDADE, 'UN') AS unidade_origem,
-            0 AS qtd_entrada,
-            SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_recebida_transferencia,
-            0 AS qtd_saida_transferencia,
-            ld.NOME AS local,
-            t.ID_LOCAL_DESTINO AS id_local_almoxarifado
-          FROM SF_ESTOQUE_TRANSFERENCIA t
-          LEFT JOIN SF_LOCAL_ALMOXARIFADO ld
-            ON ld.ID = t.ID_LOCAL_DESTINO
-          WHERE t.ID_PRODUTO IS NOT NULL
-            AND t.ID_LOCAL_DESTINO = ?
-            AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN (
-              'AGUARDANDO_RECEBIMENTO',
-              'EM_TRANSITO',
-              'RECEBIDO'
-            )
-          GROUP BY
-            t.ID_PRODUTO,
-            t.UNIDADE,
-            ld.NOME,
-            t.ID_LOCAL_DESTINO
-
-          UNION ALL
-
-          SELECT
-            t.ID_PRODUTO AS id_produto,
-            '' AS codigo_item_origem,
-            '' AS descricao_item_origem,
-            COALESCE(t.UNIDADE, 'UN') AS unidade_origem,
-            0 AS qtd_entrada,
-            0 AS qtd_recebida_transferencia,
-            SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_saida_transferencia,
-            lo.NOME AS local,
-            t.ID_LOCAL_ORIGEM AS id_local_almoxarifado
-          FROM SF_ESTOQUE_TRANSFERENCIA t
-          LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
-            ON lo.ID = t.ID_LOCAL_ORIGEM
-          WHERE t.ID_PRODUTO IS NOT NULL
-            AND t.ID_LOCAL_ORIGEM = ?
-            AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN (
-              'AGUARDANDO_RECEBIMENTO',
-              'EM_TRANSITO',
-              'RECEBIDO'
-            )
-          GROUP BY
-            t.ID_PRODUTO,
-            t.UNIDADE,
-            lo.NOME,
-            t.ID_LOCAL_ORIGEM
-        ) mov
+          pe.produto_sistema_id AS id,
+          COALESCE(p.codigo, pe.cod_produto_sistema) AS codigo_item,
+          COALESCE(p.descricao, pe.descricao_produto_nf) AS descricao_item,
+          COALESCE(p.unidade, pe.unidade_nf, 'UN') AS unidade,
+          SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada,
+          pe.LOCAL AS local,
+          pe.ID_LOCAL_ALMOXARIFADO AS id_local_almoxarifado
+        FROM SF_PRODUTO_ENTRADA pe
         LEFT JOIN SF_PRODUTOS p
-          ON p.id = mov.id_produto
+          ON p.id = pe.produto_sistema_id
+        WHERE pe.produto_sistema_id IS NOT NULL
+          AND pe.ID_LOCAL_ALMOXARIFADO IS NOT NULL
         GROUP BY
-          mov.id_produto,
-          COALESCE(p.codigo, mov.codigo_item_origem),
-          COALESCE(p.descricao, mov.descricao_item_origem),
-          COALESCE(p.unidade, mov.unidade_origem, 'UN'),
-          mov.id_local_almoxarifado
+          pe.produto_sistema_id,
+          COALESCE(p.codigo, pe.cod_produto_sistema),
+          COALESCE(p.descricao, pe.descricao_produto_nf),
+          COALESCE(p.unidade, pe.unidade_nf, 'UN'),
+          pe.LOCAL,
+          pe.ID_LOCAL_ALMOXARIFADO
       ) base
+      LEFT JOIN (
+        SELECT
+          t.ID_PRODUTO,
+          t.ID_LOCAL_ORIGEM,
+          SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
+        FROM SF_ESTOQUE_TRANSFERENCIA t
+        WHERE t.ID_PRODUTO IS NOT NULL
+          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
+        GROUP BY
+          t.ID_PRODUTO,
+          t.ID_LOCAL_ORIGEM
+      ) tr
+        ON tr.ID_PRODUTO = base.id
+       AND tr.ID_LOCAL_ORIGEM = base.id_local_almoxarifado
       ORDER BY base.codigo_item ASC, base.descricao_item ASC
-      `,
-      [idLocalUsuario, idLocalUsuario, idLocalUsuario]
-    );
+    `);
 
     return res.json({
       success: true,
-      usuario: usuarioLogado,
-      centroCusto: centroCustoUsuario,
-      idLocalAlmoxarifado: idLocalUsuario,
       items: rows
     });
   } catch (err) {
