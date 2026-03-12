@@ -5080,10 +5080,7 @@ app.get('/api/perfis', async (req, res) => {
       ORDER BY nome ASC
     `);
 
-    return res.json({
-      success: true,
-      items: rows
-    });
+    res.json({ success: true, items: rows });
   } catch (err) {
     console.error('Erro ao listar perfis:', err);
     return res.status(500).json({
@@ -5093,7 +5090,6 @@ app.get('/api/perfis', async (req, res) => {
     });
   }
 });
-
 
 // BUSCAR PERFIL POR ID
 app.get('/api/perfis/:id', async (req, res) => {
@@ -5305,7 +5301,6 @@ app.post('/api/perfis', async (req, res) => {
   }
 });
 
-
 // EDITAR PERFIL
 app.put('/api/perfis/:id', async (req, res) => {
   const conn = await pool.getConnection();
@@ -5475,7 +5470,6 @@ app.put('/api/perfis/:id', async (req, res) => {
     conn.release();
   }
 });
-
 
 // LISTAR LOGS DO PERFIL
 app.get('/api/perfis/:id/logs', async (req, res) => {
