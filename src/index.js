@@ -27,14 +27,14 @@ app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // =====================
-// Fotos de usuário (volume /publicidade/foto-usuario)
+// Fotos de usuário (volume /anexos/foto-usuario)
 // =====================
-const DIRETORIO_VOLUME_PUBLICIDADE = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/publicidade";
-const PASTA_FOTO_USUARIO = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "foto-usuario");
+const DIRETORIO_VOLUME_anexos = process.env.RAILWAY_VOLUME_MOUNT_PATH || "/anexos";
+const PASTA_FOTO_USUARIO = path.join(DIRETORIO_VOLUME_anexos, "foto-usuario");
 
 fs.mkdirSync(PASTA_FOTO_USUARIO, { recursive: true });
 
-app.use("/publicidade/foto-usuario", express.static(PASTA_FOTO_USUARIO));
+app.use("/anexos/foto-usuario", express.static(PASTA_FOTO_USUARIO));
 
 // =====================
 // Ajuste timezone MySQL
@@ -804,7 +804,7 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
 
       if (
         usuarioAtual.FOTO &&
-        usuarioAtual.FOTO.startsWith('/publicidade/foto-usuario/') &&
+        usuarioAtual.FOTO.startsWith('/anexos/foto-usuario/') &&
         usuarioAtual.FOTO !== fotoPath
       ) {
         const nomeAntigo = path.basename(usuarioAtual.FOTO);
@@ -816,7 +816,7 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     if (foto === null) {
       if (
         usuarioAtual.FOTO &&
-        usuarioAtual.FOTO.startsWith('/publicidade/foto-usuario/')
+        usuarioAtual.FOTO.startsWith('/anexos/foto-usuario/')
       ) {
         const nomeAntigo = path.basename(usuarioAtual.FOTO);
         const caminhoAntigo = path.join(PASTA_FOTO_USUARIO, nomeAntigo);
@@ -1082,15 +1082,15 @@ app.post('/api/password-reset/request', async (req, res) => {
 });
 
 // =====================
-// MARKETING (Volume /publicidade)
+// MARKETING (Volume /anexos)
 // =====================
-// Volume montado em /publicidade (conforme seu Railway)
-const PASTA_MARKETING = path.join(DIRETORIO_VOLUME_PUBLICIDADE, "marketing");
+// Volume montado em /anexos (conforme seu Railway)
+const PASTA_MARKETING = path.join(DIRETORIO_VOLUME_anexos, "marketing");
 
 fs.mkdirSync(PASTA_MARKETING, { recursive: true });
 
 // Servir imagens via URL (Express static) [web:650]
-app.use("/publicidade/marketing", express.static(PASTA_MARKETING));
+app.use("/anexos/marketing", express.static(PASTA_MARKETING));
 
 function apenasNomeArquivoSeguro(nome) {
   const base = path.basename(String(nome || ""));
@@ -1134,7 +1134,7 @@ app.post('/api/gestao-usuarios/foto', uploadFotoUsuario.single('foto'), async (r
       success: true,
       item: {
         name: req.file.filename,
-        url: `/publicidade/foto-usuario/${encodeURIComponent(req.file.filename)}`,
+        url: `/anexos/foto-usuario/${encodeURIComponent(req.file.filename)}`,
         size: req.file.size,
         mimetype: req.file.mimetype,
       },
@@ -1198,7 +1198,7 @@ app.get("/api/marketing/imagens", async (req, res) => {
       .sort((a, b) => a.localeCompare(b, "pt-BR"))
       .map((name) => ({
         name,
-        url: `/publicidade/marketing/${encodeURIComponent(name)}`,
+        url: `/anexos/marketing/${encodeURIComponent(name)}`,
       }));
 
     return res.json({ success: true, items });
@@ -1214,7 +1214,7 @@ app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) =
 
     const items = arquivos.map((f) => ({
       name: f.filename,
-      url: `/publicidade/marketing/${encodeURIComponent(f.filename)}`,
+      url: `/anexos/marketing/${encodeURIComponent(f.filename)}`,
       size: f.size,
       mimetype: f.mimetype,
     }));
