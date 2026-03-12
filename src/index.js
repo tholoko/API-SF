@@ -5039,6 +5039,482 @@ app.get('/api/emails/destinatarios', async (req, res) => {
   }
 });
 
+// perfis
+
+function texto(v) {
+  return String(v ?? '').trim();
+}
+
+function bit(v) {
+  return Number(v) === 1 ? 1 : 0;
+}
+
+// LISTAR PERFIS
+app.get('/api/perfis', async (req, res) => {
+  try {
+    const rows = await pool.query(`
+      SELECT
+        id,
+        nome,
+        pedidos,
+        pedidos_dashboard_geral,
+        pedidos_dashboard_minha,
+        pedidos_supervisor,
+        pedidos_incluir,
+        pedidos_editar,
+        pedidos_excluir,
+        clientes,
+        clientes_incluir,
+        clientes_editar,
+        clientes_excluir,
+        marketing,
+        email_automaticos,
+        gestao_usuarios,
+        gestao_usuarios_cadastro,
+        gestao_usuarios_incluir,
+        gestao_usuarios_editar,
+        gestao_usuarios_excluir,
+        estoque,
+        estoque_almoxarifado,
+        estoque_fazenda,
+        estoque_cadastrar,
+        estoque_transferir,
+        estoque_receber
+      FROM SF_PERFIL
+      ORDER BY nome ASC
+    `);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro /api/perfis GET', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar perfis.',
+      error: err.message
+    });
+  }
+});
+
+// BUSCAR PERFIL POR ID
+app.get('/api/perfis/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do perfil inválido.'
+      });
+    }
+
+    const rows = await pool.query(`
+      SELECT
+        id,
+        nome,
+        pedidos,
+        pedidos_dashboard_geral,
+        pedidos_dashboard_minha,
+        pedidos_supervisor,
+        pedidos_incluir,
+        pedidos_editar,
+        pedidos_excluir,
+        clientes,
+        clientes_incluir,
+        clientes_editar,
+        clientes_excluir,
+        marketing,
+        email_automaticos,
+        gestao_usuarios,
+        gestao_usuarios_cadastro,
+        gestao_usuarios_incluir,
+        gestao_usuarios_editar,
+        gestao_usuarios_excluir,
+        estoque,
+        estoque_almoxarifado,
+        estoque_fazenda,
+        estoque_cadastrar,
+        estoque_transferir,
+        estoque_receber
+      FROM SF_PERFIL
+      WHERE id = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Perfil não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: rows[0]
+    });
+  } catch (err) {
+    console.error('Erro /api/perfis/:id GET', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar perfil.',
+      error: err.message
+    });
+  }
+});
+
+// CRIAR PERFIL
+app.post('/api/perfis', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const nome = texto(req.body?.nome);
+    const usuarioId = req.body?.usuario_id ?? null;
+    const usuarioNome = texto(req.body?.usuario_nome) || null;
+
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome do perfil é obrigatório.'
+      });
+    }
+
+    await conn.beginTransaction();
+
+    const result = await conn.query(`
+      INSERT INTO SF_PERFIL (
+        nome,
+        pedidos,
+        pedidos_dashboard_geral,
+        pedidos_dashboard_minha,
+        pedidos_supervisor,
+        pedidos_incluir,
+        pedidos_editar,
+        pedidos_excluir,
+        clientes,
+        clientes_incluir,
+        clientes_editar,
+        clientes_excluir,
+        marketing,
+        email_automaticos,
+        gestao_usuarios,
+        gestao_usuarios_cadastro,
+        gestao_usuarios_incluir,
+        gestao_usuarios_editar,
+        gestao_usuarios_excluir,
+        estoque,
+        estoque_almoxarifado,
+        estoque_fazenda,
+        estoque_cadastrar,
+        estoque_transferir,
+        estoque_receber
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      nome,
+      bit(req.body?.pedidos),
+      bit(req.body?.pedidos_dashboard_geral),
+      bit(req.body?.pedidos_dashboard_minha),
+      bit(req.body?.pedidos_supervisor),
+      bit(req.body?.pedidos_incluir),
+      bit(req.body?.pedidos_editar),
+      bit(req.body?.pedidos_excluir),
+      bit(req.body?.clientes),
+      bit(req.body?.clientes_incluir),
+      bit(req.body?.clientes_editar),
+      bit(req.body?.clientes_excluir),
+      bit(req.body?.marketing),
+      bit(req.body?.email_automaticos),
+      bit(req.body?.gestao_usuarios),
+      bit(req.body?.gestao_usuarios_cadastro),
+      bit(req.body?.gestao_usuarios_incluir),
+      bit(req.body?.gestao_usuarios_editar),
+      bit(req.body?.gestao_usuarios_excluir),
+      bit(req.body?.estoque),
+      bit(req.body?.estoque_almoxarifado),
+      bit(req.body?.estoque_fazenda),
+      bit(req.body?.estoque_cadastrar),
+      bit(req.body?.estoque_transferir),
+      bit(req.body?.estoque_receber)
+    ]);
+
+    const idPerfil = result.insertId;
+
+    await conn.query(`
+      INSERT INTO SF_PERFIL_LOG (
+        id_perfil,
+        acao,
+        usuario_id,
+        usuario_nome,
+        detalhes
+      ) VALUES (?, ?, ?, ?, ?)
+    `, [
+      idPerfil,
+      'CRIACAO',
+      usuarioId,
+      usuarioNome,
+      JSON.stringify({
+        depois: {
+          nome,
+          pedidos: bit(req.body?.pedidos),
+          pedidos_dashboard_geral: bit(req.body?.pedidos_dashboard_geral),
+          pedidos_dashboard_minha: bit(req.body?.pedidos_dashboard_minha),
+          pedidos_supervisor: bit(req.body?.pedidos_supervisor),
+          pedidos_incluir: bit(req.body?.pedidos_incluir),
+          pedidos_editar: bit(req.body?.pedidos_editar),
+          pedidos_excluir: bit(req.body?.pedidos_excluir),
+          clientes: bit(req.body?.clientes),
+          clientes_incluir: bit(req.body?.clientes_incluir),
+          clientes_editar: bit(req.body?.clientes_editar),
+          clientes_excluir: bit(req.body?.clientes_excluir),
+          marketing: bit(req.body?.marketing),
+          email_automaticos: bit(req.body?.email_automaticos),
+          gestao_usuarios: bit(req.body?.gestao_usuarios),
+          gestao_usuarios_cadastro: bit(req.body?.gestao_usuarios_cadastro),
+          gestao_usuarios_incluir: bit(req.body?.gestao_usuarios_incluir),
+          gestao_usuarios_editar: bit(req.body?.gestao_usuarios_editar),
+          gestao_usuarios_excluir: bit(req.body?.gestao_usuarios_excluir),
+          estoque: bit(req.body?.estoque),
+          estoque_almoxarifado: bit(req.body?.estoque_almoxarifado),
+          estoque_fazenda: bit(req.body?.estoque_fazenda),
+          estoque_cadastrar: bit(req.body?.estoque_cadastrar),
+          estoque_transferir: bit(req.body?.estoque_transferir),
+          estoque_receber: bit(req.body?.estoque_receber)
+        }
+      })
+    ]);
+
+    await conn.commit();
+
+    return res.status(201).json({
+      success: true,
+      item: {
+        id: idPerfil,
+        nome
+      },
+      message: 'Perfil criado com sucesso.'
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/perfis POST', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao criar perfil.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+// EDITAR PERFIL
+app.put('/api/perfis/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const id = Number(req.params.id);
+    const nome = texto(req.body?.nome);
+    const usuarioId = req.body?.usuario_id ?? null;
+    const usuarioNome = texto(req.body?.usuario_nome) || null;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do perfil inválido.'
+      });
+    }
+
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome do perfil é obrigatório.'
+      });
+    }
+
+    await conn.beginTransaction();
+
+    const atualRows = await conn.query(`
+      SELECT * FROM SF_PERFIL WHERE id = ? LIMIT 1
+    `, [id]);
+
+    if (!atualRows.length) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Perfil não encontrado.'
+      });
+    }
+
+    const antes = atualRows[0];
+
+    const result = await conn.query(`
+      UPDATE SF_PERFIL SET
+        nome = ?,
+        pedidos = ?,
+        pedidos_dashboard_geral = ?,
+        pedidos_dashboard_minha = ?,
+        pedidos_supervisor = ?,
+        pedidos_incluir = ?,
+        pedidos_editar = ?,
+        pedidos_excluir = ?,
+        clientes = ?,
+        clientes_incluir = ?,
+        clientes_editar = ?,
+        clientes_excluir = ?,
+        marketing = ?,
+        email_automaticos = ?,
+        gestao_usuarios = ?,
+        gestao_usuarios_cadastro = ?,
+        gestao_usuarios_incluir = ?,
+        gestao_usuarios_editar = ?,
+        gestao_usuarios_excluir = ?,
+        estoque = ?,
+        estoque_almoxarifado = ?,
+        estoque_fazenda = ?,
+        estoque_cadastrar = ?,
+        estoque_transferir = ?,
+        estoque_receber = ?
+      WHERE id = ?
+    `, [
+      nome,
+      bit(req.body?.pedidos),
+      bit(req.body?.pedidos_dashboard_geral),
+      bit(req.body?.pedidos_dashboard_minha),
+      bit(req.body?.pedidos_supervisor),
+      bit(req.body?.pedidos_incluir),
+      bit(req.body?.pedidos_editar),
+      bit(req.body?.pedidos_excluir),
+      bit(req.body?.clientes),
+      bit(req.body?.clientes_incluir),
+      bit(req.body?.clientes_editar),
+      bit(req.body?.clientes_excluir),
+      bit(req.body?.marketing),
+      bit(req.body?.email_automaticos),
+      bit(req.body?.gestao_usuarios),
+      bit(req.body?.gestao_usuarios_cadastro),
+      bit(req.body?.gestao_usuarios_incluir),
+      bit(req.body?.gestao_usuarios_editar),
+      bit(req.body?.gestao_usuarios_excluir),
+      bit(req.body?.estoque),
+      bit(req.body?.estoque_almoxarifado),
+      bit(req.body?.estoque_fazenda),
+      bit(req.body?.estoque_cadastrar),
+      bit(req.body?.estoque_transferir),
+      bit(req.body?.estoque_receber),
+      id
+    ]);
+
+    if (result.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Perfil não encontrado para atualização.'
+      });
+    }
+
+    const depois = {
+      id,
+      nome,
+      pedidos: bit(req.body?.pedidos),
+      pedidos_dashboard_geral: bit(req.body?.pedidos_dashboard_geral),
+      pedidos_dashboard_minha: bit(req.body?.pedidos_dashboard_minha),
+      pedidos_supervisor: bit(req.body?.pedidos_supervisor),
+      pedidos_incluir: bit(req.body?.pedidos_incluir),
+      pedidos_editar: bit(req.body?.pedidos_editar),
+      pedidos_excluir: bit(req.body?.pedidos_excluir),
+      clientes: bit(req.body?.clientes),
+      clientes_incluir: bit(req.body?.clientes_incluir),
+      clientes_editar: bit(req.body?.clientes_editar),
+      clientes_excluir: bit(req.body?.clientes_excluir),
+      marketing: bit(req.body?.marketing),
+      email_automaticos: bit(req.body?.email_automaticos),
+      gestao_usuarios: bit(req.body?.gestao_usuarios),
+      gestao_usuarios_cadastro: bit(req.body?.gestao_usuarios_cadastro),
+      gestao_usuarios_incluir: bit(req.body?.gestao_usuarios_incluir),
+      gestao_usuarios_editar: bit(req.body?.gestao_usuarios_editar),
+      gestao_usuarios_excluir: bit(req.body?.gestao_usuarios_excluir),
+      estoque: bit(req.body?.estoque),
+      estoque_almoxarifado: bit(req.body?.estoque_almoxarifado),
+      estoque_fazenda: bit(req.body?.estoque_fazenda),
+      estoque_cadastrar: bit(req.body?.estoque_cadastrar),
+      estoque_transferir: bit(req.body?.estoque_transferir),
+      estoque_receber: bit(req.body?.estoque_receber)
+    };
+
+    await conn.query(`
+      INSERT INTO SF_PERFIL_LOG (
+        id_perfil,
+        acao,
+        usuario_id,
+        usuario_nome,
+        detalhes
+      ) VALUES (?, ?, ?, ?, ?)
+    `, [
+      id,
+      'ALTERACAO',
+      usuarioId,
+      usuarioNome,
+      JSON.stringify({ antes, depois })
+    ]);
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      item: depois,
+      message: 'Perfil atualizado com sucesso.'
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/perfis/:id PUT', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar perfil.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+// LISTAR LOGS DO PERFIL
+app.get('/api/perfis/:id/logs', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do perfil inválido.'
+      });
+    }
+
+    const rows = await pool.query(`
+      SELECT
+        id,
+        id_perfil,
+        acao,
+        usuario_id,
+        usuario_nome,
+        data_hora,
+        detalhes
+      FROM SF_PERFIL_LOG
+      WHERE id_perfil = ?
+      ORDER BY data_hora DESC, id DESC
+    `, [id]);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro /api/perfis/:id/logs GET', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar logs do perfil.',
+      error: err.message
+    });
+  }
+});
 
 
 
