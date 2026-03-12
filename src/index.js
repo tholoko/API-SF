@@ -5048,7 +5048,7 @@ function bit(v) {
 // LISTAR PERFIS
 app.get('/api/perfis', async (req, res) => {
   try {
-    const rows = await pool.query(`
+    const [rows] = await pool.query(`
       SELECT
         id,
         nome,
@@ -5099,6 +5099,7 @@ app.get('/api/perfis', async (req, res) => {
 app.get('/api/perfis/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
+
     if (!id) {
       return res.status(400).json({
         success: false,
@@ -5106,7 +5107,7 @@ app.get('/api/perfis/:id', async (req, res) => {
       });
     }
 
-    const rows = await pool.query(`
+    const [rows] = await pool.query(`
       SELECT
         id,
         nome,
@@ -5160,6 +5161,7 @@ app.get('/api/perfis/:id', async (req, res) => {
   }
 });
 
+
 // CRIAR PERFIL
 app.post('/api/perfis', async (req, res) => {
   const conn = await pool.getConnection();
@@ -5178,7 +5180,7 @@ app.post('/api/perfis', async (req, res) => {
 
     await conn.beginTransaction();
 
-    const result = await conn.query(`
+    const [result] = await conn.query(`
       INSERT INTO SF_PERFIL (
         nome,
         pedidos,
@@ -5303,6 +5305,7 @@ app.post('/api/perfis', async (req, res) => {
   }
 });
 
+
 // EDITAR PERFIL
 app.put('/api/perfis/:id', async (req, res) => {
   const conn = await pool.getConnection();
@@ -5329,7 +5332,7 @@ app.put('/api/perfis/:id', async (req, res) => {
 
     await conn.beginTransaction();
 
-    const atualRows = await conn.query(`
+    const [atualRows] = await conn.query(`
       SELECT * FROM SF_PERFIL WHERE id = ? LIMIT 1
     `, [id]);
 
@@ -5343,7 +5346,7 @@ app.put('/api/perfis/:id', async (req, res) => {
 
     const antes = atualRows[0];
 
-    const result = await conn.query(`
+    const [result] = await conn.query(`
       UPDATE SF_PERFIL SET
         nome = ?,
         pedidos = ?,
@@ -5473,6 +5476,7 @@ app.put('/api/perfis/:id', async (req, res) => {
   }
 });
 
+
 // LISTAR LOGS DO PERFIL
 app.get('/api/perfis/:id/logs', async (req, res) => {
   try {
@@ -5485,7 +5489,7 @@ app.get('/api/perfis/:id/logs', async (req, res) => {
       });
     }
 
-    const rows = await pool.query(`
+    const [rows] = await pool.query(`
       SELECT
         id,
         id_perfil,
