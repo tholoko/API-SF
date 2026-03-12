@@ -4883,6 +4883,120 @@ app.delete('/api/estoque/centro-custo/transferencias/:id', async (req, res) => {
   }
 });
 
+// emails
+
+// PUT Destinatário (editar)
+app.put('/api/emails/destinatarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { ID_REMETENTE, EMAIL_DESTINATARIO, NOME_DESTINATARIO } = req.body;
+    
+    const [result] = await pool.query(
+      `UPDATE SF_EMAIL_DESTINATARIOS 
+       SET ID_REMETENTE = ?, EMAIL_DESTINATARIO = ?, NOME_DESTINATARIO = ? 
+       WHERE ID = ?`,
+      [
+        Number(ID_REMETENTE),
+        EMAIL_DESTINATARIO.toLowerCase().trim(),
+        NOME_DESTINATARIO?.trim() || null,
+        id
+      ]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Destinatário não encontrado' });
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, message: 'Destinatário já cadastrado para este remetente' });
+    }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// DELETE Destinatário (desativar)
+app.delete('/api/emails/destinatarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const [result] = await pool.query(
+      `UPDATE SF_EMAIL_DESTINATARIOS SET ATIVO = 0 WHERE ID = ?`,
+      [id]
+    );
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Destinatário não encontrado' });
+    }
+    
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST Novo/Editar Remetente
+app.post('/api/emails/remetentes', async (req, res) => {
+  try {
+    const { EMAIL, NOME } = req.body;
+    const [result] = await pool.query(
+      `INSERT INTO SF_EMAIL_REMETENTE (EMAIL, NOME, ATIVO) VALUES (?, ?, 1)`,
+      [EMAIL.toLowerCase().trim(), NOME?.trim() || null]
+    );
+    res.status(201).json({ success: true, id: result.insertId });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, message: 'Email já cadastrado' });
+    }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.put('/api/emails/remetentes/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { EMAIL, NOME } = req.body;
+    const [result] = await pool.query(
+      `UPDATE SF_EMAIL_REMETENTE SET EMAIL = ?, NOME = ? WHERE ID = ?`,
+      [EMAIL.toLowerCase().trim(), NOME?.trim() || null, id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Remetente não encontrado' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.delete('/api/emails/remetentes/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await pool.query(`UPDATE SF_EMAIL_REMETENTE SET ATIVO = 0 WHERE ID = ?`, [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// POST Destinatário (igual, mas com ID_REMETENTE)
+app.post('/api/emails/destinatarios', async (req, res) => {
+  try {
+    const { ID_REMETENTE, EMAIL_DESTINATARIO, NOME_DESTINATARIO } = req.body;
+    const [result] = await pool.query(
+      `INSERT INTO SF_EMAIL_DESTINATARIOS (ID_REMETENTE, EMAIL_DESTINATARIO, NOME_DESTINATARIO, ATIVO) 
+       VALUES (?, ?, ?, 1)`,
+      [Number(ID_REMETENTE), EMAIL_DESTINATARIO.toLowerCase().trim(), NOME_DESTINATARIO?.trim() || null]
+    );
+    res.status(201).json({ success: true, id: result.insertId });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ success: false, message: 'Destinatário já cadastrado para este remetente' });
+    }
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 
 
 // =====================
