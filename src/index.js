@@ -5048,7 +5048,7 @@ function bit(v) {
 // LISTAR PERFIS
 app.get('/api/perfis', async (req, res) => {
   try {
-    const [rows] = await pool.query(`
+    const rows = await pool.query(`
       SELECT
         id,
         nome,
@@ -5093,6 +5093,7 @@ app.get('/api/perfis', async (req, res) => {
     });
   }
 });
+
 
 // BUSCAR PERFIL POR ID
 app.get('/api/perfis/:id', async (req, res) => {
