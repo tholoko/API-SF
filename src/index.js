@@ -5041,10 +5041,6 @@ app.get('/api/emails/destinatarios', async (req, res) => {
 
 // perfis
 
-function texto(v) {
-  return String(v ?? '').trim();
-}
-
 function bit(v) {
   return Number(v) === 1 ? 1 : 0;
 }
