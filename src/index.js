@@ -1210,7 +1210,18 @@ app.get("/api/marketing/imagens", async (req, res) => {
 // UPLOAD (múltiplos) - campo FormData: "files" [web:647]
 app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) => {
   try {
+    console.log("BODY:", req.body);
+    console.log("FILES:", req.files);
+    console.log("PASTA_MARKETING:", PASTA_MARKETING);
+
     const arquivos = Array.isArray(req.files) ? req.files : [];
+
+    if (!arquivos.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Nenhum arquivo recebido no campo 'files'."
+      });
+    }
 
     const items = arquivos.map((f) => ({
       name: f.filename,
@@ -1221,9 +1232,14 @@ app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) =
 
     return res.status(201).json({ success: true, items });
   } catch (err) {
-    return res.status(400).json({ success: false, message: err.message || "Erro ao enviar imagens." });
+    console.error("ERRO UPLOAD MARKETING:", err);
+    return res.status(400).json({
+      success: false,
+      message: err.message || "Erro ao enviar imagens."
+    });
   }
 });
+
 
 // REMOVER
 app.delete("/api/marketing/imagens/:nome", async (req, res) => {
