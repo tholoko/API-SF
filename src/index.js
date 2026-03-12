@@ -5167,6 +5167,8 @@ app.post('/api/perfis', async (req, res) => {
     const usuarioId = req.body?.usuario_id ?? null;
     const usuarioNome = texto(req.body?.usuario_nome) || null;
 
+    console.log(req);
+
     if (!nome) {
       return res.status(400).json({
         success: false,
