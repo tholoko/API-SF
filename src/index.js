@@ -5176,63 +5176,95 @@ app.post('/api/perfis', async (req, res) => {
 
     await conn.beginTransaction();
 
+    const payloadDepois = {
+      nome,
+      pedidos: bit(req.body?.pedidos),
+      pedidosdashboardgeral: bit(req.body?.pedidos_dashboard_geral),
+      pedidosdashboardminha: bit(req.body?.pedidos_dashboard_minha),
+      pedidossupervisor: bit(req.body?.pedidos_supervisor),
+      pedidosincluir: bit(req.body?.pedidos_incluir),
+      pedidoseditar: bit(req.body?.pedidos_editar),
+      pedidosexcluir: bit(req.body?.pedidos_excluir),
+      clientes: bit(req.body?.clientes),
+      clientesincluir: bit(req.body?.clientes_incluir),
+      clienteseditar: bit(req.body?.clientes_editar),
+      clientesexcluir: bit(req.body?.clientes_excluir),
+      marketing: bit(req.body?.marketing),
+      emailautomaticos: bit(req.body?.email_automaticos),
+      gestaousuarios: bit(req.body?.gestao_usuarios),
+      gestaousuarioscadastro: bit(req.body?.gestao_usuarios_cadastro),
+      gestaousuariosincluir: bit(req.body?.gestao_usuarios_incluir),
+      gestaousuarioseditar: bit(req.body?.gestao_usuarios_editar),
+      gestaousuariosexcluir: bit(req.body?.gestao_usuarios_excluir),
+      estoque: bit(req.body?.estoque),
+      estoquealmoxarifado: bit(req.body?.estoque_almoxarifado),
+      estoquefazenda: bit(req.body?.estoque_fazenda),
+      estoquecadastrar: bit(req.body?.estoque_cadastrar),
+      estoquetransferir: bit(req.body?.estoque_transferir),
+      estoquereceber: bit(req.body?.estoque_receber)
+    };
+
     const [result] = await conn.query(`
       INSERT INTO SF_PERFIL (
         nome,
         pedidos,
-        pedidos_dashboard_geral,
-        pedidos_dashboard_minha,
-        pedidos_supervisor,
-        pedidos_incluir,
-        pedidos_editar,
-        pedidos_excluir,
+        pedidosdashboardgeral,
+        pedidosdashboardminha,
+        pedidossupervisor,
+        pedidosincluir,
+        pedidoseditar,
+        pedidosexcluir,
         clientes,
-        clientes_incluir,
-        clientes_editar,
-        clientes_excluir,
+        clientesincluir,
+        clienteseditar,
+        clientesexcluir,
         marketing,
-        email_automaticos,
-        gestao_usuarios,
-        gestao_usuarios_cadastro,
-        gestao_usuarios_incluir,
-        gestao_usuarios_editar,
-        gestao_usuarios_excluir,
+        emailautomaticos,
+        gestaousuarios,
+        gestaousuarioscadastro,
+        gestaousuariosincluir,
+        gestaousuarioseditar,
+        gestaousuariosexcluir,
         estoque,
-        estoque_almoxarifado,
-        estoque_fazenda,
-        estoque_cadastrar,
-        estoque_transferir,
-        estoque_receber
+        estoquealmoxarifado,
+        estoquefazenda,
+        estoquecadastrar,
+        estoquetransferir,
+        estoquereceber
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
-      nome,
-      bit(req.body?.pedidos),
-      bit(req.body?.pedidos_dashboard_geral),
-      bit(req.body?.pedidos_dashboard_minha),
-      bit(req.body?.pedidos_supervisor),
-      bit(req.body?.pedidos_incluir),
-      bit(req.body?.pedidos_editar),
-      bit(req.body?.pedidos_excluir),
-      bit(req.body?.clientes),
-      bit(req.body?.clientes_incluir),
-      bit(req.body?.clientes_editar),
-      bit(req.body?.clientes_excluir),
-      bit(req.body?.marketing),
-      bit(req.body?.email_automaticos),
-      bit(req.body?.gestao_usuarios),
-      bit(req.body?.gestao_usuarios_cadastro),
-      bit(req.body?.gestao_usuarios_incluir),
-      bit(req.body?.gestao_usuarios_editar),
-      bit(req.body?.gestao_usuarios_excluir),
-      bit(req.body?.estoque),
-      bit(req.body?.estoque_almoxarifado),
-      bit(req.body?.estoque_fazenda),
-      bit(req.body?.estoque_cadastrar),
-      bit(req.body?.estoque_transferir),
-      bit(req.body?.estoque_receber)
+      payloadDepois.nome,
+      payloadDepois.pedidos,
+      payloadDepois.pedidosdashboardgeral,
+      payloadDepois.pedidosdashboardminha,
+      payloadDepois.pedidossupervisor,
+      payloadDepois.pedidosincluir,
+      payloadDepois.pedidoseditar,
+      payloadDepois.pedidosexcluir,
+      payloadDepois.clientes,
+      payloadDepois.clientesincluir,
+      payloadDepois.clienteseditar,
+      payloadDepois.clientesexcluir,
+      payloadDepois.marketing,
+      payloadDepois.emailautomaticos,
+      payloadDepois.gestaousuarios,
+      payloadDepois.gestaousuarioscadastro,
+      payloadDepois.gestaousuariosincluir,
+      payloadDepois.gestaousuarioseditar,
+      payloadDepois.gestaousuariosexcluir,
+      payloadDepois.estoque,
+      payloadDepois.estoquealmoxarifado,
+      payloadDepois.estoquefazenda,
+      payloadDepois.estoquecadastrar,
+      payloadDepois.estoquetransferir,
+      payloadDepois.estoquereceber
     ]);
 
-    const idPerfil = result.insertId;
+    const idPerfil = Number(result?.insertId || 0);
+
+    if (!idPerfil) {
+      throw new Error('Não foi possível obter o ID do perfil criado.');
+    }
 
     await conn.query(`
       INSERT INTO SF_PERFIL_LOG (
@@ -5248,33 +5280,7 @@ app.post('/api/perfis', async (req, res) => {
       usuarioId,
       usuarioNome,
       JSON.stringify({
-        depois: {
-          nome,
-          pedidos: bit(req.body?.pedidos),
-          pedidos_dashboard_geral: bit(req.body?.pedidos_dashboard_geral),
-          pedidos_dashboard_minha: bit(req.body?.pedidos_dashboard_minha),
-          pedidos_supervisor: bit(req.body?.pedidos_supervisor),
-          pedidos_incluir: bit(req.body?.pedidos_incluir),
-          pedidos_editar: bit(req.body?.pedidos_editar),
-          pedidos_excluir: bit(req.body?.pedidos_excluir),
-          clientes: bit(req.body?.clientes),
-          clientes_incluir: bit(req.body?.clientes_incluir),
-          clientes_editar: bit(req.body?.clientes_editar),
-          clientes_excluir: bit(req.body?.clientes_excluir),
-          marketing: bit(req.body?.marketing),
-          email_automaticos: bit(req.body?.email_automaticos),
-          gestao_usuarios: bit(req.body?.gestao_usuarios),
-          gestao_usuarios_cadastro: bit(req.body?.gestao_usuarios_cadastro),
-          gestao_usuarios_incluir: bit(req.body?.gestao_usuarios_incluir),
-          gestao_usuarios_editar: bit(req.body?.gestao_usuarios_editar),
-          gestao_usuarios_excluir: bit(req.body?.gestao_usuarios_excluir),
-          estoque: bit(req.body?.estoque),
-          estoque_almoxarifado: bit(req.body?.estoque_almoxarifado),
-          estoque_fazenda: bit(req.body?.estoque_fazenda),
-          estoque_cadastrar: bit(req.body?.estoque_cadastrar),
-          estoque_transferir: bit(req.body?.estoque_transferir),
-          estoque_receber: bit(req.body?.estoque_receber)
-        }
+        depois: payloadDepois
       })
     ]);
 
@@ -5291,6 +5297,7 @@ app.post('/api/perfis', async (req, res) => {
   } catch (err) {
     try { await conn.rollback(); } catch {}
     console.error('Erro /api/perfis POST', err);
+
     return res.status(500).json({
       success: false,
       message: 'Erro ao criar perfil.',
@@ -5300,6 +5307,7 @@ app.post('/api/perfis', async (req, res) => {
     conn.release();
   }
 });
+
 
 // EDITAR PERFIL
 app.put('/api/perfis/:id', async (req, res) => {
