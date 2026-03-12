@@ -4997,6 +4997,37 @@ app.post('/api/emails/destinatarios', async (req, res) => {
   }
 });
 
+// GET Remetentes
+app.get('/api/emails/remetentes', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ID, EMAIL, NOME, ATIVO, CREATED_AT 
+       FROM SF_EMAIL_REMETENTE 
+       ORDER BY EMAIL ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// GET Destinatários (com JOIN remetente)
+app.get('/api/emails/destinatarios', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT d.ID, d.ID_REMETENTE, d.EMAIL_DESTINATARIO, d.NOME_DESTINATARIO, d.ATIVO,
+              r.EMAIL as remetenteEmail, r.NOME as remetenteNome
+       FROM SF_EMAIL_DESTINATARIOS d
+       JOIN SF_EMAIL_REMETENTE r ON d.ID_REMETENTE = r.ID
+       ORDER BY r.EMAIL, d.EMAIL_DESTINATARIO ASC`
+    );
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+
 
 
 // =====================
