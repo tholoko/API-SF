@@ -5048,7 +5048,7 @@ function bit(v) {
 // LISTAR PERFIS
 app.get('/api/perfis', async (req, res) => {
   try {
-    const rows = await pool.query(`
+    const [rows] = await pool.query(`
       SELECT
         id,
         nome,
@@ -5085,7 +5085,7 @@ app.get('/api/perfis', async (req, res) => {
       items: rows
     });
   } catch (err) {
-    console.error('Erro /api/perfis GET', err);
+    console.error('Erro ao listar perfis:', err);
     return res.status(500).json({
       success: false,
       message: 'Erro ao listar perfis.',
