@@ -206,9 +206,9 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
       FROM SF_USUARIO
       WHERE
         STATUS = 'Ativo'
-        AND DATANASCIMENTO IS NOT NULL
-        AND MONTH(DATANASCIMENTO) = MONTH(CURDATE())
-      ORDER BY DAY(DATANASCIMENTO) ASC, NOME ASC
+        AND DATA_NASCIMENTO IS NOT NULL
+        AND MONTH(DATA_NASCIMENTO) = MONTH(CURDATE())
+      ORDER BY DAY(DATA_NASCIMENTO) ASC, NOME ASC
     `);
 
     const hoje = new Date();
