@@ -200,9 +200,9 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
         ID,
         NOME,
         SETOR,
-        LOCALTRABALHO,
+        LOCAL_TRABALHO,
         FOTO,
-        DATANASCIMENTO
+        DATA_NASCIMENTO
       FROM SF_USUARIO
       WHERE
         STATUS = 'Ativo'
@@ -224,9 +224,9 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
         id: r.ID,
         nome: r.NOME || '',
         setor: r.SETOR || '',
-        localTrabalho: r.LOCALTRABALHO || '',
+        localTrabalho: r.LOCAL_TRABALHO || '',
         foto: r.FOTO || '',
-        dataNascimento: r.DATANASCIMENTO || null,
+        dataNascimento: r.DATA_NASCIMENTO || null,
         aniversarioHoje: dia === diaHoje && mes === mesHoje
       };
     });
