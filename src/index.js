@@ -5065,6 +5065,10 @@ app.get('/api/perfis', async (req, res) => {
         clientes_excluir,
         marketing,
         email_automaticos,
+        agendar_sala_reuniao,
+        excluir_agendamento_sala_reuniao,
+        reservar_carro,
+        excluir_reserva_carro,
         gestao_usuarios,
         gestao_usuarios_cadastro,
         gestao_usuarios_incluir,
@@ -5120,6 +5124,10 @@ app.get('/api/perfis/:id', async (req, res) => {
         clientes_excluir,
         marketing,
         email_automaticos,
+        agendar_sala_reuniao,
+        excluir_agendamento_sala_reuniao,
+        reservar_carro,
+        excluir_reserva_carro,
         gestao_usuarios,
         gestao_usuarios_cadastro,
         gestao_usuarios_incluir,
@@ -5156,7 +5164,6 @@ app.get('/api/perfis/:id', async (req, res) => {
     });
   }
 });
-
 
 // CRIAR PERFIL
 app.post('/api/perfis', async (req, res) => {
@@ -5209,7 +5216,6 @@ app.post('/api/perfis', async (req, res) => {
       estoque_transferir: bit(req.body?.estoque_transferir),
       estoque_receber: bit(req.body?.estoque_receber)
     };
-
 
     const [result] = await conn.query(`
       INSERT INTO SF_PERFIL (
@@ -5275,7 +5281,6 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.estoque_receber
     ]);
 
-
     const idPerfil = Number(result?.insertId || 0);
 
     if (!idPerfil) {
@@ -5306,7 +5311,7 @@ app.post('/api/perfis', async (req, res) => {
       success: true,
       item: {
         id: idPerfil,
-        nome
+        ...payloadDepois
       },
       message: 'Perfil criado com sucesso.'
     });
@@ -5323,7 +5328,6 @@ app.post('/api/perfis', async (req, res) => {
     conn.release();
   }
 });
-
 
 // EDITAR PERFIL
 app.put('/api/perfis/:id', async (req, res) => {
@@ -5365,6 +5369,38 @@ app.put('/api/perfis/:id', async (req, res) => {
 
     const antes = atualRows[0];
 
+    const depois = {
+      nome,
+      pedidos: bit(req.body?.pedidos),
+      pedidos_dashboard_geral: bit(req.body?.pedidos_dashboard_geral),
+      pedidos_dashboard_minha: bit(req.body?.pedidos_dashboard_minha),
+      pedidos_supervisor: bit(req.body?.pedidos_supervisor),
+      pedidos_incluir: bit(req.body?.pedidos_incluir),
+      pedidos_editar: bit(req.body?.pedidos_editar),
+      pedidos_excluir: bit(req.body?.pedidos_excluir),
+      clientes: bit(req.body?.clientes),
+      clientes_incluir: bit(req.body?.clientes_incluir),
+      clientes_editar: bit(req.body?.clientes_editar),
+      clientes_excluir: bit(req.body?.clientes_excluir),
+      marketing: bit(req.body?.marketing),
+      email_automaticos: bit(req.body?.email_automaticos),
+      agendar_sala_reuniao: bit(req.body?.agendar_sala_reuniao),
+      excluir_agendamento_sala_reuniao: bit(req.body?.excluir_agendamento_sala_reuniao),
+      reservar_carro: bit(req.body?.reservar_carro),
+      excluir_reserva_carro: bit(req.body?.excluir_reserva_carro),
+      gestao_usuarios: bit(req.body?.gestao_usuarios),
+      gestao_usuarios_cadastro: bit(req.body?.gestao_usuarios_cadastro),
+      gestao_usuarios_incluir: bit(req.body?.gestao_usuarios_incluir),
+      gestao_usuarios_editar: bit(req.body?.gestao_usuarios_editar),
+      gestao_usuarios_excluir: bit(req.body?.gestao_usuarios_excluir),
+      estoque: bit(req.body?.estoque),
+      estoque_almoxarifado: bit(req.body?.estoque_almoxarifado),
+      estoque_fazenda: bit(req.body?.estoque_fazenda),
+      estoque_cadastrar: bit(req.body?.estoque_cadastrar),
+      estoque_transferir: bit(req.body?.estoque_transferir),
+      estoque_receber: bit(req.body?.estoque_receber)
+    };
+
     const [result] = await conn.query(`
       UPDATE SF_PERFIL SET
         nome = ?,
@@ -5381,6 +5417,10 @@ app.put('/api/perfis/:id', async (req, res) => {
         clientes_excluir = ?,
         marketing = ?,
         email_automaticos = ?,
+        agendar_sala_reuniao = ?,
+        excluir_agendamento_sala_reuniao = ?,
+        reservar_carro = ?,
+        excluir_reserva_carro = ?,
         gestao_usuarios = ?,
         gestao_usuarios_cadastro = ?,
         gestao_usuarios_incluir = ?,
@@ -5394,31 +5434,35 @@ app.put('/api/perfis/:id', async (req, res) => {
         estoque_receber = ?
       WHERE id = ?
     `, [
-      nome,
-      bit(req.body?.pedidos),
-      bit(req.body?.pedidos_dashboard_geral),
-      bit(req.body?.pedidos_dashboard_minha),
-      bit(req.body?.pedidos_supervisor),
-      bit(req.body?.pedidos_incluir),
-      bit(req.body?.pedidos_editar),
-      bit(req.body?.pedidos_excluir),
-      bit(req.body?.clientes),
-      bit(req.body?.clientes_incluir),
-      bit(req.body?.clientes_editar),
-      bit(req.body?.clientes_excluir),
-      bit(req.body?.marketing),
-      bit(req.body?.email_automaticos),
-      bit(req.body?.gestao_usuarios),
-      bit(req.body?.gestao_usuarios_cadastro),
-      bit(req.body?.gestao_usuarios_incluir),
-      bit(req.body?.gestao_usuarios_editar),
-      bit(req.body?.gestao_usuarios_excluir),
-      bit(req.body?.estoque),
-      bit(req.body?.estoque_almoxarifado),
-      bit(req.body?.estoque_fazenda),
-      bit(req.body?.estoque_cadastrar),
-      bit(req.body?.estoque_transferir),
-      bit(req.body?.estoque_receber),
+      depois.nome,
+      depois.pedidos,
+      depois.pedidos_dashboard_geral,
+      depois.pedidos_dashboard_minha,
+      depois.pedidos_supervisor,
+      depois.pedidos_incluir,
+      depois.pedidos_editar,
+      depois.pedidos_excluir,
+      depois.clientes,
+      depois.clientes_incluir,
+      depois.clientes_editar,
+      depois.clientes_excluir,
+      depois.marketing,
+      depois.email_automaticos,
+      depois.agendar_sala_reuniao,
+      depois.excluir_agendamento_sala_reuniao,
+      depois.reservar_carro,
+      depois.excluir_reserva_carro,
+      depois.gestao_usuarios,
+      depois.gestao_usuarios_cadastro,
+      depois.gestao_usuarios_incluir,
+      depois.gestao_usuarios_editar,
+      depois.gestao_usuarios_excluir,
+      depois.estoque,
+      depois.estoque_almoxarifado,
+      depois.estoque_fazenda,
+      depois.estoque_cadastrar,
+      depois.estoque_transferir,
+      depois.estoque_receber,
       id
     ]);
 
@@ -5429,35 +5473,6 @@ app.put('/api/perfis/:id', async (req, res) => {
         message: 'Perfil não encontrado para atualização.'
       });
     }
-
-    const depois = {
-      id,
-      nome,
-      pedidos: bit(req.body?.pedidos),
-      pedidos_dashboard_geral: bit(req.body?.pedidos_dashboard_geral),
-      pedidos_dashboard_minha: bit(req.body?.pedidos_dashboard_minha),
-      pedidos_supervisor: bit(req.body?.pedidos_supervisor),
-      pedidos_incluir: bit(req.body?.pedidos_incluir),
-      pedidos_editar: bit(req.body?.pedidos_editar),
-      pedidos_excluir: bit(req.body?.pedidos_excluir),
-      clientes: bit(req.body?.clientes),
-      clientes_incluir: bit(req.body?.clientes_incluir),
-      clientes_editar: bit(req.body?.clientes_editar),
-      clientes_excluir: bit(req.body?.clientes_excluir),
-      marketing: bit(req.body?.marketing),
-      email_automaticos: bit(req.body?.email_automaticos),
-      gestao_usuarios: bit(req.body?.gestao_usuarios),
-      gestao_usuarios_cadastro: bit(req.body?.gestao_usuarios_cadastro),
-      gestao_usuarios_incluir: bit(req.body?.gestao_usuarios_incluir),
-      gestao_usuarios_editar: bit(req.body?.gestao_usuarios_editar),
-      gestao_usuarios_excluir: bit(req.body?.gestao_usuarios_excluir),
-      estoque: bit(req.body?.estoque),
-      estoque_almoxarifado: bit(req.body?.estoque_almoxarifado),
-      estoque_fazenda: bit(req.body?.estoque_fazenda),
-      estoque_cadastrar: bit(req.body?.estoque_cadastrar),
-      estoque_transferir: bit(req.body?.estoque_transferir),
-      estoque_receber: bit(req.body?.estoque_receber)
-    };
 
     await conn.query(`
       INSERT INTO SF_PERFIL_LOG (
@@ -5479,7 +5494,10 @@ app.put('/api/perfis/:id', async (req, res) => {
 
     return res.json({
       success: true,
-      item: depois,
+      item: {
+        id,
+        ...depois
+      },
       message: 'Perfil atualizado com sucesso.'
     });
   } catch (err) {
@@ -5534,8 +5552,6 @@ app.get('/api/perfis/:id/logs', async (req, res) => {
     });
   }
 });
-
-
 
 // =====================
 // Inicia servidor (sempre por último)
