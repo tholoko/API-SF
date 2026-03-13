@@ -213,7 +213,7 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
       ORDER BY DAY(DATA_NASCIMENTO) ASC, NOME ASC
     `);
 
-    console.log('[ANIVERSARIANTES_MES] Total de registros encontrados:', rows.length);
+    console.log('[ANIVERSARIANTES_MES] Total de registros encontrados:', rows);
 
     const hoje = new Date();
     const diaHoje = hoje.getDate();
@@ -313,8 +313,6 @@ app.post('/api/agendamentos/sala/verificar', async (req, res) => {
       `,
       [sala, fim, inicio]
     );
-
-    console.log(rows);
 
     if (rows.length > 0) {
       return res.json({
