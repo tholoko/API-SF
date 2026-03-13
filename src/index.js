@@ -5174,7 +5174,6 @@ app.post('/api/perfis', async (req, res) => {
     const usuarioId = req.body?.usuario_id ?? null;
     const usuarioNome = texto(req.body?.usuario_nome) || null;
 
-    console.log('POST /api/perfis body:', req.body);
 
     if (!nome) {
       return res.status(400).json({
@@ -5638,7 +5637,6 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
       LIMIT 1
     `, [usuarioId]);
 
-    console.log('[API /permissoes/menu] rows do SELECT:', rows);
 
     if (!rows || !rows.length) {
       return res.status(404).json({
@@ -5649,7 +5647,6 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
 
     const item = rows[0][0];
 
-    console.log('[API /permissoes/menu] item bruto do SELECT:', item);
 
     const payload = {
       success: true,
@@ -5667,7 +5664,6 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
       }
     };
 
-    console.log('[API /permissoes/menu] payload enviado ao frontend:', payload);
 
     return res.json(payload);
   } catch (err) {
