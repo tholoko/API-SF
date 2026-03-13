@@ -5553,6 +5553,63 @@ app.get('/api/perfis/:id/logs', async (req, res) => {
   }
 });
 
+// permissões
+
+app.get('/api/permissoes/agendar-sala/:usuarioId', async (req, res) => {
+  try {
+    const usuarioId = Number(req.params.usuarioId);
+
+    if (!usuarioId) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do usuário inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        u.ID AS usuario_id,
+        u.NOME AS usuario_nome,
+        u.PERFIL AS perfil,
+        p.agendar_sala_reuniao
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON p.nome = u.perfil
+      WHERE u.ID = ?
+      LIMIT 1
+    `, [usuarioId]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado.'
+      });
+    }
+
+    const item = rows[0];
+    const permitido = Number(item.agendar_sala_reuniao) === 1;
+
+    return res.json({
+      success: true,
+      permitido,
+      item: {
+        usuario_id: item.usuario_id,
+        usuario_nome: item.usuario_nome,
+        perfil: item.perfil,
+        agendar_sala_reuniao: permitido ? 1 : 0
+      }
+    });
+  } catch (err) {
+    console.error('Erro ao validar permissão de agendar sala:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao validar permissão.',
+      error: err.message
+    });
+  }
+});
+
+
 // =====================
 // Inicia servidor (sempre por último)
 // =====================
