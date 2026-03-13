@@ -195,6 +195,8 @@ app.post('/api/usuarios/primeiro-acesso/senha', async (req, res) => {
 // =====================
 app.get('/api/aniversariantes/mes', async (req, res) => {
   try {
+    console.log('[ANIVERSARIANTES_MES] Iniciando busca dos aniversariantes do mês...');
+
     const rows = await pool.query(`
       SELECT
         ID,
@@ -211,32 +213,61 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
       ORDER BY DAY(DATA_NASCIMENTO) ASC, NOME ASC
     `);
 
+    console.log('[ANIVERSARIANTES_MES] Total de registros encontrados:', rows.length);
+
     const hoje = new Date();
     const diaHoje = hoje.getDate();
     const mesHoje = hoje.getMonth() + 1;
 
-    const items = rows.map((r) => {
+    console.log('[ANIVERSARIANTES_MES] Hoje é:', {
+      diaHoje,
+      mesHoje,
+      dataIso: hoje.toISOString()
+    });
+
+    const items = rows.map((r, index) => {
       const dt = r.DATA_NASCIMENTO ? new Date(r.DATA_NASCIMENTO) : null;
       const dia = dt && !Number.isNaN(dt.getTime()) ? dt.getDate() : null;
       const mes = dt && !Number.isNaN(dt.getTime()) ? dt.getMonth() + 1 : null;
+      const aniversarioHoje = dia === diaHoje && mes === mesHoje;
 
-      return {
+      const item = {
         id: r.ID,
         nome: r.NOME || '',
         setor: r.SETOR || '',
         localTrabalho: r.LOCAL_TRABALHO || '',
         foto: r.FOTO || '',
         dataNascimento: r.DATA_NASCIMENTO || null,
-        aniversarioHoje: dia === diaHoje && mes === mesHoje
+        aniversarioHoje
       };
+
+      console.log(`[ANIVERSARIANTES_MES] Registro ${index + 1}:`, {
+        id: item.id,
+        nome: item.nome,
+        setor: item.setor,
+        localTrabalho: item.localTrabalho,
+        foto: item.foto,
+        dataNascimento: item.dataNascimento,
+        diaExtraido: dia,
+        mesExtraido: mes,
+        aniversarioHoje: item.aniversarioHoje
+      });
+
+      return item;
     });
+
+    console.log('[ANIVERSARIANTES_MES] Retornando resposta com sucesso.');
 
     return res.json({
       success: true,
       items
     });
   } catch (err) {
-    console.error('Erro /api/aniversariantes/mes:', err);
+    console.error('[ANIVERSARIANTES_MES] Erro na rota:', {
+      message: err.message,
+      stack: err.stack
+    });
+
     return res.status(500).json({
       success: false,
       message: 'Erro ao listar aniversariantes do mês.',
