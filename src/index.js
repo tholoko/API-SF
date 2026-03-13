@@ -5652,16 +5652,16 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
     return res.json({
       success: true,
       item: {
-        usuario_id: Number(item.usuario_id) || 0,
-        usuario_nome: item.usuario_nome || '',
-        perfil: item.perfil || '',
-        pedidos: Number(item.pedidos ?? 0),
-        clientes: Number(item.clientes ?? 0),
-        marketing: Number(item.marketing ?? 0),
-        emailautomaticos: Number(item.email_automaticos ?? 0),
-        gestaousuarios: Number(item.gestao_usuarios ?? 0),
-        estoque: Number(item.estoque ?? 0),
-        perfilacesso: Number(item.perfil_acesso ?? 0)
+        usuario_id: item.usuario_id,
+        usuario_nome: item.usuario_nome,
+        perfil: item.perfil,
+        pedidos: item.pedidos,
+        clientes: item.clientes,
+        marketing: item.marketing,
+        emailautomaticos: item.email_automaticos,
+        gestaousuarios: item.gestao_usuarios,
+        estoque: Numberitem.estoque,
+        perfilacesso: item.perfil_acesso
       }
     });
   } catch (err) {
