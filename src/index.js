@@ -5638,6 +5638,8 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
       LIMIT 1
     `, [usuarioId]);
 
+    console.log('[API /permissoes/menu] rows do SELECT:', rows);
+
     if (!rows || !rows.length) {
       return res.status(404).json({
         success: false,
@@ -5647,25 +5649,29 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
 
     const item = rows[0];
 
-    console.log('[API /permissoes/menu] Resultado bruto:', item);
+    console.log('[API /permissoes/menu] item bruto do SELECT:', item);
 
-    return res.json({
+    const payload = {
       success: true,
       item: {
-        usuario_id: item.usuario_id,
-        usuario_nome: item.usuario_nome,
-        perfil: item.perfil,
-        pedidos: item.pedidos,
-        clientes: item.clientes,
-        marketing: item.marketing,
-        emailautomaticos: item.email_automaticos,
-        gestaousuarios: item.gestao_usuarios,
-        estoque: Numberitem.estoque,
-        perfilacesso: item.perfil_acesso
+        usuario_id: Number(item.usuario_id) || 0,
+        usuario_nome: item.usuario_nome || '',
+        perfil: item.perfil || '',
+        pedidos: Number(item.pedidos ?? 0),
+        clientes: Number(item.clientes ?? 0),
+        marketing: Number(item.marketing ?? 0),
+        emailautomaticos: Number(item.email_automaticos ?? 0),
+        gestaousuarios: Number(item.gestao_usuarios ?? 0),
+        estoque: Number(item.estoque ?? 0),
+        perfilacesso: Number(item.perfil_acesso ?? 0)
       }
-    });
+    };
+
+    console.log('[API /permissoes/menu] payload enviado ao frontend:', payload);
+
+    return res.json(payload);
   } catch (err) {
-    console.error('Erro ao validar permissões do menu:', err);
+    console.error('[API /permissoes/menu] erro:', err);
     return res.status(500).json({
       success: false,
       message: 'Erro ao validar permissões do menu.',
@@ -5673,7 +5679,6 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
     });
   }
 });
-
 
 // =====================
 // Inicia servidor (sempre por último)
