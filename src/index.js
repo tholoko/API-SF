@@ -5554,15 +5554,14 @@ app.get('/api/perfis/:id/logs', async (req, res) => {
 });
 
 // permissões
-
 app.get('/api/permissoes/agendar-sala/:usuarioId', async (req, res) => {
   try {
-    const usuarioId = String(req.params.usuarioId);
+    const usuarioId = Number(req.params.usuarioId);
 
     if (!usuarioId) {
       return res.status(400).json({
         success: false,
-        message: 'Usuário inválido.'
+        message: 'ID do usuário inválido.'
       });
     }
 
@@ -5575,7 +5574,7 @@ app.get('/api/permissoes/agendar-sala/:usuarioId', async (req, res) => {
       FROM SF_USUARIO u
       LEFT JOIN SF_PERFIL p
         ON p.nome = u.perfil
-      WHERE u.NOME = ?
+      WHERE u.ID = ?
       LIMIT 1
     `, [usuarioId]);
 
