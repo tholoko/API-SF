@@ -96,33 +96,53 @@ app.get('/debug', (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const email = normalizarEmail(req.body?.email);
-    const senha = (req.body?.senha || '').toString();
+    const senha = req.body?.senha?.toString();
 
     if (!email || !senha) {
-      return res.status(400).json({ success: false, message: 'Email e senha são obrigatórios.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Email e senha são obrigatórios.'
+      });
     }
 
     const [rows] = await pool.query(
-      `SELECT ID, EMAIL, NOME, SENHA, STATUS, MUST_CHANGE_PASSWORD
-         FROM SF_USUARIO
-        WHERE EMAIL = ?
-        LIMIT 1`,
+      `SELECT
+         ID,
+         EMAIL,
+         NOME,
+         SENHA,
+         STATUS,
+         MUST_CHANGE_PASSWORD,
+         FOTO,
+         DATA_NASCIMENTO
+       FROM SF_USUARIO
+       WHERE EMAIL = ?
+       LIMIT 1`,
       [email]
     );
 
     if (!rows.length) {
-      return res.status(401).json({ success: false, message: 'Email ou senha inválidos.' });
+      return res.status(401).json({
+        success: false,
+        message: 'Email ou senha inválidos.'
+      });
     }
 
     const u = rows[0];
 
-    if ((u.STATUS || '').toString().trim() !== 'Ativo') {
-      return res.status(403).json({ success: false, message: 'Usuário desativado.' });
+    if (String(u.STATUS).trim() !== 'Ativo') {
+      return res.status(403).json({
+        success: false,
+        message: 'Usuário desativado.'
+      });
     }
 
     const ok = await bcrypt.compare(senha, u.SENHA);
     if (!ok) {
-      return res.status(401).json({ success: false, message: 'Email ou senha inválidos.' });
+      return res.status(401).json({
+        success: false,
+        message: 'Email ou senha inválidos.'
+      });
     }
 
     return res.json({
@@ -130,13 +150,20 @@ app.post('/api/login', async (req, res) => {
       email: u.EMAIL,
       nome: u.NOME,
       id: u.ID,
-      mustChangePassword: Number(u.MUST_CHANGE_PASSWORD) === 1
+      mustChangePassword: Number(u.MUST_CHANGE_PASSWORD) === 1,
+      foto: u.FOTO || '',
+      dataNascimento: u.DATA_NASCIMENTO || null
     });
   } catch (err) {
     console.error('Erro /api/login:', err);
-    return res.status(500).json({ success: false, message: 'Erro interno.', error: err.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Erro interno.',
+      error: err.message
+    });
   }
 });
+
 
 app.post('/api/usuarios/primeiro-acesso/senha', async (req, res) => {
   try {
