@@ -5629,12 +5629,11 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         COALESCE(p.clientes, 0) AS clientes,
         COALESCE(p.marketing, 0) AS marketing,
         COALESCE(p.email_automaticos, 0) AS email_automaticos,
-        COALESCE(p.gestao_usuarios, 0) AS email_automaticos,
+        COALESCE(p.gestao_usuarios, 0) AS gestao_usuarios,
         COALESCE(p.estoque, 0) AS estoque,
         COALESCE(p.perfil_acesso, 0) AS perfil_acesso
       FROM SF_USUARIO u
-      LEFT JOIN SF_PERFIL p
-        ON p.nome = u.perfil
+      LEFT JOIN SF_PERFIL p ON p.nome = u.perfil
       WHERE u.ID = ?
       LIMIT 1
     `, [usuarioId]);
@@ -5648,19 +5647,18 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
 
     const item = rows[0];
 
+    console.log('[API /permissoes/menu] Resultado bruto:', item);
+
     return res.json({
       success: true,
       item: {
-        usuario_id: item.usuario_id,
-        usuario_nome: item.usuario_nome,
-        perfil: item.perfil,
-        pedidos: Number(item.pedidos) === 1 ? 1 : 0,
-        clientes: Number(item.clientes) === 1 ? 1 : 0,
-        marketing: Number(item.marketing) === 1 ? 1 : 0,
-        emailautomaticos: Number(item.emailautomaticos) === 1 ? 1 : 0,
-        gestaousuarios: Number(item.gestaousuarios) === 1 ? 1 : 0,
-        estoque: Number(item.estoque) === 1 ? 1 : 0,
-        perfil_acesso: Number(item.perfil_acesso) === 1 ? 1 : 0
+        pedidos: Number(item.pedidos),
+        clientes: Number(item.clientes),
+        marketing: Number(item.marketing),
+        email_automaticos: Number(item.email_automaticos),
+        gestao_usuarios: Number(item.gestao_usuarios),
+        estoque: Number(item.estoque),
+        perfil_acesso: Number(item.perfil_acesso)
       }
     });
   } catch (err) {
@@ -5672,7 +5670,6 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
     });
   }
 });
-
 
 
 // =====================
