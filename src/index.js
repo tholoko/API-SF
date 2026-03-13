@@ -5193,6 +5193,10 @@ app.post('/api/perfis', async (req, res) => {
       clientes_excluir: bit(req.body?.clientes_excluir),
       marketing: bit(req.body?.marketing),
       email_automaticos: bit(req.body?.email_automaticos),
+      agendar_sala_reuniao: bit(req.body?.agendar_sala_reuniao),
+      excluir_agendamento_sala_reuniao: bit(req.body?.excluir_agendamento_sala_reuniao),
+      reservar_carro: bit(req.body?.reservar_carro),
+      excluir_reserva_carro: bit(req.body?.excluir_reserva_carro),
       gestao_usuarios: bit(req.body?.gestao_usuarios),
       gestao_usuarios_cadastro: bit(req.body?.gestao_usuarios_cadastro),
       gestao_usuarios_incluir: bit(req.body?.gestao_usuarios_incluir),
@@ -5205,6 +5209,7 @@ app.post('/api/perfis', async (req, res) => {
       estoque_transferir: bit(req.body?.estoque_transferir),
       estoque_receber: bit(req.body?.estoque_receber)
     };
+
 
     const [result] = await conn.query(`
       INSERT INTO SF_PERFIL (
@@ -5222,6 +5227,10 @@ app.post('/api/perfis', async (req, res) => {
         clientes_excluir,
         marketing,
         email_automaticos,
+        agendar_sala_reuniao,
+        excluir_agendamento_sala_reuniao,
+        reservar_carro,
+        excluir_reserva_carro,
         gestao_usuarios,
         gestao_usuarios_cadastro,
         gestao_usuarios_incluir,
@@ -5233,7 +5242,7 @@ app.post('/api/perfis', async (req, res) => {
         estoque_cadastrar,
         estoque_transferir,
         estoque_receber
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payloadDepois.nome,
       payloadDepois.pedidos,
@@ -5249,6 +5258,10 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.clientes_excluir,
       payloadDepois.marketing,
       payloadDepois.email_automaticos,
+      payloadDepois.agendar_sala_reuniao,
+      payloadDepois.excluir_agendamento_sala_reuniao,
+      payloadDepois.reservar_carro,
+      payloadDepois.excluir_reserva_carro,
       payloadDepois.gestao_usuarios,
       payloadDepois.gestao_usuarios_cadastro,
       payloadDepois.gestao_usuarios_incluir,
@@ -5261,6 +5274,7 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.estoque_transferir,
       payloadDepois.estoque_receber
     ]);
+
 
     const idPerfil = Number(result?.insertId || 0);
 
