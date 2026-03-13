@@ -5638,7 +5638,7 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
       LIMIT 1
     `, [usuarioId]);
 
-    if (!rows.length) {
+    if (!rows || !rows.length) {
       return res.status(404).json({
         success: false,
         message: 'Usuário não encontrado.'
@@ -5652,13 +5652,16 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
     return res.json({
       success: true,
       item: {
-        pedidos: Number(item.pedidos),
-        clientes: Number(item.clientes),
-        marketing: Number(item.marketing),
-        email_automaticos: Number(item.email_automaticos),
-        gestao_usuarios: Number(item.gestao_usuarios),
-        estoque: Number(item.estoque),
-        perfil_acesso: Number(item.perfil_acesso)
+        usuario_id: Number(item.usuario_id) || 0,
+        usuario_nome: item.usuario_nome || '',
+        perfil: item.perfil || '',
+        pedidos: Number(item.pedidos ?? 0),
+        clientes: Number(item.clientes ?? 0),
+        marketing: Number(item.marketing ?? 0),
+        emailautomaticos: Number(item.email_automaticos ?? 0),
+        gestaousuarios: Number(item.gestao_usuarios ?? 0),
+        estoque: Number(item.estoque ?? 0),
+        perfilacesso: Number(item.perfil_acesso ?? 0)
       }
     });
   } catch (err) {
