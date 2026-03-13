@@ -5628,8 +5628,8 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         COALESCE(p.pedidos, 0) AS pedidos,
         COALESCE(p.clientes, 0) AS clientes,
         COALESCE(p.marketing, 0) AS marketing,
-        COALESCE(p.emailautomaticos, 0) AS emailautomaticos,
-        COALESCE(p.gestaousuarios, 0) AS gestaousuarios,
+        COALESCE(p.email_automaticos, 0) AS email_automaticos,
+        COALESCE(p.gestao_usuarios, 0) AS email_automaticos,
         COALESCE(p.estoque, 0) AS estoque,
         COALESCE(p.perfil_acesso, 0) AS perfil_acesso
       FROM SF_USUARIO u
