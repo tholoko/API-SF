@@ -189,6 +189,63 @@ app.post('/api/usuarios/primeiro-acesso/senha', async (req, res) => {
   }
 });
 
+
+// =====================
+// Aniversariantes do mes
+// =====================
+app.get('/api/aniversariantes/mes', async (req, res) => {
+  try {
+    const rows = await pool.query(`
+      SELECT
+        ID,
+        NOME,
+        SETOR,
+        LOCALTRABALHO,
+        FOTO,
+        DATANASCIMENTO
+      FROM SF_USUARIO
+      WHERE
+        STATUS = 'Ativo'
+        AND DATANASCIMENTO IS NOT NULL
+        AND MONTH(DATANASCIMENTO) = MONTH(CURDATE())
+      ORDER BY DAY(DATANASCIMENTO) ASC, NOME ASC
+    `);
+
+    const hoje = new Date();
+    const diaHoje = hoje.getDate();
+    const mesHoje = hoje.getMonth() + 1;
+
+    const items = rows.map((r) => {
+      const dt = r.DATANASCIMENTO ? new Date(r.DATANASCIMENTO) : null;
+      const dia = dt && !Number.isNaN(dt.getTime()) ? dt.getDate() : null;
+      const mes = dt && !Number.isNaN(dt.getTime()) ? dt.getMonth() + 1 : null;
+
+      return {
+        id: r.ID,
+        nome: r.NOME || '',
+        setor: r.SETOR || '',
+        localTrabalho: r.LOCALTRABALHO || '',
+        foto: r.FOTO || '',
+        dataNascimento: r.DATANASCIMENTO || null,
+        aniversarioHoje: dia === diaHoje && mes === mesHoje
+      };
+    });
+
+    return res.json({
+      success: true,
+      items
+    });
+  } catch (err) {
+    console.error('Erro /api/aniversariantes/mes:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar aniversariantes do mês.',
+      error: err.message
+    });
+  }
+});
+
+
 // =====================
 // Agendamentos - Sala
 // =====================
@@ -5783,6 +5840,8 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
     });
   }
 });
+
+
 
 // =====================
 // Inicia servidor (sempre por último)
