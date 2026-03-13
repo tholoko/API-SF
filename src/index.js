@@ -314,6 +314,8 @@ app.post('/api/agendamentos/sala/verificar', async (req, res) => {
       [sala, fim, inicio]
     );
 
+    console.log(rows);
+
     if (rows.length > 0) {
       return res.json({
         success: true,
