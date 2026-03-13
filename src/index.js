@@ -5647,7 +5647,7 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
       });
     }
 
-    const item = rows[0];
+    const item = rows[0][0];
 
     console.log('[API /permissoes/menu] item bruto do SELECT:', item);
 
