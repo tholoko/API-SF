@@ -216,7 +216,7 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
     const mesHoje = hoje.getMonth() + 1;
 
     const items = rows.map((r) => {
-      const dt = r.DATANASCIMENTO ? new Date(r.DATANASCIMENTO) : null;
+      const dt = r.DATA_NASCIMENTO ? new Date(r.DATA_NASCIMENTO) : null;
       const dia = dt && !Number.isNaN(dt.getTime()) ? dt.getDate() : null;
       const mes = dt && !Number.isNaN(dt.getTime()) ? dt.getMonth() + 1 : null;
 
