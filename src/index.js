@@ -5608,6 +5608,72 @@ app.get('/api/permissoes/agendar-sala/:usuarioId', async (req, res) => {
   }
 });
 
+// permissão menu lateral
+app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
+  try {
+    const usuarioId = Number(req.params.usuarioId);
+
+    if (!usuarioId) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do usuário inválido.'
+      });
+    }
+
+    const rows = await pool.query(`
+      SELECT
+        u.ID AS usuario_id,
+        u.NOME AS usuario_nome,
+        u.PERFIL AS perfil,
+        COALESCE(p.pedidos, 0) AS pedidos,
+        COALESCE(p.clientes, 0) AS clientes,
+        COALESCE(p.marketing, 0) AS marketing,
+        COALESCE(p.emailautomaticos, 0) AS emailautomaticos,
+        COALESCE(p.gestaousuarios, 0) AS gestaousuarios,
+        COALESCE(p.estoque, 0) AS estoque,
+        COALESCE(p.perfil_acesso, 0) AS perfil_acesso
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON p.nome = u.perfil
+      WHERE u.ID = ?
+      LIMIT 1
+    `, [usuarioId]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado.'
+      });
+    }
+
+    const item = rows[0];
+
+    return res.json({
+      success: true,
+      item: {
+        usuario_id: item.usuario_id,
+        usuario_nome: item.usuario_nome,
+        perfil: item.perfil,
+        pedidos: Number(item.pedidos) === 1 ? 1 : 0,
+        clientes: Number(item.clientes) === 1 ? 1 : 0,
+        marketing: Number(item.marketing) === 1 ? 1 : 0,
+        emailautomaticos: Number(item.emailautomaticos) === 1 ? 1 : 0,
+        gestaousuarios: Number(item.gestaousuarios) === 1 ? 1 : 0,
+        estoque: Number(item.estoque) === 1 ? 1 : 0,
+        perfil_acesso: Number(item.perfil_acesso) === 1 ? 1 : 0
+      }
+    });
+  } catch (err) {
+    console.error('Erro ao validar permissões do menu:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao validar permissões do menu.',
+      error: err.message
+    });
+  }
+});
+
+
 
 // =====================
 // Inicia servidor (sempre por último)
