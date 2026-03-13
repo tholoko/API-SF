@@ -350,42 +350,96 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
   const conn = await pool.getConnection();
 
   try {
-    const { id } = req.params;
+    const id = Number(req.params.id);
 
     const usuarioSolicitante =
-      req.headers['x-usuario'] || req.headers['x-user'] || '';
+      String(req.headers['x-usuario'] || req.headers['x-user'] || '').trim();
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do agendamento inválido.'
+      });
+    }
 
     if (!usuarioSolicitante) {
-      return res.status(400).json({ success: false, message: 'Usuário solicitante é obrigatório.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário solicitante é obrigatório.'
+      });
     }
 
     await conn.beginTransaction();
 
     const [agRows] = await conn.query(
-      `SELECT id, sala, inicio, fim, motivo, usuario_agendamento, status
-         FROM SF_AGENDAMENTO
-        WHERE id = ?
-        LIMIT 1`,
+      `SELECT
+         id,
+         sala,
+         inicio,
+         fim,
+         motivo,
+         usuario_agendamento,
+         status
+       FROM SF_AGENDAMENTO
+       WHERE id = ?
+       LIMIT 1`,
       [id]
     );
 
     if (!agRows.length) {
       await conn.rollback();
-      return res.status(404).json({ success: false, message: 'Agendamento não encontrado.' });
+      return res.status(404).json({
+        success: false,
+        message: 'Agendamento não encontrado.'
+      });
     }
 
     const ag = agRows[0];
 
     if (ag.status !== 'Agendado') {
       await conn.rollback();
-      return res.status(409).json({ success: false, message: 'Este agendamento não está mais como Agendado.' });
+      return res.status(409).json({
+        success: false,
+        message: 'Este agendamento não está mais como Agendado.'
+      });
     }
 
-    if (ag.usuario_agendamento !== usuarioSolicitante) {
+    const [usuarioRows] = await conn.query(
+      `SELECT
+         u.ID,
+         u.NOME,
+         u.PERFIL,
+         p.excluir_agendamento_sala_reuniao
+       FROM SF_USUARIO u
+       LEFT JOIN SF_PERFIL p
+         ON p.NOME = u.PERFIL
+       WHERE UPPER(TRIM(u.NOME)) = UPPER(TRIM(?))
+       LIMIT 1`,
+      [usuarioSolicitante]
+    );
+
+    if (!usuarioRows.length) {
       await conn.rollback();
       return res.status(403).json({
         success: false,
-        message: 'Você não tem permissão para excluir um agendamento de outro usuário.'
+        message: 'Usuário solicitante não encontrado ou sem perfil válido.'
+      });
+    }
+
+    const usuarioDb = usuarioRows[0];
+
+    const ehCriador =
+      String(ag.usuario_agendamento || '').trim().toUpperCase() ===
+      String(usuarioSolicitante || '').trim().toUpperCase();
+
+    const ehMasterExclusao =
+      Number(usuarioDb.excluir_agendamento_sala_reuniao) === 1;
+
+    if (!ehCriador && !ehMasterExclusao) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para excluir este agendamento.'
       });
     }
 
@@ -395,21 +449,27 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
               usuario_cancelamento = ?,
               data_cancelamento = NOW()
         WHERE id = ?
-          AND status = 'Agendado'
-          AND usuario_agendamento = ?`,
-      [usuarioSolicitante, id, usuarioSolicitante]
+          AND status = 'Agendado'`,
+      [usuarioSolicitante, id]
     );
 
     if (upd.affectedRows === 0) {
       await conn.rollback();
-      return res.status(409).json({ success: false, message: 'Não foi possível cancelar (agendamento já alterado).' });
+      return res.status(409).json({
+        success: false,
+        message: 'Não foi possível cancelar (agendamento já alterado).'
+      });
     }
 
     const [parts] = await conn.query(
-      `SELECT id_usuario, nome, email
-         FROM SF_AGENDAMENTO_PARTICIPANTE
-        WHERE id_agendamento = ?
-          AND email IS NOT NULL AND email <> ''`,
+      `SELECT
+         id_usuario,
+         nome,
+         email
+       FROM SF_AGENDAMENTO_PARTICIPANTE
+       WHERE id_agendamento = ?
+         AND email IS NOT NULL
+         AND email <> ''`,
       [id]
     );
 
@@ -428,8 +488,15 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
            ?, ?, ?, ?, ?, 1,
            NOW())`,
         [
-          ag.id, p.id_usuario, p.email, p.nome,
-          ag.sala, ag.inicio, ag.fim, ag.motivo, uid
+          ag.id,
+          p.id_usuario,
+          p.email,
+          p.nome,
+          ag.sala,
+          ag.inicio,
+          ag.fim,
+          ag.motivo,
+          uid
         ]
       );
     }
@@ -439,16 +506,24 @@ app.delete('/api/cancelar-agendamentos/sala/:id', async (req, res) => {
     return res.json({
       success: true,
       message: 'Agendamento cancelado com sucesso. Cancelamentos enfileirados para envio.',
-      cancelEmails: { total: parts.length, enfileirados: parts.length }
+      cancelEmails: {
+        total: parts.length,
+        enfileirados: parts.length
+      }
     });
   } catch (err) {
     try { await conn.rollback(); } catch {}
     console.error('Erro DELETE /api/cancelar-agendamentos/sala/:id:', err);
-    return res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Erro interno no servidor.',
+      error: err.message
+    });
   } finally {
     conn.release();
   }
 });
+
 
 // =====================
 // Usuários / Setores
