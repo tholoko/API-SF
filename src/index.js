@@ -5039,8 +5039,6 @@ app.get('/api/emails/destinatarios', async (req, res) => {
   }
 });
 
-// perfis
-
 function bit(v) {
   return Number(v) === 1 ? 1 : 0;
 }
@@ -5079,7 +5077,8 @@ app.get('/api/perfis', async (req, res) => {
         estoque_fazenda,
         estoque_cadastrar,
         estoque_transferir,
-        estoque_receber
+        estoque_receber,
+        perfil_acesso
       FROM SF_PERFIL
       ORDER BY nome ASC
     `);
@@ -5138,7 +5137,8 @@ app.get('/api/perfis/:id', async (req, res) => {
         estoque_fazenda,
         estoque_cadastrar,
         estoque_transferir,
-        estoque_receber
+        estoque_receber,
+        perfil_acesso
       FROM SF_PERFIL
       WHERE id = ?
       LIMIT 1
@@ -5173,7 +5173,6 @@ app.post('/api/perfis', async (req, res) => {
     const nome = texto(req.body?.nome);
     const usuarioId = req.body?.usuario_id ?? null;
     const usuarioNome = texto(req.body?.usuario_nome) || null;
-
 
     if (!nome) {
       return res.status(400).json({
@@ -5213,7 +5212,8 @@ app.post('/api/perfis', async (req, res) => {
       estoque_fazenda: bit(req.body?.estoque_fazenda),
       estoque_cadastrar: bit(req.body?.estoque_cadastrar),
       estoque_transferir: bit(req.body?.estoque_transferir),
-      estoque_receber: bit(req.body?.estoque_receber)
+      estoque_receber: bit(req.body?.estoque_receber),
+      perfil_acesso: bit(req.body?.perfil_acesso)
     };
 
     const [result] = await conn.query(`
@@ -5246,8 +5246,9 @@ app.post('/api/perfis', async (req, res) => {
         estoque_fazenda,
         estoque_cadastrar,
         estoque_transferir,
-        estoque_receber
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        estoque_receber,
+        perfil_acesso
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payloadDepois.nome,
       payloadDepois.pedidos,
@@ -5277,7 +5278,8 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.estoque_fazenda,
       payloadDepois.estoque_cadastrar,
       payloadDepois.estoque_transferir,
-      payloadDepois.estoque_receber
+      payloadDepois.estoque_receber,
+      payloadDepois.perfil_acesso
     ]);
 
     const idPerfil = Number(result?.insertId || 0);
@@ -5397,7 +5399,8 @@ app.put('/api/perfis/:id', async (req, res) => {
       estoque_fazenda: bit(req.body?.estoque_fazenda),
       estoque_cadastrar: bit(req.body?.estoque_cadastrar),
       estoque_transferir: bit(req.body?.estoque_transferir),
-      estoque_receber: bit(req.body?.estoque_receber)
+      estoque_receber: bit(req.body?.estoque_receber),
+      perfil_acesso: bit(req.body?.perfil_acesso)
     };
 
     const [result] = await conn.query(`
@@ -5430,7 +5433,8 @@ app.put('/api/perfis/:id', async (req, res) => {
         estoque_fazenda = ?,
         estoque_cadastrar = ?,
         estoque_transferir = ?,
-        estoque_receber = ?
+        estoque_receber = ?,
+        perfil_acesso = ?
       WHERE id = ?
     `, [
       depois.nome,
@@ -5462,6 +5466,7 @@ app.put('/api/perfis/:id', async (req, res) => {
       depois.estoque_cadastrar,
       depois.estoque_transferir,
       depois.estoque_receber,
+      depois.perfil_acesso,
       id
     ]);
 
@@ -5551,6 +5556,7 @@ app.get('/api/perfis/:id/logs', async (req, res) => {
     });
   }
 });
+
 
 // permissões
 app.get('/api/permissoes/agendar-sala/:usuarioId', async (req, res) => {
