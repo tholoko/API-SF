@@ -3339,7 +3339,6 @@ async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTran
   };
 }
 
-
 async function inserirLogTransferencia(conn, {
   idTransferencia,
   acao,
@@ -4266,6 +4265,101 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
 
   }
 });
+
+app.post('/api/estoque/transferencias/:id/recusa', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+    const motivoRecusa = textolivreTr(req.body.motivoRecusa, 500);
+
+    if (!idTransferencia || !motivoRecusa) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe ID da transferência e motivo da recusa.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    // Buscar transferência
+    const [rows] = await conn.query(`
+      SELECT t.*, lo.NOME AS LOCAL_ORIGEM_NOME, p.codigo, p.descricao
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      INNER JOIN SF_PRODUTOS p ON p.id = t.ID_PRODUTO
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo ON lo.ID = t.ID_LOCAL_ORIGEM
+      WHERE t.ID = ? AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
+    `, [idTransferencia]);
+
+    const transferencia = rows[0];
+    if (!transferencia) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada ou não pode ser recusada.'
+      });
+    }
+
+    // Validar usuário centro de custo destino
+    const [rowsUsuario] = await conn.query(`
+      SELECT LOCAL_TRABALHO FROM SF_USUARIO WHERE UPPER(TRIM(nome)) = UPPER(TRIM(?))
+    `, [usuario]);
+
+    const usuarioDb = rowsUsuario[0];
+    if (!usuarioDb?.LOCAL_TRABALHO || usuarioDb.LOCAL_TRABALHO.toUpperCase() !== 
+        transferencia.LOCAL_DESTINO_NOME?.toUpperCase()) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Usuário não autorizado para este centro de custo.'
+      });
+    }
+
+    // Marcar como RECUSADO
+    await conn.query(`
+      UPDATE SF_ESTOQUE_TRANSFERENCIA 
+      SET STATUS_TRANSFERENCIA = 'RECUSADO',
+          MOTIVO_RECUSA = ?,
+          DATA_RECUSA = NOW(),
+          USUARIO_ALTERACAO = ?,
+          DATA_ALTERACAO = NOW(),
+          LIDA_RECUSA = 0
+      WHERE ID = ?
+    `, [motivoRecusa, usuario, idTransferencia]);
+
+    // Log
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'RECUSA',
+      saldoAntes: 0,
+      quantidadeTransferida: Number(transferencia.QUANTIDADE),
+      saldoDepois: 0,
+      usuario,
+      observacao: `Motivo: ${motivoRecusa}`
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Transferência recusada com sucesso. Pendência criada para o estoque.',
+      transferencia
+    });
+
+  } catch (err) {
+    if (conn) await conn.rollback();
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao recusar transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 // centro de custo
 app.get('/api/estoque/centro-custo', async (req, res) => {
