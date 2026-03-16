@@ -6175,7 +6175,6 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
 });
 
 
-
 // =====================
 // Inicia servidor (sempre por último)
 // =====================
