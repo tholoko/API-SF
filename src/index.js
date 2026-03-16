@@ -5962,15 +5962,38 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
       });
     }
 
-    // Calcula saldo TOTAL do produto (sem local específico)
-    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, null);
+    // Calcula saldo TOTAL do produto (recebidos de QUALQUER local - enviados PARA QUALQUER local)
+    const [rowsRecebidas] = await conn.query(
+      `
+      SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_recebida
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      WHERE t.ID_PRODUTO = ?
+        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECEBIDO'
+      `,
+      [idProduto]
+    );
+
+    const [rowsEnviadas] = await conn.query(
+      `
+      SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_enviada
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      WHERE t.ID_PRODUTO = ?
+        AND t.ID_LOCAL_ORIGEM IS NOT NULL
+        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
+      `,
+      [idProduto]
+    );
+
+    const qtdRecebida = Number(rowsRecebidas?.[0]?.qtd_recebida ?? 0);
+    const qtdEnviada = Number(rowsEnviadas?.[0]?.qtd_enviada ?? 0);
+    const saldo = qtdRecebida - qtdEnviada;
 
     return res.json({
       success: true,
       produto,
-      saldo: saldoInfo.saldo,
-      qtdEntrada: saldoInfo.qtdEntrada,
-      qtdTransferida: saldoInfo.qtdTransferida
+      qtdRecebida,
+      qtdEnviada,
+      saldo: saldo < 0 ? 0 : saldo
     });
 
   } catch (err) {
@@ -5984,7 +6007,6 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
     if (conn) conn.release();
   }
 });
-
 
 
 // =====================
