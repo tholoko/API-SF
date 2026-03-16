@@ -2981,7 +2981,7 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
           SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
         FROM SF_ESTOQUE_TRANSFERENCIA t
         WHERE t.ID_PRODUTO IS NOT NULL
-          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
+          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) NOT IN ('EXCLUIDA', 'RECUSADA')
         GROUP BY
           t.ID_PRODUTO,
           t.ID_LOCAL_ORIGEM
@@ -6146,7 +6146,7 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
       WHERE t.ID_PRODUTO = ?
         AND t.ID_LOCAL_ORIGEM = ?
         AND t.ID_PRODUTO IS NOT NULL
-        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
+        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) NOT IN ('EXCLUIDA', 'RECUSADA')
     `, [idProduto, idLocalAlmoxarifado]);
 
     const qtdEntrada = Number(rowsEntrada?.[0]?.qtd_entrada ?? 0);
