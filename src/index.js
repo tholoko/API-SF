@@ -4266,6 +4266,173 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
   }
 });
 
+app.post('/api/estoque/transferencias/:id/recusa', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+    const observacao = textolivreTr(req.body.observacao, 255);
+
+
+
+    if (!idTransferencia) {
+
+
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o ID da transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rowsTransferencia] = await conn.query(
+      `
+      SELECT
+        t.*,
+        ld.NOME AS LOCAL_DESTINO_NOME
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      LEFT JOIN SF_LOCAL_TRABALHO ld
+        ON ld.ID = t.ID_LOCAL_DESTINO
+      WHERE t.ID = ?
+      LIMIT 1
+      `,
+      [idTransferencia]
+    );
+
+    const transferencia = rowsTransferencia[0] || null;
+
+
+    if (!transferencia) {
+      await conn.rollback();
+
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada.'
+      });
+    }
+
+    const statusTransferencia = String(
+      transferencia.STATUS_TRANSFERENCIA ?? transferencia.STATUSTRANSFERENCIA ?? ''
+    ).trim().toUpperCase();
+
+
+
+    if (!['EM_TRANSITO', 'AGUARDANDO_RECEBIMENTO'].includes(statusTransferencia)) {
+      await conn.rollback();
+
+      return res.status(400).json({
+        success: false,
+        message: 'Somente transferências em trânsito ou aguardando recebimento podem ser recebidas.'
+      });
+    }
+
+    const [rowsUsuario] = await conn.query(
+      `
+      SELECT
+        u.*
+      FROM SF_USUARIO u
+      WHERE UPPER(TRIM(u.nome)) = UPPER(TRIM(?))
+      LIMIT 1
+      `,
+      [usuario]
+    );
+
+    const usuarioDb = rowsUsuario[0] || null;
+
+
+
+    if (!usuarioDb) {
+      await conn.rollback();
+
+      return res.status(403).json({
+        success: false,
+        message: 'Usuário logado não encontrado na SF_USUARIO.'
+      });
+    }
+
+    const centroCustoUsuario = String(
+      usuarioDb.LOCAL_TRABALHO ?? usuarioDb.LOCAL_TRABALHO ?? ''
+    ).trim().toUpperCase();
+
+    const localDestinoNome = String(
+      transferencia.LOCAL_DESTINO_NOME ?? ''
+    ).trim().toUpperCase();
+
+
+
+    if (!centroCustoUsuario || centroCustoUsuario !== localDestinoNome) {
+      await conn.rollback();
+
+
+
+      return res.status(403).json({
+        success: false,
+        message: 'O usuário logado não pertence ao centro de custo do local de destino da transferência.'
+      });
+    }
+
+
+    await conn.query(
+      `
+      UPDATE SF_ESTOQUE_TRANSFERENCIA
+      SET
+        STATUS_TRANSFERENCIA = 'RECEBIDO',
+        USUARIO_RECEBIMENTO = ?,
+        DATA_HORA_RECEBIMENTO = NOW(),
+        USUARIO_ALTERACAO = ?,
+        DATA_ALTERACAO = NOW()
+      WHERE ID = ?
+      `,
+      [usuario, usuario, idTransferencia]
+    );
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'RECUSA',
+      saldoAntes: 0,
+      quantidadeTransferida: Number(transferencia.QUANTIDADE ?? 0),
+      saldoDepois: 0,
+      usuario,
+      observacao: observacao || `Recusa realizada por ${usuario}.`
+    });
+
+
+    await conn.commit();
+
+
+    return res.json({
+      success: true,
+      message: 'Recusa da transferência registrada com sucesso.'
+    });
+  } catch (err) {
+    console.error('[RECUSA] Erro ao registrar recusa da transferência:', {
+      message: err.message,
+      stack: err.stack
+    });
+
+    try {
+      if (conn) await conn.rollback();
+    } catch (rollbackErr) {
+      console.error('[RECUSA] Erro no rollback:', {
+        message: rollbackErr.message,
+        stack: rollbackErr.stack
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao registrar recusa da transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+
+  }
+});
+
 // centro de custo
 app.get('/api/estoque/centro-custo', async (req, res) => {
   let conn;
