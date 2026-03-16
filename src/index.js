@@ -5939,7 +5939,72 @@ app.get('/api/permissoes/estoque-almoxarifado/:usuarioId', async (req, res) => {
   }
 });
 
+app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
+  let conn;
 
+  try {
+    const idProduto = Number(req.params.idProduto);
+
+    if (!idProduto) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o idProduto.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    // Valida se o produto existe
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    // Calcula saldo: ENTRADAS - SAIDAS
+    const [rowsEntradas] = await conn.query(
+      `
+      SELECT COALESCE(SUM(COALESCE(e.QUANTIDADE, 0)), 0) AS qtd_entradas
+      FROM SF_ESTOQUE_ENTRADA e
+      WHERE e.ID_PRODUTO = ?
+      `,
+      [idProduto]
+    );
+
+    const [rowsSaidas] = await conn.query(
+      `
+      SELECT COALESCE(SUM(COALESCE(s.QUANTIDADE, 0)), 0) AS qtd_saidas
+      FROM SF_ESTOQUE_SAIDA s
+      WHERE s.ID_PRODUTO = ?
+      `,
+      [idProduto]
+    );
+
+    const qtdEntradas = Number(rowsEntradas?.[0]?.qtd_entradas ?? 0);
+    const qtdSaidas = Number(rowsSaidas?.[0]?.qtd_saidas ?? 0);
+    const saldo = qtdEntradas - qtdSaidas;
+
+    return res.json({
+      success: true,
+      produto,
+      qtdEntradas,
+      qtdSaidas,
+      saldo: saldo < 0 ? 0 : saldo
+    });
+
+  } catch (err) {
+    console.error('Erro ao calcular saldo do produto:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao calcular saldo do produto.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
 
 
 // =====================
