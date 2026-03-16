@@ -5963,47 +5963,37 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
       });
     }
 
-    const [rows] = await conn.query(`
-      SELECT
-        base.qtd_entrada,
-        COALESCE(tr.qtd_transferida, 0) AS qtd_transferida,
-        CASE
-          WHEN (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0)) < 0 THEN 0
-          ELSE (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0))
-        END AS saldo
-      FROM (
-        SELECT
-          SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada
-        FROM SF_PRODUTO_ENTRADA pe
-        WHERE pe.produto_sistema_id = ?
-          AND pe.ID_LOCAL_ALMOXARIFADO = ?
-          AND pe.produto_sistema_id IS NOT NULL
-          AND pe.ID_LOCAL_ALMOXARIFADO IS NOT NULL
-        GROUP BY pe.produto_sistema_id, pe.ID_LOCAL_ALMOXARIFADO
-      ) base
-      LEFT JOIN (
-        SELECT
-          SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
-        FROM SF_ESTOQUE_TRANSFERENCIA t
-        WHERE t.ID_PRODUTO = ?
-          AND t.ID_LOCAL_ORIGEM = ?
-          AND t.ID_PRODUTO IS NOT NULL
-          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
-        GROUP BY t.ID_PRODUTO, t.ID_LOCAL_ORIGEM
-      ) tr
-        ON tr.ID_PRODUTO = base.id
-        AND tr.ID_LOCAL_ORIGEM = ?
-    `, [idProduto, idLocalAlmoxarifado, idProduto, idLocalAlmoxarifado, idLocalAlmoxarifado]);
+    // QUERY 1: Entradas DESSE local
+    const [rowsEntrada] = await conn.query(`
+      SELECT SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada
+      FROM SF_PRODUTO_ENTRADA pe
+      WHERE pe.produto_sistema_id = ?
+        AND pe.ID_LOCAL_ALMOXARIFADO = ?
+        AND pe.produto_sistema_id IS NOT NULL
+        AND pe.ID_LOCAL_ALMOXARIFADO IS NOT NULL
+    `, [idProduto, idLocalAlmoxarifado]);
 
-    const saldoInfo = rows[0] || { qtd_entrada: 0, qtd_transferida: 0, saldo: 0 };
+    // QUERY 2: Transferências DESSE local
+    const [rowsTransferencia] = await conn.query(`
+      SELECT SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
+      FROM SF_ESTOQUE_TRANSFERENCIA t
+      WHERE t.ID_PRODUTO = ?
+        AND t.ID_LOCAL_ORIGEM = ?
+        AND t.ID_PRODUTO IS NOT NULL
+        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
+    `, [idProduto, idLocalAlmoxarifado]);
+
+    const qtdEntrada = Number(rowsEntrada?.[0]?.qtd_entrada ?? 0);
+    const qtdTransferida = Number(rowsTransferencia?.[0]?.qtd_transferida ?? 0);
+    const saldo = qtdEntrada - qtdTransferida < 0 ? 0 : qtdEntrada - qtdTransferida;
 
     return res.json({
       success: true,
       produto,
       localAlmoxarifado: idLocalAlmoxarifado,
-      qtdEntrada: saldoInfo.qtd_entrada,
-      qtdTransferida: saldoInfo.qtd_transferida,
-      saldo: saldoInfo.saldo
+      qtdEntrada,
+      qtdTransferida,
+      saldo
     });
 
   } catch (err) {
@@ -6017,6 +6007,7 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
     if (conn) conn.release();
   }
 });
+
 
 
 // =====================
