@@ -5962,38 +5962,38 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
       });
     }
 
-    // Calcula saldo TOTAL do produto (recebidos de QUALQUER local - enviados PARA QUALQUER local)
-    const [rowsRecebidas] = await conn.query(
-      `
-      SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_recebida
-      FROM SF_ESTOQUE_TRANSFERENCIA t
-      WHERE t.ID_PRODUTO = ?
-        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECEBIDO'
-      `,
-      [idProduto]
-    );
+    const [rows] = await conn.query(`
+      SELECT
+        base.qtd_entrada,
+        COALESCE(tr.qtd_transferida, 0) AS qtd_transferida,
+        CASE
+          WHEN (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0)) < 0 THEN 0
+          ELSE (base.qtd_entrada - COALESCE(tr.qtd_transferida, 0))
+        END AS saldo
+      FROM (
+        SELECT
+          SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada
+        FROM SF_PRODUTO_ENTRADA pe
+        WHERE pe.produto_sistema_id = ?
+      ) base
+      LEFT JOIN (
+        SELECT
+          SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
+        FROM SF_ESTOQUE_TRANSFERENCIA t
+        WHERE t.ID_PRODUTO = ?
+          AND t.ID_LOCAL_ORIGEM IS NOT NULL
+          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
+      ) tr ON 1=1
+    `, [idProduto, idProduto]);
 
-    const [rowsEnviadas] = await conn.query(
-      `
-      SELECT COALESCE(SUM(COALESCE(t.QUANTIDADE, 0)), 0) AS qtd_enviada
-      FROM SF_ESTOQUE_TRANSFERENCIA t
-      WHERE t.ID_PRODUTO = ?
-        AND t.ID_LOCAL_ORIGEM IS NOT NULL
-        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
-      `,
-      [idProduto]
-    );
-
-    const qtdRecebida = Number(rowsRecebidas?.[0]?.qtd_recebida ?? 0);
-    const qtdEnviada = Number(rowsEnviadas?.[0]?.qtd_enviada ?? 0);
-    const saldo = qtdRecebida - qtdEnviada;
+    const saldoInfo = rows[0] || { qtd_entrada: 0, qtd_transferida: 0, saldo: 0 };
 
     return res.json({
       success: true,
       produto,
-      qtdRecebida,
-      qtdEnviada,
-      saldo: saldo < 0 ? 0 : saldo
+      qtdEntrada: saldoInfo.qtd_entrada,
+      qtdTransferida: saldoInfo.qtd_transferida,
+      saldo: saldoInfo.saldo
     });
 
   } catch (err) {
