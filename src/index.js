@@ -4378,6 +4378,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
         centro.NOME AS LOCAL_DESTINO,
         COALESCE(rec.qtd_recebida, 0) AS QTD_RECEBIDA,
         COALESCE(env.qtd_enviada, 0) AS QTD_ENVIADA,
+        COALESCE(pend.qtd_transferida_nao_recebida, 0) AS QTD_TRANSFERIDA_NAO_RECEBIDA,
         CASE
           WHEN COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0) < 0 THEN 0
           ELSE COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0)
@@ -4401,6 +4402,15 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
           AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
         GROUP BY t.ID_PRODUTO
       ) env ON env.ID_PRODUTO = p.id
+      LEFT JOIN (
+        SELECT
+          t.ID_PRODUTO,
+          SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida_nao_recebida
+        FROM SF_ESTOQUE_TRANSFERENCIA t
+        WHERE t.ID_LOCAL_ORIGEM = ?
+          AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
+        GROUP BY t.ID_PRODUTO
+      ) pend ON pend.ID_PRODUTO = p.id
       CROSS JOIN (
         SELECT ID, NOME
         FROM SF_LOCAL_TRABALHO
@@ -4414,9 +4424,8 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       )
       ORDER BY p.codigo ASC, p.descricao ASC
       `,
-      [centro.ID, centro.ID, centro.ID, centro.ID, centro.ID]
+      [centro.ID, centro.ID, centro.ID, centro.ID, centro.ID, centro.ID]
     );
-
 
     return res.json({
       success: true,
@@ -4436,6 +4445,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 app.get('/api/locais-centrocusto', async (req, res) => {
   try {
