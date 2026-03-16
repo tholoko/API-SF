@@ -5954,7 +5954,6 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
 
     conn = await pool.getConnection();
 
-    // Valida se o produto existe
     const produto = await validarProdutoSistema(conn, idProduto);
     if (!produto) {
       return res.status(404).json({
@@ -5963,35 +5962,15 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
       });
     }
 
-    // Calcula saldo: ENTRADAS - SAIDAS
-    const [rowsEntradas] = await conn.query(
-      `
-      SELECT COALESCE(SUM(COALESCE(e.QUANTIDADE, 0)), 0) AS qtd_entradas
-      FROM SF_ESTOQUE_ENTRADA e
-      WHERE e.ID_PRODUTO = ?
-      `,
-      [idProduto]
-    );
-
-    const [rowsSaidas] = await conn.query(
-      `
-      SELECT COALESCE(SUM(COALESCE(s.QUANTIDADE, 0)), 0) AS qtd_saidas
-      FROM SF_ESTOQUE_SAIDA s
-      WHERE s.ID_PRODUTO = ?
-      `,
-      [idProduto]
-    );
-
-    const qtdEntradas = Number(rowsEntradas?.[0]?.qtd_entradas ?? 0);
-    const qtdSaidas = Number(rowsSaidas?.[0]?.qtd_saidas ?? 0);
-    const saldo = qtdEntradas - qtdSaidas;
+    // Calcula saldo TOTAL do produto (sem local específico)
+    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, null);
 
     return res.json({
       success: true,
       produto,
-      qtdEntradas,
-      qtdSaidas,
-      saldo: saldo < 0 ? 0 : saldo
+      saldo: saldoInfo.saldo,
+      qtdEntrada: saldoInfo.qtdEntrada,
+      qtdTransferida: saldoInfo.qtdTransferida
     });
 
   } catch (err) {
@@ -6005,6 +5984,7 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 
 // =====================
