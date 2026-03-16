@@ -4379,7 +4379,7 @@ app.post('/api/estoque/transferencias/:id/recusa', async (req, res) => {
       `
       UPDATE SF_ESTOQUE_TRANSFERENCIA
       SET
-        STATUS_TRANSFERENCIA = 'RECEBIDO',
+        STATUS_TRANSFERENCIA = 'RECUSADA',
         USUARIO_RECEBIMENTO = ?,
         DATA_HORA_RECEBIMENTO = NOW(),
         USUARIO_ALTERACAO = ?,
