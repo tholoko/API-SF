@@ -5975,15 +5975,22 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
           SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada
         FROM SF_PRODUTO_ENTRADA pe
         WHERE pe.produto_sistema_id = ?
+          AND pe.produto_sistema_id IS NOT NULL
+          AND pe.ID_LOCAL_ALMOXARIFADO IS NOT NULL
+        GROUP BY pe.produto_sistema_id
       ) base
       LEFT JOIN (
         SELECT
           SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
         FROM SF_ESTOQUE_TRANSFERENCIA t
         WHERE t.ID_PRODUTO = ?
-          AND t.ID_LOCAL_ORIGEM IS NOT NULL
+          AND t.ID_PRODUTO IS NOT NULL
           AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
-      ) tr ON 1=1
+        GROUP BY t.ID_PRODUTO
+      ) tr
+        ON tr.ID_PRODUTO = base.id
+      ORDER BY base.qtd_entrada DESC
+      LIMIT 1
     `, [idProduto, idProduto]);
 
     const saldoInfo = rows[0] || { qtd_entrada: 0, qtd_transferida: 0, saldo: 0 };
