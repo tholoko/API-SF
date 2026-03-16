@@ -5939,16 +5939,17 @@ app.get('/api/permissoes/estoque-almoxarifado/:usuarioId', async (req, res) => {
   }
 });
 
-app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
+app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req, res) => {
   let conn;
 
   try {
     const idProduto = Number(req.params.idProduto);
+    const idLocalAlmoxarifado = Number(req.params.idLocalAlmoxarifado);
 
-    if (!idProduto) {
+    if (!idProduto || !idLocalAlmoxarifado) {
       return res.status(400).json({
         success: false,
-        message: 'Informe o idProduto.'
+        message: 'Informe idProduto e idLocalAlmoxarifado.'
       });
     }
 
@@ -5975,24 +5976,31 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
           SUM(COALESCE(pe.qtd_nf, 0)) AS qtd_entrada
         FROM SF_PRODUTO_ENTRADA pe
         WHERE pe.produto_sistema_id = ?
+          AND pe.ID_LOCAL_ALMOXARIFADO = ?
           AND pe.produto_sistema_id IS NOT NULL
           AND pe.ID_LOCAL_ALMOXARIFADO IS NOT NULL
+        GROUP BY pe.produto_sistema_id, pe.ID_LOCAL_ALMOXARIFADO
       ) base
-      CROSS JOIN (
+      LEFT JOIN (
         SELECT
           SUM(COALESCE(t.QUANTIDADE, 0)) AS qtd_transferida
         FROM SF_ESTOQUE_TRANSFERENCIA t
         WHERE t.ID_PRODUTO = ?
+          AND t.ID_LOCAL_ORIGEM = ?
           AND t.ID_PRODUTO IS NOT NULL
           AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'EXCLUIDA'
+        GROUP BY t.ID_PRODUTO, t.ID_LOCAL_ORIGEM
       ) tr
-    `, [idProduto, idProduto]);
+        ON tr.ID_PRODUTO = base.id
+        AND tr.ID_LOCAL_ORIGEM = ?
+    `, [idProduto, idLocalAlmoxarifado, idProduto, idLocalAlmoxarifado, idLocalAlmoxarifado]);
 
     const saldoInfo = rows[0] || { qtd_entrada: 0, qtd_transferida: 0, saldo: 0 };
 
     return res.json({
       success: true,
       produto,
+      localAlmoxarifado: idLocalAlmoxarifado,
       qtdEntrada: saldoInfo.qtd_entrada,
       qtdTransferida: saldoInfo.qtd_transferida,
       saldo: saldoInfo.saldo
@@ -6009,7 +6017,6 @@ app.get('/api/estoque/produto/:idProduto/saldo', async (req, res) => {
     if (conn) conn.release();
   }
 });
-
 
 
 // =====================
