@@ -3317,6 +3317,7 @@ async function obterSaldoTransferivel(conn, idProduto, idLocalOrigem, ignoreTran
     WHERE t.ID_PRODUTO = ?
       AND t.ID_LOCAL_ORIGEM = ?
       AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
+      AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'RECUSADO'
   `;
 
   if (ignoreTransferenciaId) {
@@ -3524,44 +3525,33 @@ app.get('/api/estoque/transferencias', async (req, res) => {
       });
     }
 
-    const [rows] = await conn.query(
-      `
+    const [rows] = await conn.query(`
       SELECT
-        t.ID,
-        t.ID_PRODUTO,
-        t.ID_ENTRADA_ORIGEM,
+        t.*,
+        CASE 
+          WHEN UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECUSADO' 
+            AND COALESCE(t.LIDA_RECUSA, 0) = 0 THEN 'RECUSADO_NAO_LIDA'
+          ELSE UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, '')))
+        END AS STATUS_EXIBICAO,
         p.codigo AS CODIGO_PRODUTO,
         p.descricao AS DESCRICAO_PRODUTO,
-        COALESCE(t.UNIDADE, p.unidade) AS UNIDADE,
-        t.ID_LOCAL_ORIGEM,
-        lo.NOME AS LOCAL_ORIGEM,
-        t.ID_LOCAL_DESTINO,
-        ld.NOME AS LOCAL_DESTINO,
-        t.QUANTIDADE,
-        t.OBSERVACAO,
-        t.TIPO_TRANSFERENCIA,
-        t.RESPONSAVEL_TRANSPORTE,
-        t.RESPONSAVEL_ENTREGA,
-        t.USUARIO_RECEBIMENTO,
-        t.DATA_HORA_RECEBIMENTO,
-        t.STATUS_TRANSFERENCIA,
-        t.USUARIO_CADASTRO,
-        t.DATA_CADASTRO,
-        t.USUARIO_ALTERACAO,
-        t.DATA_ALTERACAO
+        lo.NOME AS LOCAL_ORIGEM_NOME,
+        ld.NOME AS LOCAL_DESTINO_NOME
       FROM SF_ESTOQUE_TRANSFERENCIA t
-      INNER JOIN SF_PRODUTOS p
-        ON p.id = t.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
-        ON lo.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO ld
-        ON ld.ID = t.ID_LOCAL_DESTINO
+      INNER JOIN SF_PRODUTOS p ON p.id = t.ID_PRODUTO
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO lo ON lo.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_TRABALHO ld ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID_PRODUTO = ?
         AND t.ID_LOCAL_ORIGEM = ?
-      ORDER BY t.DATA_CADASTRO DESC, t.ID DESC
-      `,
-      [idProduto, idLocalOrigem]
-    );
+        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECUSADO')
+      ORDER BY 
+        CASE 
+          WHEN UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECUSADO' 
+            AND COALESCE(t.LIDA_RECUSA, 0) = 0 THEN 1 
+          ELSE 2 
+        END,
+        t.DATA_CADASTRO DESC, t.ID DESC
+    `, [idProduto, idLocalOrigem]);
 
     const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
 
@@ -3576,7 +3566,6 @@ app.get('/api/estoque/transferencias', async (req, res) => {
     });
   } catch (err) {
     console.error('Erro ao listar transferências:', err);
-
     return res.status(500).json({
       success: false,
       message: 'Erro ao listar transferências.',
@@ -3586,6 +3575,7 @@ app.get('/api/estoque/transferencias', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 app.post('/api/estoque/transferencias', async (req, res) => {
   let conn;
@@ -4360,6 +4350,64 @@ app.post('/api/estoque/transferencias/:id/recusa', async (req, res) => {
   }
 });
 
+app.post('/api/estoque/transferencias/:id/marcar-lida', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rows] = await conn.query(`
+      SELECT * FROM SF_ESTOQUE_TRANSFERENCIA 
+      WHERE ID = ? AND STATUS_TRANSFERENCIA = 'RECUSADO' AND LIDA_RECUSA = 0
+    `, [idTransferencia]);
+
+    if (!rows[0]) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Recusa não encontrada ou já marcada como lida.'
+      });
+    }
+
+    await conn.query(`
+      UPDATE SF_ESTOQUE_TRANSFERENCIA 
+      SET LIDA_RECUSA = 1, USUARIO_ALTERACAO = ?, DATA_ALTERACAO = NOW()
+      WHERE ID = ?
+    `, [usuario, idTransferencia]);
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'RECUSA_LIDA',
+      saldoAntes: 0,
+      quantidadeTransferida: 0,
+      saldoDepois: 0,
+      usuario,
+      observacao: 'Recusa marcada como lida'
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Recusa marcada como lida.'
+    });
+
+  } catch (err) {
+    if (conn) await conn.rollback();
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao marcar como lida.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 // centro de custo
 app.get('/api/estoque/centro-custo', async (req, res) => {
@@ -4420,46 +4468,33 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       });
     }
 
-    const [notificacoesPendentes] = await conn.query(
-      `
+    const [notificacoesPendentes] = await conn.query(`
       SELECT
-        t.ID,
-        t.ID_PRODUTO,
-        t.ID_ENTRADA_ORIGEM,
+        t.*,
+        CASE 
+          WHEN UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECUSADO' 
+            AND COALESCE(t.LIDA_RECUSA, 0) = 0 THEN 'RECUSADO_NAO_LIDA'
+          ELSE UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, '')))
+        END AS STATUS_EXIBICAO,
         p.codigo AS CODIGO_PRODUTO,
         p.descricao AS DESCRICAO_PRODUTO,
-        COALESCE(t.UNIDADE, p.unidade, 'UN') AS UNIDADE,
-        t.ID_LOCAL_ORIGEM,
-        COALESCE(loa.NOME, lot.NOME) AS LOCAL_ORIGEM,
-        t.ID_LOCAL_DESTINO,
-        ld.NOME AS LOCAL_DESTINO,
-        t.QUANTIDADE,
-        t.OBSERVACAO,
-        t.TIPO_TRANSFERENCIA,
-        t.RESPONSAVEL_TRANSPORTE,
-        t.RESPONSAVEL_ENTREGA,
-        t.USUARIO_RECEBIMENTO,
-        t.DATA_HORA_RECEBIMENTO,
-        t.STATUS_TRANSFERENCIA,
-        t.USUARIO_CADASTRO,
-        t.DATA_CADASTRO,
-        t.USUARIO_ALTERACAO,
-        t.DATA_ALTERACAO
+        COALESCE(loa.NOME, lot.NOME) AS LOCAL_ORIGEM_NOME,
+        ld.NOME AS LOCAL_DESTINO_NOME
       FROM SF_ESTOQUE_TRANSFERENCIA t
-      INNER JOIN SF_PRODUTOS p
-        ON p.id = t.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_ALMOXARIFADO loa
-        ON loa.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO lot
-        ON lot.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO ld
-        ON ld.ID = t.ID_LOCAL_DESTINO
+      INNER JOIN SF_PRODUTOS p ON p.id = t.ID_PRODUTO
+      LEFT JOIN SF_LOCAL_ALMOXARIFADO loa ON loa.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_TRABALHO lot ON lot.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_TRABALHO ld ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID_LOCAL_DESTINO = ?
-        AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
-      ORDER BY t.DATA_CADASTRO DESC, t.ID DESC
-      `,
-      [centro.ID]
-    );
+        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECUSADO')
+      ORDER BY 
+        CASE 
+          WHEN UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECUSADO' 
+            AND COALESCE(t.LIDA_RECUSA, 0) = 0 THEN 1 
+          ELSE 2 
+        END,
+        t.DATA_CADASTRO DESC, t.ID DESC
+    `, [centro.ID]);
 
     const [items] = await conn.query(
       `
@@ -4614,6 +4649,7 @@ async function obterSaldoCentroCusto(conn, idProduto, idLocalOrigem, ignoreTrans
     WHERE t.ID_PRODUTO = ?
       AND t.ID_LOCAL_ORIGEM = ?
       AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
+      AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) <> 'RECUSADO'
   `;
 
   if (ignoreTransferenciaId) {
@@ -4718,44 +4754,33 @@ app.get('/api/estoque/centro-custo/transferencias', async (req, res) => {
       });
     }
 
-    const [rows] = await conn.query(
-      `
+    const [rows] = await conn.query(`
       SELECT
-        t.ID,
-        t.ID_PRODUTO,
-        t.ID_ENTRADA_ORIGEM,
+        t.*,
+        CASE 
+          WHEN UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECUSADO' 
+            AND COALESCE(t.LIDA_RECUSA, 0) = 0 THEN 'RECUSADO_NAO_LIDA'
+          ELSE UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, '')))
+        END AS STATUS_EXIBICAO,
         p.codigo AS CODIGO_PRODUTO,
         p.descricao AS DESCRICAO_PRODUTO,
-        COALESCE(t.UNIDADE, p.unidade) AS UNIDADE,
-        t.ID_LOCAL_ORIGEM,
-        lo.NOME AS LOCAL_ORIGEM,
-        t.ID_LOCAL_DESTINO,
-        ld.NOME AS LOCAL_DESTINO,
-        t.QUANTIDADE,
-        t.OBSERVACAO,
-        t.TIPO_TRANSFERENCIA,
-        t.RESPONSAVEL_TRANSPORTE,
-        t.RESPONSAVEL_ENTREGA,
-        t.USUARIO_RECEBIMENTO,
-        t.DATA_HORA_RECEBIMENTO,
-        t.STATUS_TRANSFERENCIA,
-        t.USUARIO_CADASTRO,
-        t.DATA_CADASTRO,
-        t.USUARIO_ALTERACAO,
-        t.DATA_ALTERACAO
+        lo.NOME AS LOCAL_ORIGEM_NOME,
+        ld.NOME AS LOCAL_DESTINO_NOME
       FROM SF_ESTOQUE_TRANSFERENCIA t
-      INNER JOIN SF_PRODUTOS p
-        ON p.id = t.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_TRABALHO lo
-        ON lo.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO ld
-        ON ld.ID = t.ID_LOCAL_DESTINO
+      INNER JOIN SF_PRODUTOS p ON p.id = t.ID_PRODUTO
+      LEFT JOIN SF_LOCAL_TRABALHO lo ON lo.ID = t.ID_LOCAL_ORIGEM
+      LEFT JOIN SF_LOCAL_TRABALHO ld ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID_PRODUTO = ?
         AND t.ID_LOCAL_ORIGEM = ?
-      ORDER BY t.DATA_CADASTRO DESC, t.ID DESC
-      `,
-      [idProduto, idLocalOrigem]
-    );
+        AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECUSADO')
+      ORDER BY 
+        CASE 
+          WHEN UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECUSADO' 
+            AND COALESCE(t.LIDA_RECUSA, 0) = 0 THEN 1 
+          ELSE 2 
+        END,
+        t.DATA_CADASTRO DESC, t.ID DESC
+    `, [idProduto, idLocalOrigem]);
 
     const saldoInfo = await obterSaldoCentroCusto(conn, idProduto, idLocalOrigem);
 
@@ -4779,6 +4804,7 @@ app.get('/api/estoque/centro-custo/transferencias', async (req, res) => {
     if (conn) conn.release();
   }
 });
+
 
 app.post('/api/estoque/centro-custo/transferencias', async (req, res) => {
   let conn;
