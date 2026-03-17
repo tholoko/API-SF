@@ -6175,6 +6175,175 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
 });
 
 
+// links favoritos
+// GET /api/clima-links - Lista links (filtra por usuário ou todos se admin)
+app.get('/api/clima-links', async (req, res) => {
+  try {
+    const usuarioId = req.query.usuarioId ? Number(req.query.usuarioId) : null;
+
+    if (!usuarioId) {
+      return res.status(400).json({ success: false, message: 'ID do usuário obrigatório.' });
+    }
+
+    // Verifica se é admin para ver links globais
+    const [perfilRows] = await pool.query(`
+      SELECT u.PERFIL, p.nome 
+      FROM SF_USUARIO u 
+      LEFT JOIN SF_PERFIL p ON p.nome = u.PERFIL 
+      WHERE u.ID = ? LIMIT 1
+    `, [usuarioId]);
+
+    const isAdmin = perfilRows[0]?.PERFIL === 'administrador';
+
+    let query = `
+      SELECT cl.id, cl.titulo, cl.url, cl.usuario_id,
+             CASE WHEN cl.usuario_id IS NULL THEN 'Global' ELSE u.NOME END as usuario_nome
+      FROM SF_CLIMA_LINKS cl
+      LEFT JOIN SF_USUARIO u ON u.ID = cl.usuario_id
+    `;
+
+    const params = [];
+    
+    if (!isAdmin) {
+      query += ` WHERE cl.usuario_id = ? OR cl.usuario_id IS NULL`;
+      params.push(usuarioId);
+    }
+
+    query += ` ORDER BY cl.criado_em DESC`;
+
+    const [rows] = await pool.query(query, params);
+
+    res.json({
+      success: true,
+      links: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar links:', err);
+    res.status(500).json({ success: false, message: 'Erro ao carregar links.' });
+  }
+});
+
+// POST /api/clima-links - Cria novo link
+app.post('/api/clima-links', async (req, res) => {
+  try {
+    const { titulo, url, usuarioId } = req.body;
+
+    if (!titulo || !url || !usuarioId) {
+      return res.status(400).json({ success: false, message: 'Título, URL e usuarioId obrigatórios.' });
+    }
+
+    // Verifica perfil
+    const [perfilRows] = await pool.query(`
+      SELECT PERFIL FROM SF_USUARIO WHERE ID = ?
+    `, [usuarioId]);
+
+    if (!perfilRows.length) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    const isAdmin = perfilRows[0].PERFIL === 'administrador';
+    const usuarioFinalId = isAdmin ? null : usuarioId; // Admin cria global (NULL)
+
+    const [result] = await pool.query(`
+      INSERT INTO SF_CLIMA_LINKS (titulo, url, usuario_id) 
+      VALUES (?, ?, ?)
+    `, [titulo, url, usuarioFinalId]);
+
+    res.json({
+      success: true,
+      id: result.insertId,
+      message: 'Link adicionado com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao criar link:', err);
+    res.status(500).json({ success: false, message: 'Erro ao adicionar link.' });
+  }
+});
+
+// PUT /api/clima-links/:id - Edita link
+app.put('/api/clima-links/:id', async (req, res) => {
+  try {
+    const linkId = Number(req.params.id);
+    const { titulo, url, usuarioId } = req.body;
+
+    if (!titulo || !url || !usuarioId || !linkId) {
+      return res.status(400).json({ success: false, message: 'Dados incompletos.' });
+    }
+
+    // Verifica permissão (dono ou admin)
+    const [linkRows] = await pool.query(`
+      SELECT cl.usuario_id, u.PERFIL
+      FROM SF_CLIMA_LINKS cl
+      LEFT JOIN SF_USUARIO u ON u.ID = ?
+      WHERE cl.id = ?
+    `, [usuarioId, linkId]);
+
+    if (!linkRows.length) {
+      return res.status(404).json({ success: false, message: 'Link não encontrado.' });
+    }
+
+    const link = linkRows[0];
+    const isAdmin = link.PERFIL === 'administrador';
+    const podeEditar = isAdmin || (link.usuario_id === usuarioId) || link.usuario_id === null;
+
+    if (!podeEditar) {
+      return res.status(403).json({ success: false, message: 'Sem permissão para editar este link.' });
+    }
+
+    await pool.query(`
+      UPDATE SF_CLIMA_LINKS 
+      SET titulo = ?, url = ?, usuario_id = CASE WHEN ?='administrador' THEN NULL ELSE ? END
+      WHERE id = ?
+    `, [titulo, url, link.PERFIL, usuarioId, linkId]);
+
+    res.json({ success: true, message: 'Link atualizado com sucesso.' });
+  } catch (err) {
+    console.error('Erro ao editar link:', err);
+    res.status(500).json({ success: false, message: 'Erro ao atualizar link.' });
+  }
+});
+
+// DELETE /api/clima-links/:id - Remove link
+app.delete('/api/clima-links/:id', async (req, res) => {
+  try {
+    const linkId = Number(req.params.id);
+    const usuarioId = Number(req.query.usuarioId);
+
+    if (!linkId || !usuarioId) {
+      return res.status(400).json({ success: false, message: 'ID do link e usuário obrigatórios.' });
+    }
+
+    // Verifica permissão
+    const [linkRows] = await pool.query(`
+      SELECT cl.usuario_id, u.PERFIL
+      FROM SF_CLIMA_LINKS cl
+      LEFT JOIN SF_USUARIO u ON u.ID = ?
+      WHERE cl.id = ?
+    `, [usuarioId, linkId]);
+
+    if (!linkRows.length) {
+      return res.status(404).json({ success: false, message: 'Link não encontrado.' });
+    }
+
+    const link = linkRows[0];
+    const isAdmin = link.PERFIL === 'administrador';
+    const podeExcluir = isAdmin || (link.usuario_id === usuarioId) || link.usuario_id === null;
+
+    if (!podeExcluir) {
+      return res.status(403).json({ success: false, message: 'Sem permissão para excluir este link.' });
+    }
+
+    await pool.query('DELETE FROM SF_CLIMA_LINKS WHERE id = ?', [linkId]);
+
+    res.json({ success: true, message: 'Link removido com sucesso.' });
+  } catch (err) {
+    console.error('Erro ao excluir link:', err);
+    res.status(500).json({ success: false, message: 'Erro ao remover link.' });
+  }
+});
+
+
+
 // =====================
 // Inicia servidor (sempre por último)
 // =====================
