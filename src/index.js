@@ -6364,6 +6364,50 @@ app.delete('/api/clima-links/:id', async (req, res) => {
   }
 });
 
+// GET /api/favicon/:domain - Gera favicon confiável
+app.get('/api/favicon/:domain', async (req, res) => {
+  try {
+    const { domain } = req.params;
+    const cleanDomain = domain.replace('www.', '');
+    
+    const sources = [
+      `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=32`,
+      `https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${cleanDomain}&size=32`,
+      `https://${cleanDomain}/favicon.ico`
+    ];
+    
+    // Testa primeira disponível
+    for (const src of sources) {
+      try {
+        const response = await fetch(src, { timeout: 3000 });
+        if (response.ok) {
+          const buffer = await response.arrayBuffer();
+          res.set('Content-Type', response.headers.get('content-type') || 'image/png');
+          res.set('Cache-Control', 'public, max-age=86400'); // 24h cache
+          return res.send(Buffer.from(buffer));
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+    
+    // Fallback SVG
+    const svg = Buffer.from(`
+      <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+        <rect width="32" height="32" rx="4" fill="#F8FAFC"/>
+        <path d="M4 10H28V6H4Z" fill="#E2E8F0"/>
+        <path d="M8 18V14H14V10H20V18Z" fill="#64748B"/>
+      </svg>
+    `);
+    res.set('Content-Type', 'image/svg+xml');
+    res.send(svg);
+    
+  } catch (err) {
+    res.status(500).send('Erro ao gerar favicon');
+  }
+});
+
+
 
 
 // =====================
