@@ -6176,7 +6176,10 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
 });
 
 
-// links favoritos
+// ============================================================================
+// API LINKS FAVORITOS - COMPLETA COM ÍCONE + PERMISSÕES
+// ============================================================================
+
 // GET /api/clima-links - Lista links (filtra por usuário ou todos se admin)
 app.get('/api/clima-links', async (req, res) => {
   try {
@@ -6197,7 +6200,7 @@ app.get('/api/clima-links', async (req, res) => {
     const isAdmin = perfilRows[0]?.PERFIL === 'administrador';
 
     let query = `
-      SELECT cl.id, cl.titulo, cl.url, cl.usuario_id,
+      SELECT cl.id, cl.titulo, cl.url, cl.icone, cl.usuario_id,
              CASE WHEN cl.usuario_id IS NULL THEN 'Global' ELSE u.NOME END as usuario_nome
       FROM SF_CLIMA_LINKS cl
       LEFT JOIN SF_USUARIO u ON u.ID = cl.usuario_id
@@ -6224,16 +6227,16 @@ app.get('/api/clima-links', async (req, res) => {
   }
 });
 
-// POST /api/clima-links - Cria novo link
+// POST /api/clima-links - Cria novo link COM ÍCONE
 app.post('/api/clima-links', async (req, res) => {
   try {
-    const { titulo, url, usuarioId } = req.body;
+    const { titulo, url, icone, usuarioId } = req.body;
 
     if (!titulo || !url || !usuarioId) {
       return res.status(400).json({ success: false, message: 'Título, URL e usuarioId obrigatórios.' });
     }
 
-    // Verifica perfil
+    // Verifica perfil do usuário
     const [perfilRows] = await pool.query(`
       SELECT PERFIL FROM SF_USUARIO WHERE ID = ?
     `, [usuarioId]);
@@ -6243,17 +6246,24 @@ app.post('/api/clima-links', async (req, res) => {
     }
 
     const isAdmin = perfilRows[0].PERFIL === 'administrador';
-    const usuarioFinalId = isAdmin ? null : usuarioId; // Admin cria global (NULL)
+    
+    // Admin pode criar global (NULL), usuário normal = seu ID
+    const usuarioFinalId = isAdmin && !usuarioId ? null : usuarioId;
+    
+    // Gera favicon se não fornecido
+    const domain = new URL(url).hostname.replace('www.', '');
+    const faviconUrl = icone || `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
 
     const [result] = await pool.query(`
-      INSERT INTO SF_CLIMA_LINKS (titulo, url, usuario_id) 
-      VALUES (?, ?, ?)
-    `, [titulo, url, usuarioFinalId]);
+      INSERT INTO SF_CLIMA_LINKS (titulo, url, icone, usuario_id, criado_em) 
+      VALUES (?, ?, ?, ?, NOW())
+    `, [titulo, url, faviconUrl, usuarioFinalId]);
 
     res.json({
       success: true,
       id: result.insertId,
-      message: 'Link adicionado com sucesso.'
+      message: 'Link adicionado com sucesso.',
+      favicon: faviconUrl
     });
   } catch (err) {
     console.error('Erro ao criar link:', err);
@@ -6261,17 +6271,17 @@ app.post('/api/clima-links', async (req, res) => {
   }
 });
 
-// PUT /api/clima-links/:id - Edita link
+// PUT /api/clima-links/:id - Edita link COM ÍCONE
 app.put('/api/clima-links/:id', async (req, res) => {
   try {
     const linkId = Number(req.params.id);
-    const { titulo, url, usuarioId } = req.body;
+    const { titulo, url, icone, usuarioId } = req.body;
 
     if (!titulo || !url || !usuarioId || !linkId) {
       return res.status(400).json({ success: false, message: 'Dados incompletos.' });
     }
 
-    // Verifica permissão (dono ou admin)
+    // Verifica permissão (dono do link OU admin)
     const [linkRows] = await pool.query(`
       SELECT cl.usuario_id, u.PERFIL
       FROM SF_CLIMA_LINKS cl
@@ -6285,19 +6295,30 @@ app.put('/api/clima-links/:id', async (req, res) => {
 
     const link = linkRows[0];
     const isAdmin = link.PERFIL === 'administrador';
-    const podeEditar = isAdmin || (link.usuario_id === usuarioId) || link.usuario_id === null;
+    const podeEditar = isAdmin || link.usuario_id == usuarioId || link.usuario_id === null;
 
     if (!podeEditar) {
       return res.status(403).json({ success: false, message: 'Sem permissão para editar este link.' });
     }
 
+    // Gera novo favicon se URL mudou
+    const domain = new URL(url).hostname.replace('www.', '');
+    const novoFavicon = icone || `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
+
+    // Admin atualiza para global, usuário normal mantém seu ID
+    const usuarioFinalId = isAdmin ? null : usuarioId;
+
     await pool.query(`
       UPDATE SF_CLIMA_LINKS 
-      SET titulo = ?, url = ?, usuario_id = CASE WHEN ?='administrador' THEN NULL ELSE ? END
+      SET titulo = ?, url = ?, icone = ?, usuario_id = ?
       WHERE id = ?
-    `, [titulo, url, link.PERFIL, usuarioId, linkId]);
+    `, [titulo, url, novoFavicon, usuarioFinalId, linkId]);
 
-    res.json({ success: true, message: 'Link atualizado com sucesso.' });
+    res.json({ 
+      success: true, 
+      message: 'Link atualizado com sucesso.',
+      favicon: novoFavicon
+    });
   } catch (err) {
     console.error('Erro ao editar link:', err);
     res.status(500).json({ success: false, message: 'Erro ao atualizar link.' });
@@ -6328,7 +6349,7 @@ app.delete('/api/clima-links/:id', async (req, res) => {
 
     const link = linkRows[0];
     const isAdmin = link.PERFIL === 'administrador';
-    const podeExcluir = isAdmin || (link.usuario_id === usuarioId) || link.usuario_id === null;
+    const podeExcluir = isAdmin || link.usuario_id == usuarioId || link.usuario_id === null;
 
     if (!podeExcluir) {
       return res.status(403).json({ success: false, message: 'Sem permissão para excluir este link.' });
