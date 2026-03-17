@@ -6174,6 +6174,22 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
   }
 });
 
+// GET api/clima-links
+app.get('/api/clima-links', async (req, res) => {
+  try {
+    const rows = await pool.query(`
+      SELECT id, titulo, url, icone 
+      FROM SF_CLIMA_LINKS 
+      WHERE ativo = 1 
+      ORDER BY ordem ASC, titulo ASC
+    `);
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    console.error('Erro api/clima-links:', err);
+    res.status(500).json({ success: false, message: 'Erro ao listar links de clima.', error: err.message });
+  }
+});
+
 
 // =====================
 // Inicia servidor (sempre por último)
