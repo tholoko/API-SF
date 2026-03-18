@@ -115,7 +115,8 @@ app.post('/api/login', async (req, res) => {
          MUST_CHANGE_PASSWORD,
          FOTO,
          DATA_NASCIMENTO,
-         FOTO
+         FOTO, 
+         PERFIL
        FROM SF_USUARIO
        WHERE EMAIL = ?
        LIMIT 1`,
