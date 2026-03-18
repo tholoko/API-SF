@@ -1242,7 +1242,7 @@ const storageFotoUsuario = multer.diskStorage({
     cb(null, PASTA_FOTO_USUARIO);
   },
   filename: (req, file, cb) => {
-    const original = apenasNomeArquivoSeguro(file.originalname || 'foto.jpg');
+    const original = apenasNomeArquivoSeguroCNH(file.originalname || 'foto.jpg');
     const ext = path.extname(original) || '.jpg';
     const nomeSemExt = path.basename(original, ext);
     const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1283,7 +1283,7 @@ app.post('/api/gestao-usuarios/foto', uploadFotoUsuario.single('foto'), async (r
 // Remover arquivo da foto do usuário
 app.delete('/api/gestao-usuarios/foto/:nome', async (req, res) => {
   try {
-    const nome = apenasNomeArquivoSeguro(req.params.nome);
+    const nome = apenasNomeArquivoSeguroCNH(req.params.nome);
     if (!nome) return res.status(400).json({ success: false, message: 'Nome inválido.' });
 
     const base = path.resolve(PASTA_FOTO_USUARIO);
@@ -1311,7 +1311,7 @@ fs.mkdirSync(PASTA_CNH_USUARIO, { recursive: true });
 app.use('/anexos/cnh-usuario', express.static(PASTA_CNH_USUARIO));
 
 
-function apenasNomeArquivoSeguro(nome) {
+function apenasNomeArquivoSeguroCNH(nome) {
   return path.basename(String(nome || '')).replace(/[^\w.\-]/g, '');
 }
 
@@ -1330,7 +1330,7 @@ function extrairNomeArquivoDeUrlPossivel(url) {
   const s = texto(url);
   if (!s) return '';
   const semQuery = s.split('?')[0];
-  return apenasNomeArquivoSeguro(path.basename(semQuery));
+  return apenasNomeArquivoSeguroCNH(path.basename(semQuery));
 }
 
 async function apagarArquivoSeExistir(caminho) {
@@ -1346,7 +1346,7 @@ const storageCnhUsuario = multer.diskStorage({
     cb(null, PASTA_CNH_USUARIO);
   },
   filename: (req, file, cb) => {
-    const original = apenasNomeArquivoSeguro(file.originalname || 'cnh.pdf');
+    const original = apenasNomeArquivoSeguroCNH(file.originalname || 'cnh.pdf');
     const ext = path.extname(original) || '.pdf';
     const nomeSemExt = path.basename(original, ext);
     const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -1390,7 +1390,7 @@ app.post('/api/gestao-usuarios/cnh', uploadCnhUsuario.single('arquivo'), async (
 
 app.delete('/api/gestao-usuarios/cnh/:nome', async (req, res) => {
   try {
-    const nome = apenasNomeArquivoSeguro(req.params.nome);
+    const nome = apenasNomeArquivoSeguroCNH(req.params.nome);
     if (!nome) {
       return res.status(400).json({ success: false, message: 'Nome inválido.' });
     }
