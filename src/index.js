@@ -1085,10 +1085,6 @@ fs.mkdirSync(PASTA_CNH_USUARIO, { recursive: true });
 app.use('/anexos/foto-usuario', express.static(PASTA_FOTO_USUARIO));
 app.use('/anexos/cnh-usuario', express.static(PASTA_CNH_USUARIO));
 
-function texto(v) {
-  return (v ?? '').toString().trim();
-}
-
 function titleCaseNome(v) {
   return texto(v)
     .toLowerCase()
