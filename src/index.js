@@ -154,7 +154,8 @@ app.post('/api/login', async (req, res) => {
       id: u.ID,
       mustChangePassword: Number(u.MUST_CHANGE_PASSWORD) === 1,
       foto: u.FOTO || '',
-      dataNascimento: u.DATA_NASCIMENTO || null
+      dataNascimento: u.DATA_NASCIMENTO || null,
+      perfil: u.PERFIL
     });
   } catch (err) {
     console.error('Erro /api/login:', err);
