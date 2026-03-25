@@ -81,30 +81,14 @@ app.get('/health', async (req, res) => {
 app.get('/debug', (req, res) => {
   res.json({
     mysqlVars: {
-      host: {
-        exists: !!process.env.MYSQLHOST,
-        value: process.env.MYSQLHOST || null
-      },
-      port: {
-        exists: !!process.env.MYSQLPORT,
-        value: process.env.MYSQLPORT || null
-      },
-      user: {
-        exists: !!process.env.MYSQLUSER,
-        value: process.env.MYSQLUSER || null
-      },
-      pass: {
-        exists: !!process.env.MYSQLPASSWORD,
-        value: process.env.MYSQLPASSWORD ? '***OCULTA***' : null
-      },
-      db: {
-        exists: !!process.env.MYSQLDATABASE,
-        value: process.env.MYSQLDATABASE || null
-      }
+      host: process.env.MYSQLHOST ? 'OK' : 'MISSING',
+      port: process.env.MYSQLPORT,
+      user: process.env.MYSQLUSER ? 'OK' : 'MISSING',
+      pass: process.env.MYSQLPASSWORD ? 'OK' : 'MISSING',
+      db: process.env.MYSQLDATABASE ? 'OK' : 'MISSING'
     }
   });
 });
-
 
 // =====================
 // API Login
@@ -214,7 +198,6 @@ app.post('/api/usuarios/primeiro-acesso/senha', async (req, res) => {
 // =====================
 app.get('/api/aniversariantes/mes', async (req, res) => {
   try {
-    console.log('[ANIVERSARIANTES_MES] Iniciando busca dos aniversariantes do mês...');
 
     const result = await pool.query(`
       SELECT
@@ -232,22 +215,14 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
       ORDER BY DAY(DATA_NASCIMENTO) ASC, NOME ASC
     `);
 
-    console.log('[ANIVERSARIANTES_MES] Resultado bruto:', result);
 
     const rows = Array.isArray(result?.[0]) ? result[0] : result;
 
-    console.log('[ANIVERSARIANTES_MES] Linhas extraídas:', rows);
-    console.log('[ANIVERSARIANTES_MES] Total de registros encontrados:', rows.length);
 
     const hoje = new Date();
     const diaHoje = hoje.getDate();
     const mesHoje = hoje.getMonth() + 1;
 
-    console.log('[ANIVERSARIANTES_MES] Hoje é:', {
-      diaHoje,
-      mesHoje,
-      dataIso: hoje.toISOString()
-    });
 
     const items = rows.map((r, index) => {
       const dt = r.DATA_NASCIMENTO ? new Date(r.DATA_NASCIMENTO) : null;
@@ -265,17 +240,8 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
         aniversarioHoje
       };
 
-      console.log(`[ANIVERSARIANTES_MES] Registro ${index + 1}:`, {
-        bruto: r,
-        convertido: item,
-        diaExtraido: dia,
-        mesExtraido: mes
-      });
-
       return item;
     });
-
-    console.log('[ANIVERSARIANTES_MES] Items finais enviados ao front:', items);
 
     return res.json({
       success: true,
@@ -688,11 +654,11 @@ function nullableDate(v) {
 }
 
 
-app.get('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+app.get('/api/gestao-usuarios-centro-custo', async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT ID, NOME
-         FROM SF_LOCAL_TRABALHO
+         FROM SF_CENTRO_CUSTO
         WHERE NOME IS NOT NULL
           AND NOME <> ''
         ORDER BY NOME ASC`
@@ -708,7 +674,7 @@ app.get('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
   }
 });
 
-app.post('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+app.post('/api/gestao-usuarios-centro-custo', async (req, res) => {
   try {
     const nome = titleCaseNome(req.body?.nome);
 
@@ -720,7 +686,7 @@ app.post('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
     }
 
     const [r] = await pool.query(
-      `INSERT INTO SF_LOCAL_TRABALHO (NOME)
+      `INSERT INTO SF_CENTRO_CUSTO (NOME)
        VALUES (?)`,
       [nome]
     );
@@ -836,108 +802,6 @@ app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
   }
 });
 
-app.get('/api/gestao-usuarios', async (req, res) => {
-  try {
-    const busca = texto(req.query?.q);
-
-    let sql = `
-      SELECT
-        ID,
-        NOME,
-        EMAIL,
-        TELEFONE,
-        PERFIL,
-        SETOR,
-        LOCAL_TRABALHO,
-        STATUS,
-        CPF,
-        RG,
-        CNH,
-        CNH_CATEGORIA,
-        CNH_VALIDADE,
-        CNH_ARQUIVO,
-        DATA_NASCIMENTO,
-        ESTADO_CIVIL,
-        TELEFONE_PESSOAL,
-        EMAIL_PESSOAL,
-        FOTO
-      FROM SF_USUARIO
-    `;
-
-    const params = [];
-
-    if (busca) {
-      sql += `
-        WHERE
-          NOME LIKE ?
-          OR EMAIL LIKE ?
-          OR PERFIL LIKE ?
-          OR SETOR LIKE ?
-      `;
-      const like = `%${busca}%`;
-      params.push(like, like, like, like);
-    }
-
-    sql += ` ORDER BY NOME ASC`;
-
-    const [rows] = await pool.query(sql, params);
-    res.json({ success: true, items: rows });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: 'Erro ao listar usuários.',
-      error: err.message
-    });
-  }
-});
-
-
-app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-
-    const [rows] = await pool.query(
-      `SELECT
-         ID,
-         NOME,
-         EMAIL,
-         TELEFONE,
-         PERFIL,
-         SETOR,
-         LOCAL_TRABALHO,
-         STATUS,
-         CPF,
-         RG,
-         CNH,
-         CNH_CATEGORIA,
-         CNH_VALIDADE,
-         CNH_ARQUIVO,
-         DATA_NASCIMENTO,
-         ESTADO_CIVIL,
-         TELEFONE_PESSOAL,
-         EMAIL_PESSOAL,
-         FOTO
-       FROM SF_USUARIO
-       WHERE ID = ?
-       LIMIT 1`,
-      [id]
-    );
-
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
-    }
-
-    res.json({ success: true, item: rows[0] });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: 'Erro ao buscar usuário.',
-      error: err.message
-    });
-  }
-});
-
-
 app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
   try {
     const nome = titleCaseNome(req.body?.nome);
@@ -946,22 +810,54 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const telefone = somenteNumeros(req.body?.telefone);
     const perfil = texto(req.body?.perfil);
     const setor = titleCaseNome(req.body?.setor);
-    const local_trabalho = titleCaseNome(req.body?.local_trabalho || req.body?.localtrabalho);
+
+    const funcao = texto(req.body?.funcao);
+    const data_admissao = nullableDate(req.body?.dataadmissao || req.body?.data_admissao);
+
+    const centro_custo = titleCaseNome(req.body?.localtrabalho || req.body?.local_trabalho || req.body?.centro_custo);
+    const local_trabalho = titleCaseNome(req.body?.unidadetrabalho || req.body?.unidade_trabalho || req.body?.local_trabalho);
+
     const status = texto(req.body?.status) || 'Ativo';
 
     const cpf = somenteNumeros(req.body?.cpf);
     const rg = texto(req.body?.rg);
     const cnh = texto(req.body?.cnh);
-    const cnh_categoria = texto(req.body?.cnh_categoria || req.body?.cnhcategoria).toUpperCase();
-    const cnh_validade = texto(req.body?.cnh_validade || req.body?.cnhvalidade);
+
+    const cnhCategoriaBruta = texto(req.body?.cnh_categoria || req.body?.cnhcategoria);
+    const cnh_categoria = cnhCategoriaBruta ? cnhCategoriaBruta.toUpperCase() : null;
+
+    const cnh_validade = nullableDate(req.body?.cnh_validade || req.body?.cnhvalidade);
     const cnh_arquivo = texto(req.body?.cnh_arquivo || req.body?.cnharquivo);
-    const data_nascimento = texto(req.body?.data_nascimento || req.body?.datanascimento);
+    const data_nascimento = nullableDate(req.body?.data_nascimento || req.body?.datanascimento);
     const estado_civil = texto(req.body?.estado_civil || req.body?.estadocivil);
     const telefone_pessoal = somenteNumeros(req.body?.telefone_pessoal || req.body?.telefonepessoal);
-    const email_pessoal = texto(req.body?.email_pessoal || req.body?.emailpessoal)
-      ? normalizarEmail(req.body?.email_pessoal || req.body?.emailpessoal)
-      : null;
+
+    const emailPessoalBruto = texto(req.body?.email_pessoal || req.body?.emailpessoal);
+    const email_pessoal = emailPessoalBruto ? normalizarEmail(emailPessoalBruto) : null;
+
     const foto = texto(req.body?.foto);
+
+    const apelido = texto(req.body?.apelido);
+    const numero_calcado = String(req.body?.numerocalcado ?? '').trim() !== ''
+      ? Number(req.body?.numerocalcado)
+      : null;
+    const tamanhoCamisaBruto = texto(req.body?.tamanhocamisa || req.body?.tamanho_camisa);
+    const tamanho_camisa = tamanhoCamisaBruto ? tamanhoCamisaBruto.toUpperCase() : null;
+    const tamanho_calca = texto(req.body?.tamanhocalca || req.body?.tamanho_calca);
+
+    const sexoBruto = texto(req.body?.sexo);
+    const sexo = sexoBruto ? sexoBruto.toUpperCase() : null;
+
+    const temFilhosBruto = texto(req.body?.temfilhos || req.body?.tem_filhos);
+    const tem_filhos = temFilhosBruto ? temFilhosBruto.toUpperCase() : 'NAO';
+
+    const quantidade_filhos = tem_filhos === 'SIM' && String(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos ?? '').trim() !== ''
+      ? Number(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos)
+      : null;
+
+    const filhos = tem_filhos === 'SIM'
+      ? JSON.stringify(Array.isArray(req.body?.filhos) ? req.body.filhos : [])
+      : null;
 
     if (!nome || !email || !senha || !perfil || !setor || !status) {
       return res.status(400).json({
@@ -999,6 +895,9 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         TELEFONE,
         PERFIL,
         SETOR,
+        FUNCAO,
+        DATA_ADMISSAO,
+        CENTRO_CUSTO,
         LOCAL_TRABALHO,
         STATUS,
         CPF,
@@ -1012,8 +911,16 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         TELEFONE_PESSOAL,
         EMAIL_PESSOAL,
         FOTO,
+        APELIDO,
+        NUMERO_CALCADO,
+        TAMANHO_CAMISA,
+        TAMANHO_CALCA,
+        SEXO,
+        TEM_FILHOS,
+        QUANTIDADE_FILHOS,
+        FILHOS,
         MUST_CHANGE_PASSWORD
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `, [
       nome,
       email,
@@ -1021,19 +928,30 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
       telefone || null,
       perfil,
       setor,
+      funcao || null,
+      data_admissao,
+      centro_custo || null,
       local_trabalho || null,
       status,
       cpf || null,
       rg || null,
       cnh || null,
       cnh_categoria || null,
-      cnh_validade || null,
+      cnh_validade,
       cnh_arquivo || null,
-      data_nascimento || null,
+      data_nascimento,
       estado_civil || null,
       telefone_pessoal || null,
       email_pessoal || null,
-      foto || null
+      foto || null,
+      apelido || null,
+      Number.isFinite(numero_calcado) ? numero_calcado : null,
+      tamanho_camisa || null,
+      tamanho_calca || null,
+      sexo || null,
+      tem_filhos,
+      Number.isFinite(quantidade_filhos) ? quantidade_filhos : null,
+      filhos
     ]);
 
     res.status(201).json({
@@ -1055,6 +973,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
 
 
 app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  
   try {
     const id = Number(req.params.id);
 
@@ -1063,21 +982,54 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     const telefone = somenteNumeros(req.body?.telefone);
     const perfil = texto(req.body?.perfil);
     const setor = titleCaseNome(req.body?.setor);
-    const local_trabalho = titleCaseNome(req.body?.local_trabalho || req.body?.localtrabalho);
+
+    const funcao = texto(req.body?.funcao);
+    const data_admissao = nullableDate(req.body?.dataadmissao || req.body?.data_admissao);
+
+    const centro_custo = titleCaseNome(req.body?.localtrabalho || req.body?.local_trabalho || req.body?.centro_custo);
+    const local_trabalho = titleCaseNome(req.body?.unidadetrabalho || req.body?.unidade_trabalho || req.body?.local_trabalho);
+
     const status = texto(req.body?.status) || 'Ativo';
 
     const cpf = somenteNumeros(req.body?.cpf);
     const rg = texto(req.body?.rg);
     const cnh = texto(req.body?.cnh);
-    const cnh_categoria = texto(req.body?.cnh_categoria || req.body?.cnhcategoria).toUpperCase();
-    const cnh_validade = texto(req.body?.cnh_validade || req.body?.cnhvalidade);
+
+    const cnhCategoriaBruta = texto(req.body?.cnh_categoria || req.body?.cnhcategoria);
+    const cnh_categoria = cnhCategoriaBruta ? cnhCategoriaBruta.toUpperCase() : null;
+
+    const cnh_validade = nullableDate(req.body?.cnh_validade || req.body?.cnhvalidade);
     const cnh_arquivo = req.body?.cnh_arquivo ?? req.body?.cnharquivo;
-    const data_nascimento = texto(req.body?.data_nascimento || req.body?.datanascimento);
+    const data_nascimento = nullableDate(req.body?.data_nascimento || req.body?.datanascimento);
     const estado_civil = texto(req.body?.estado_civil || req.body?.estadocivil);
     const telefone_pessoal = somenteNumeros(req.body?.telefone_pessoal || req.body?.telefonepessoal);
+
     const email_pessoal_bruto = req.body?.email_pessoal ?? req.body?.emailpessoal;
     const email_pessoal = texto(email_pessoal_bruto) ? normalizarEmail(email_pessoal_bruto) : null;
+
     const foto = req.body?.foto;
+
+    const apelido = texto(req.body?.apelido);
+    const numero_calcado = String(req.body?.numero_calcado ?? '').trim() !== ''
+      ? Number(req.body?.numero_calcado)
+      : null;
+    const tamanhoCamisaBruto = texto(req.body?.tamanhocamisa || req.body?.tamanho_camisa);
+    const tamanho_camisa = tamanhoCamisaBruto ? tamanhoCamisaBruto.toUpperCase() : null;
+    const tamanho_calca = texto(req.body?.tamanhocalca || req.body?.tamanho_calca);
+
+    const sexoBruto = texto(req.body?.sexo);
+    const sexo = sexoBruto ? sexoBruto.toUpperCase() : null;
+
+    const temFilhosBruto = texto(req.body?.temfilhos || req.body?.tem_filhos);
+    const tem_filhos = temFilhosBruto ? temFilhosBruto.toUpperCase() : 'NAO';
+
+    const quantidade_filhos = tem_filhos === 'SIM' && String(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos ?? '').trim() !== ''
+      ? Number(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos)
+      : null;
+
+    const filhos = tem_filhos === 'SIM'
+      ? JSON.stringify(Array.isArray(req.body?.filhos) ? req.body.filhos : [])
+      : null;
 
     if (!nome || !email || !perfil || !setor || !status) {
       return res.status(400).json({
@@ -1124,6 +1076,9 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
              TELEFONE = ?,
              PERFIL = ?,
              SETOR = ?,
+             FUNCAO = ?,
+             DATA_ADMISSAO = ?,
+             CENTRO_CUSTO = ?,
              LOCAL_TRABALHO = ?,
              STATUS = ?,
              CPF = ?,
@@ -1136,7 +1091,15 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
              ESTADO_CIVIL = ?,
              TELEFONE_PESSOAL = ?,
              EMAIL_PESSOAL = ?,
-             FOTO = ?
+             FOTO = ?,
+             APELIDO = ?,
+             NUMERO_CALCADO = ?,
+             TAMANHO_CAMISA = ?,
+             TAMANHO_CALCA = ?,
+             SEXO = ?,
+             TEM_FILHOS = ?,
+             QUANTIDADE_FILHOS = ?,
+             FILHOS = ?
        WHERE ID = ?
     `, [
       nome,
@@ -1144,19 +1107,30 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
       telefone || null,
       perfil,
       setor,
+      funcao || null,
+      data_admissao,
+      centro_custo || null,
       local_trabalho || null,
       status,
       cpf || null,
       rg || null,
       cnh || null,
       cnh_categoria || null,
-      cnh_validade || null,
+      cnh_validade,
       cnhArquivoFinal,
-      data_nascimento || null,
+      data_nascimento,
       estado_civil || null,
       telefone_pessoal || null,
       email_pessoal || null,
       fotoFinal,
+      apelido || null,
+      Number.isFinite(numero_calcado) ? numero_calcado : null,
+      tamanho_camisa || null,
+      tamanho_calca || null,
+      sexo || null,
+      tem_filhos,
+      Number.isFinite(quantidade_filhos) ? quantidade_filhos : null,
+      filhos,
       id
     ]);
 
@@ -1166,22 +1140,22 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
 
     if (foto === null && atual.FOTO) {
       const nomeArq = extrairNomeArquivoDeUrlPossivel(atual.FOTO);
-      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTA_FOTO_USUARIO, nomeArq));
+      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTAFOTOUSUARIO, nomeArq));
     }
 
     if (typeof foto === 'string' && foto.trim() && atual.FOTO && atual.FOTO !== foto.trim()) {
       const nomeArq = extrairNomeArquivoDeUrlPossivel(atual.FOTO);
-      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTA_FOTO_USUARIO, nomeArq));
+      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTAFOTOUSUARIO, nomeArq));
     }
 
     if (cnh_arquivo === null && atual.CNH_ARQUIVO) {
       const nomeArq = extrairNomeArquivoDeUrlPossivel(atual.CNH_ARQUIVO);
-      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTA_CNH_USUARIO, nomeArq));
+      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTACNHUSUARIO, nomeArq));
     }
 
     if (typeof cnh_arquivo === 'string' && cnh_arquivo.trim() && atual.CNH_ARQUIVO && atual.CNH_ARQUIVO !== cnh_arquivo.trim()) {
       const nomeArq = extrairNomeArquivoDeUrlPossivel(atual.CNH_ARQUIVO);
-      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTA_CNH_USUARIO, nomeArq));
+      if (nomeArq) await apagarArquivoSeExistir(path.join(PASTACNHUSUARIO, nomeArq));
     }
 
     res.json({ success: true, message: 'Usuário atualizado com sucesso.' });
@@ -1194,93 +1168,128 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
   }
 });
 
-app.patch('/api/gestao-usuarios/:id(\\d+)/foto', async (req, res) => {
+
+app.get('/api/gestao-usuarios', async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    const foto = req.body?.foto;
+    const busca = texto(req.query?.q);
 
-    if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID de usuário inválido.'
-      });
+    let sql = `
+      SELECT
+        ID,
+        NOME,
+        EMAIL,
+        TELEFONE,
+        PERFIL,
+        SETOR,
+        FUNCAO,
+        DATA_ADMISSAO AS DATAADMISSAO,
+        CENTRO_CUSTO AS LOCALTRABALHO,
+        LOCAL_TRABALHO AS UNIDADETRABALHO,
+        STATUS,
+        CPF,
+        RG,
+        CNH,
+        CNH_CATEGORIA AS CNHCATEGORIA,
+        CNH_VALIDADE AS CNHVALIDADE,
+        CNH_ARQUIVO AS CNHARQUIVO,
+        DATA_NASCIMENTO AS DATANASCIMENTO,
+        ESTADO_CIVIL AS ESTADOCIVIL,
+        TELEFONE_PESSOAL AS TELEFONEPESSOAL,
+        EMAIL_PESSOAL AS EMAILPESSOAL,
+        FOTO,
+        APELIDO,
+        NUMERO_CALCADO AS NUMEROCALCADO,
+        TAMANHO_CAMISA AS TAMANHOCAMISA,
+        TAMANHO_CALCA AS TAMANHOCALCA,
+        SEXO,
+        TEM_FILHOS AS TEMFILHOS,
+        QUANTIDADE_FILHOS AS QUANTIDADEFILHOS,
+        FILHOS
+      FROM SF_USUARIO
+    `;
+
+    const params = [];
+
+    if (busca) {
+      sql += `
+        WHERE
+          NOME LIKE ?
+          OR EMAIL LIKE ?
+          OR PERFIL LIKE ?
+          OR SETOR LIKE ?
+      `;
+      const like = `%${busca}%`;
+      params.push(like, like, like, like);
     }
 
-    const [rows] = await pool.query(
-      `SELECT ID, FOTO FROM SF_USUARIO WHERE ID = ? LIMIT 1`,
-      [id]
-    );
+    sql += ` ORDER BY NOME ASC`;
 
-    if (!rows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'Usuário não encontrado.'
-      });
-    }
-
-    const atual = rows[0];
-    let fotoFinal = atual.FOTO ?? null;
-
-    if (foto === null) {
-      fotoFinal = null;
-    } else if (typeof foto === 'string' && foto.trim() !== '') {
-      fotoFinal = foto.trim();
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe uma foto válida ou null para remover.'
-      });
-    }
-
-    const [result] = await pool.query(
-      `UPDATE SF_USUARIO SET FOTO = ? WHERE ID = ?`,
-      [fotoFinal, id]
-    );
-
-    if (result.affectedRows === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Usuário não encontrado.'
-      });
-    }
-
-    if (foto === null && atual.FOTO) {
-      const nomeArq = extrairNomeArquivoDeUrlPossivel(atual.FOTO);
-      if (nomeArq) {
-        await apagarArquivoSeExistir(path.join(PASTA_FOTO_USUARIO, nomeArq));
-      }
-    }
-
-    if (
-      typeof foto === 'string' &&
-      foto.trim() &&
-      atual.FOTO &&
-      atual.FOTO !== foto.trim()
-    ) {
-      const nomeArq = extrairNomeArquivoDeUrlPossivel(atual.FOTO);
-      if (nomeArq) {
-        await apagarArquivoSeExistir(path.join(PASTA_FOTO_USUARIO, nomeArq));
-      }
-    }
-
-    return res.json({
-      success: true,
-      message: 'Foto do usuário atualizada com sucesso.',
-      item: {
-        id,
-        foto: fotoFinal
-      }
-    });
+    const [rows] = await pool.query(sql, params);
+    res.json({ success: true, items: rows });
   } catch (err) {
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
-      message: 'Erro ao atualizar foto do usuário.',
+      message: 'Erro ao listar usuários.',
       error: err.message
     });
   }
 });
 
+app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
 
+    const [rows] = await pool.query(
+      `SELECT
+         ID,
+         NOME,
+         EMAIL,
+         TELEFONE,
+         PERFIL,
+         SETOR,
+         FUNCAO,
+         DATA_ADMISSAO AS DATAADMISSAO,
+         CENTRO_CUSTO AS LOCALTRABALHO,
+         LOCAL_TRABALHO AS UNIDADETRABALHO,
+         STATUS,
+         CPF,
+         RG,
+         CNH,
+         CNH_CATEGORIA AS CNHCATEGORIA,
+         CNH_VALIDADE AS CNHVALIDADE,
+         CNH_ARQUIVO AS CNHARQUIVO,
+         DATA_NASCIMENTO AS DATANASCIMENTO,
+         ESTADO_CIVIL AS ESTADOCIVIL,
+         TELEFONE_PESSOAL AS TELEFONEPESSOAL,
+         EMAIL_PESSOAL AS EMAILPESSOAL,
+         FOTO,
+         APELIDO,
+         NUMERO_CALCADO AS NUMEROCALCADO,
+         TAMANHO_CAMISA AS TAMANHOCAMISA,
+         TAMANHO_CALCA AS TAMANHOCALCA,
+         SEXO,
+         TEM_FILHOS AS TEMFILHOS,
+         QUANTIDADE_FILHOS AS QUANTIDADEFILHOS,
+         FILHOS
+       FROM SF_USUARIO
+       WHERE ID = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
+
+    res.json({ success: true, item: rows[0] });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar usuário.',
+      error: err.message
+    });
+  }
+});
 
 app.get('/api/setores', async (req, res) => {
   try {
@@ -1407,6 +1416,95 @@ app.delete('/api/gestao-usuarios/foto/:nome', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Erro ao remover foto.', error: err.message });
   }
 });
+
+app.get('/api/gestao-usuarios-funcoes', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ID, NOME
+      FROM SF_FUNCAO
+      WHERE NOME IS NOT NULL AND NOME <> ''
+      ORDER BY NOME ASC
+    `);
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar funções.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/gestao-usuarios-funcoes', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome da função é obrigatório.'
+      });
+    }
+
+    const [r] = await pool.query(`INSERT INTO SF_FUNCAO (NOME) VALUES (?)`, [nome]);
+
+    return res.status(201).json({
+      success: true,
+      item: { id: r.insertId, nome }
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao adicionar função.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT ID, NOME, ENDERECO, TELEFONE
+      FROM SF_LOCAL_TRABALHO
+      WHERE NOME IS NOT NULL AND NOME <> ''
+      ORDER BY NOME ASC
+    `);
+
+    res.json({ success: true, items: rows });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao listar unidades de trabalho.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/gestao-usuarios-locais-trabalho', async (req, res) => {
+  try {
+    const nome = titleCaseNome(req.body?.nome);
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome da unidade de trabalho é obrigatório.'
+      });
+    }
+
+    const [r] = await pool.query(`INSERT INTO SF_LOCAL_TRABALHO (NOME) VALUES (?)`, [nome]);
+
+    return res.status(201).json({
+      success: true,
+      item: { id: r.insertId, nome }
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao adicionar unidade de trabalho.',
+      error: err.message
+    });
+  }
+});
+
 
 // ======================================================
 // GESTÃO DE USUÁRIOS - APOIO CNH
@@ -1767,7 +1865,6 @@ app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) =
     });
   }
 });
-
 
 // REMOVER
 app.delete("/api/marketing/imagens/:nome", async (req, res) => {
@@ -2808,7 +2905,6 @@ app.post('/api/estoque/produtos-amarracao/adicionar', async (req, res) => {
   }
 });
 
-
 app.put('/api/estoque/produtos-amarracao/:id', async (req, res) => {
   const conn = await pool.getConnection();
 
@@ -3216,7 +3312,6 @@ app.post('/api/estoque/importacao-pdf/confirmar', async (req, res) => {
   }
 });
 
-
 app.get('/api/locais-almoxarifado', async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -3348,7 +3443,6 @@ app.get('/api/estoque/controle/escritorio', async (req, res) => {
     if (conn) conn.release();
   }
 });
-
 
 app.get('/api/estoque/produto-entrada/:produtoId', async (req, res) => {
   const conn = await pool.getConnection();
@@ -3617,7 +3711,7 @@ async function validarLocalCentrocusto(conn, idLocal) {
     SELECT
       l.ID,
       l.NOME
-    FROM SF_LOCAL_TRABALHO l
+    FROM SF_CENTRO_CUSTO l
     WHERE l.ID = ?
     LIMIT 1
     `,
@@ -3895,7 +3989,7 @@ app.get('/api/estoque/transferencias', async (req, res) => {
         ON p.id = t.ID_PRODUTO
       LEFT JOIN SF_LOCAL_ALMOXARIFADO lo
         ON lo.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO ld
+      LEFT JOIN SF_CENTRO_CUSTO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID_PRODUTO = ?
         AND t.ID_LOCAL_ORIGEM = ?
@@ -4468,7 +4562,7 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
         t.*,
         ld.NOME AS LOCAL_DESTINO_NOME
       FROM SF_ESTOQUE_TRANSFERENCIA t
-      LEFT JOIN SF_LOCAL_TRABALHO ld
+      LEFT JOIN SF_CENTRO_CUSTO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID = ?
       LIMIT 1
@@ -4635,7 +4729,7 @@ app.post('/api/estoque/transferencias/:id/recusa', async (req, res) => {
         t.*,
         ld.NOME AS LOCAL_DESTINO_NOME
       FROM SF_ESTOQUE_TRANSFERENCIA t
-      LEFT JOIN SF_LOCAL_TRABALHO ld
+      LEFT JOIN SF_CENTRO_CUSTO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID = ?
       LIMIT 1
@@ -4817,7 +4911,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
     const [rowsCentro] = await conn.query(
       `
       SELECT ID, NOME
-      FROM SF_LOCAL_TRABALHO
+      FROM SF_CENTRO_CUSTO
       WHERE UPPER(TRIM(NOME)) = ?
       LIMIT 1
       `,
@@ -4863,9 +4957,9 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
         ON p.id = t.ID_PRODUTO
       LEFT JOIN SF_LOCAL_ALMOXARIFADO loa
         ON loa.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO lot
+      LEFT JOIN SF_CENTRO_CUSTO lot
         ON lot.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO ld
+      LEFT JOIN SF_CENTRO_CUSTO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID_LOCAL_DESTINO = ?
         AND t.STATUS_TRANSFERENCIA IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
@@ -4920,7 +5014,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       ) pend ON pend.ID_PRODUTO = p.id
       CROSS JOIN (
         SELECT ID, NOME
-        FROM SF_LOCAL_TRABALHO
+        FROM SF_CENTRO_CUSTO
         WHERE ID = ?
       ) centro
       WHERE EXISTS (
@@ -4953,12 +5047,11 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
   }
 });
 
-
 app.get('/api/locais-centrocusto', async (req, res) => {
   try {
     const [rows] = await pool.query(`
       SELECT ID, NOME
-      FROM SF_LOCAL_TRABALHO
+      FROM SF_CENTRO_CUSTO
       ORDER BY NOME ASC
     `);
 
@@ -4978,7 +5071,7 @@ app.post('/api/locais-centrocusto', async (req, res) => {
     }
 
     const [existente] = await pool.query(
-      `SELECT ID FROM SF_LOCAL_TRABALHO WHERE UPPER(NOME) = ? LIMIT 1`,
+      `SELECT ID FROM SF_CENTRO_CUSTO WHERE UPPER(NOME) = ? LIMIT 1`,
       [nome]
     );
 
@@ -4987,7 +5080,7 @@ app.post('/api/locais-centrocusto', async (req, res) => {
     }
 
     const [result] = await pool.query(
-      `INSERT INTO SF_LOCAL_TRABALHO (NOME) VALUES (?)`,
+      `INSERT INTO SF_CENTRO_CUSTO (NOME) VALUES (?)`,
       [nome]
     );
 
@@ -5159,9 +5252,9 @@ app.get('/api/estoque/centro-custo/transferencias', async (req, res) => {
       FROM SF_ESTOQUE_TRANSFERENCIA t
       INNER JOIN SF_PRODUTOS p
         ON p.id = t.ID_PRODUTO
-      LEFT JOIN SF_LOCAL_TRABALHO lo
+      LEFT JOIN SF_CENTRO_CUSTO lo
         ON lo.ID = t.ID_LOCAL_ORIGEM
-      LEFT JOIN SF_LOCAL_TRABALHO ld
+      LEFT JOIN SF_CENTRO_CUSTO ld
         ON ld.ID = t.ID_LOCAL_DESTINO
       WHERE t.ID_PRODUTO = ?
         AND t.ID_LOCAL_ORIGEM = ?
@@ -6528,6 +6621,428 @@ app.get('/api/clima-links', async (req, res) => {
     res.status(500).json({ success: false, message: 'Erro ao listar links de clima.', error: err.message });
   }
 });
+
+// RESERVAR CARRO
+
+app.get('/api/local-trabalho', async (req, res) => {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(`
+      SELECT
+        id,
+        nome
+      FROM SF_LOCAL_TRABALHO
+      ORDER BY nome
+    `);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+
+  } catch (err) {
+    console.error('Erro ao listar locais de trabalho:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar locais de trabalho.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+function datetimeLocalToMysql(v) {
+  const s = String(v || '').trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+
+  if (!m) return null;
+
+  const [, ano, mes, dia, hora, minuto, segundo = '00'] = m;
+  return `${ano}-${mes}-${dia} ${hora}:${minuto}:${segundo}`;
+}
+
+app.post('/api/reservas-carro', async (req, res) => {
+  let conn;
+
+  try {
+    const {
+      tipoVeiculo,
+      dataNecessaria,
+      previsaoDevolucao,
+      destinos,
+      observacoes,
+      urgencia,
+      usuarioSolicitante
+    } = req.body || {};
+
+    if (!tipoVeiculo || !dataNecessaria || !previsaoDevolucao || !urgencia || !usuarioSolicitante) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe tipoVeiculo, dataNecessaria, previsaoDevolucao, urgencia e usuarioSolicitante.'
+      });
+    }
+
+    if (!Array.isArray(destinos) || !destinos.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selecione pelo menos um destino.'
+      });
+    }
+
+    const dataNecessariaMysql = datetimeLocalToMysql(dataNecessaria);
+    const previsaoDevolucaoMysql = datetimeLocalToMysql(previsaoDevolucao);
+
+    if (!dataNecessariaMysql || !previsaoDevolucaoMysql) {
+      return res.status(400).json({
+        success: false,
+        message: 'Data necessária ou previsão de devolução inválida.'
+      });
+    }
+
+    if (previsaoDevolucaoMysql <= dataNecessariaMysql) {
+      return res.status(400).json({
+        success: false,
+        message: 'A previsão de devolução deve ser maior que a data necessária.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+    await conn.beginTransaction();
+
+    const [insertReserva] = await conn.query(`
+      INSERT INTO SF_RESERVA_CARRO (
+        tipo_veiculo,
+        data_necessaria,
+        previsao_devolucao,
+        urgencia,
+        observacoes,
+        usuario_solicitante
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      String(tipoVeiculo).trim().toUpperCase(),
+      dataNecessariaMysql,
+      previsaoDevolucaoMysql,
+      String(urgencia).trim().toUpperCase(),
+      observacoes ? String(observacoes).trim() : null,
+      String(usuarioSolicitante).trim()
+    ]);
+
+    const reservaId = Number(insertReserva.insertId);
+
+    for (const idDestinoRaw of destinos) {
+      const idDestino = Number(idDestinoRaw);
+
+      if (!idDestino) {
+        throw new Error('Foi encontrado um destino inválido na solicitação.');
+      }
+
+      await conn.query(`
+        INSERT INTO SF_RESERVA_CARRO_DESTINO (
+          reserva_id,
+          local_trabalho_id
+        ) VALUES (?, ?)
+      `, [reservaId, idDestino]);
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Solicitação de reserva de carro salva com sucesso.',
+      reservaId
+    });
+
+  } catch (err) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao salvar reserva de carro:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao salvar reserva de carro.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/reservas-carro', async (req, res) => {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(`
+      SELECT
+        rc.id,
+        rc.tipo_veiculo,
+        rc.data_necessaria,
+        rc.previsao_devolucao,
+        rc.urgencia,
+        rc.observacoes,
+        rc.usuario_solicitante,
+        rc.data_solicitacao,
+        rc.status_solicitacao,
+        GROUP_CONCAT(lt.nome ORDER BY lt.nome SEPARATOR ' | ') AS destinos
+      FROM SF_RESERVA_CARRO rc
+      LEFT JOIN SF_RESERVA_CARRO_DESTINO rcd
+        ON rcd.reserva_id = rc.id
+      LEFT JOIN SF_LOCAL_TRABALHO lt
+        ON lt.id = rcd.local_trabalho_id
+      GROUP BY
+        rc.id,
+        rc.tipo_veiculo,
+        rc.data_necessaria,
+        rc.previsao_devolucao,
+        rc.urgencia,
+        rc.observacoes,
+        rc.usuario_solicitante,
+        rc.data_solicitacao,
+        rc.status_solicitacao
+      ORDER BY rc.id DESC
+    `);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+
+  } catch (err) {
+    console.error('Erro ao listar reservas de carro:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar reservas de carro.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/reservas-carro/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idReserva = Number(req.params.id);
+
+    if (!idReserva) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um id de reserva válido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [rowsReserva] = await conn.query(`
+      SELECT
+        id,
+        tipo_veiculo,
+        data_necessaria,
+        previsao_devolucao,
+        urgencia,
+        observacoes,
+        usuario_solicitante,
+        data_solicitacao,
+        status_solicitacao
+      FROM SF_RESERVA_CARRO
+      WHERE id = ?
+      LIMIT 1
+    `, [idReserva]);
+
+    const reserva = rowsReserva?.[0];
+    if (!reserva) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reserva não encontrada.'
+      });
+    }
+
+    const [rowsDestinos] = await conn.query(`
+      SELECT
+        lt.id,
+        lt.nome
+      FROM SF_RESERVA_CARRO_DESTINO rcd
+      INNER JOIN SF_LOCAL_TRABALHO lt
+        ON lt.id = rcd.local_trabalho_id
+      WHERE rcd.reserva_id = ?
+      ORDER BY lt.nome
+    `, [idReserva]);
+
+    return res.json({
+      success: true,
+      item: {
+        ...reserva,
+        destinos: rowsDestinos
+      }
+    });
+
+  } catch (err) {
+    console.error('Erro ao buscar reserva de carro:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar reserva de carro.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.put('/api/reservas-carro/:id/status', async (req, res) => {
+  let conn;
+
+  try {
+    const idReserva = Number(req.params.id);
+    const status = String(req.body?.status || '').trim().toUpperCase();
+
+    if (!idReserva) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um id de reserva válido.'
+      });
+    }
+
+    const statusPermitidos = ['PENDENTE', 'APROVADA', 'RECUSADA', 'CANCELADA', 'CONCLUIDA'];
+    if (!statusPermitidos.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status inválido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [result] = await conn.query(`
+      UPDATE SF_RESERVA_CARRO
+      SET status_solicitacao = ?
+      WHERE id = ?
+    `, [status, idReserva]);
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reserva não encontrada.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Status da reserva atualizado com sucesso.'
+    });
+
+  } catch (err) {
+    console.error('Erro ao atualizar status da reserva:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar status da reserva.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/clima-links', async (req, res) => {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(`
+      SELECT id, titulo, url, icone
+      FROM SF_CLIMA_LINKS
+      ORDER BY id
+    `);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+
+  } catch (err) {
+    console.error('Erro api/clima-links:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar links de clima.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/reservas-carro/usuario/:usuarioSolicitante', async (req, res) => {
+  let conn;
+
+  try {
+    const usuarioSolicitante = String(req.params.usuarioSolicitante || '').trim();
+
+    if (!usuarioSolicitante) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o usuário solicitante.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(`
+      SELECT
+        rc.id,
+        rc.tipo_veiculo,
+        rc.data_necessaria,
+        rc.previsao_devolucao,
+        rc.urgencia,
+        rc.observacoes,
+        rc.usuario_solicitante,
+        rc.data_solicitacao,
+        rc.status_solicitacao,
+        GROUP_CONCAT(lt.nome ORDER BY lt.nome SEPARATOR ' | ') AS destinos
+      FROM SF_RESERVA_CARRO rc
+      LEFT JOIN SF_RESERVA_CARRO_DESTINO rcd
+        ON rcd.reserva_id = rc.id
+      LEFT JOIN SF_LOCAL_TRABALHO lt
+        ON lt.id = rcd.local_trabalho_id
+      WHERE UPPER(TRIM(rc.usuario_solicitante)) = UPPER(TRIM(?))
+      GROUP BY
+        rc.id,
+        rc.tipo_veiculo,
+        rc.data_necessaria,
+        rc.previsao_devolucao,
+        rc.urgencia,
+        rc.observacoes,
+        rc.usuario_solicitante,
+        rc.data_solicitacao,
+        rc.status_solicitacao
+      ORDER BY rc.id DESC
+    `, [usuarioSolicitante]);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+
+  } catch (err) {
+    console.error('Erro ao listar agendamentos do usuário:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar agendamentos do usuário.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
 
 
 // =====================
