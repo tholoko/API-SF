@@ -1951,7 +1951,20 @@ app.post('/api/marketing/cards', upload.single('file'), async (req, res) => {
 app.get('/api/marketing/painel', async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT *
+      SELECT
+        ID,
+        TITULO,
+        DESCRICAO,
+        CARD,
+        URL,
+        ATIVO,
+        EXIBIR_NO_PAINEL AS EXIBIRNOPAINEL,
+        DATA_INICIO AS DATAINICIO,
+        DATA_FIM AS DATAFIM,
+        RECORRENCIA,
+        APENAS_UMA_VEZ AS APENASUMAVEZ,
+        ULTIMA_EXIBICAO_EM AS ULTIMAEXIBICAOEM,
+        ORDEM
       FROM SF_MARKETING_IMAGEM
       WHERE ATIVO = 1
         AND EXIBIR_NO_PAINEL = 1
@@ -1965,57 +1978,58 @@ app.get('/api/marketing/painel', async (req, res) => {
     const hojeStr = `${yyyy}-${mm}-${dd}`;
 
     const ativos = rows.filter(item => {
-      const inicio = item.DATA_INICIO ? String(item.DATA_INICIO).slice(0, 10) : null;
-      const fim = item.DATA_FIM ? String(item.DATA_FIM).slice(0, 10) : null;
-      const rec = String(item.RECORRENCIA || 'once').toLowerCase().trim();
-      const apenasUmaVez = Number(item.APENAS_UMA_VEZ || 0) === 1;
-      const jaExibido = !!item.ULTIMA_EXIBICAO_EM;
+    const inicio = toDateOnly(item.DATAINICIO);
+    const fim = toDateOnly(item.DATAFIM);
+    const rec = String(item.RECORRENCIA || 'once').toLowerCase().trim();
+    const apenasUmaVez = Number(item.APENASUMAVEZ || 0) === 1;
+    const jaExibido = !!item.ULTIMAEXIBICAOEM;
 
-      if (inicio && hojeStr < inicio) return false;
-      if (fim && hojeStr > fim) return false;
-
-      if (rec === 'always') {
-        return true;
-      }
-
-      if (rec === 'daily') {
-        return !apenasUmaVez || !jaExibido;
-      }
-
-      if (rec === 'once') {
-        if (!inicio) return true;
-        if (hojeStr !== inicio) return false;
-        return !apenasUmaVez || !jaExibido;
-      }
-
-      if (rec === 'monthly') {
-        if (!inicio) return false;
-        const [, , diaI] = inicio.split('-').map(Number);
-        if (Number(dd) !== diaI) return false;
-        return !apenasUmaVez || !jaExibido;
-      }
-
-      if (rec === 'yearly') {
-        if (!inicio) return false;
-        const [, mesI, diaI] = inicio.split('-').map(Number);
-        if (Number(dd) !== diaI || Number(mm) !== mesI) return false;
-        return !apenasUmaVez || !jaExibido;
-      }
-
-      return false;
+    console.log('[MARKETING/FILTER]', {
+      id: item.ID,
+      inicio,
+      fim,
+      hojeStr,
+      rec,
+      apenasUmaVez,
+      jaExibido
     });
 
+    if (inicio && hojeStr < inicio) return false;
+    if (fim && hojeStr > fim) return false;
+
+    if (rec === 'always') return true;
+
+    if (rec === 'daily') {
+      return !apenasUmaVez || !jaExibido;
+    }
+
+    if (rec === 'once') {
+      if (!inicio) return true;
+      if (hojeStr !== inicio) return false;
+      return !apenasUmaVez || !jaExibido;
+    }
+
+    if (rec === 'monthly') {
+      if (!inicio) return false;
+      const [, , diaI] = inicio.split('-').map(Number);
+      if (Number(dd) !== diaI) return false;
+      return !apenasUmaVez || !jaExibido;
+    }
+
+    if (rec === 'yearly') {
+      if (!inicio) return false;
+      const [, mesI, diaI] = inicio.split('-').map(Number);
+      if (Number(dd) !== diaI || Number(mm) !== mesI) return false;
+      return !apenasUmaVez || !jaExibido;
+    }
+
+    return false;
+  });
+
+
+    console.log('[MARKETING/PAINEL] rows=', rows);
     console.log('[MARKETING/PAINEL] hoje=', hojeStr);
-    console.log('[MARKETING/PAINEL] ativos=', ativos.map(x => ({
-      id: x.ID,
-      titulo: x.TITULO,
-      url: x.URL,
-      inicio: x.DATA_INICIO,
-      fim: x.DATA_FIM,
-      recorrencia: x.RECORRENCIA,
-      apenasUmaVez: x.APENAS_UMA_VEZ,
-      ultimaExibicao: x.ULTIMA_EXIBICAO_EM
-    })));
+    console.log('[MARKETING/PAINEL] ativos=', ativos);
 
     return res.json({
       success: true,
@@ -2026,10 +2040,11 @@ app.get('/api/marketing/painel', async (req, res) => {
         card: item.CARD,
         url: item.URL,
         recorrencia: item.RECORRENCIA,
-        apenasUmaVez: Number(item.APENAS_UMA_VEZ || 0)
+        apenasUmaVez: Number(item.APENASUMAVEZ || 0)
       }))
     });
   } catch (err) {
+    console.error('Erro /api/marketing/painel:', err);
     return res.status(500).json({
       success: false,
       message: 'Erro ao listar cards do painel.',
@@ -2038,6 +2053,30 @@ app.get('/api/marketing/painel', async (req, res) => {
   }
 });
 
+function toDateOnly(value) {
+  if (!value) return null;
+
+  if (value instanceof Date) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  const s = String(value).trim();
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
+
+  const dt = new Date(s);
+  if (!Number.isNaN(dt.getTime())) {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  return null;
+}
 
 app.get('/api/marketing/cards', async (req, res) => {
   try {
