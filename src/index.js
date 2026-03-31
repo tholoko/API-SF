@@ -8345,7 +8345,6 @@ app.get('/api/veiculos', async (req, res) => {
 
   try {
     conn = await pool.getConnection();
-    await conn.query("SET time_zone = '-03:00'");
 
     const [rows] = await conn.query(`
       SELECT
@@ -8354,13 +8353,13 @@ app.get('/api/veiculos', async (req, res) => {
         modelo,
         marca,
         cor,
+        ano,
         km_atual,
         status_veiculo,
         ativo,
-        usuario_cadastro,
-        data_cadastro,
-        usuario_atualizacao,
-        data_atualizacao
+        observacoes,
+        created_at,
+        updated_at
       FROM SF_VEICULOS
       ORDER BY ativo DESC, modelo ASC, placa ASC
     `);
@@ -8395,7 +8394,6 @@ app.get('/api/veiculos/:id', async (req, res) => {
     }
 
     conn = await pool.getConnection();
-    await conn.query("SET time_zone = '-03:00'");
 
     const [rows] = await conn.query(`
       SELECT
@@ -8404,13 +8402,13 @@ app.get('/api/veiculos/:id', async (req, res) => {
         modelo,
         marca,
         cor,
+        ano,
         km_atual,
         status_veiculo,
         ativo,
-        usuario_cadastro,
-        data_cadastro,
-        usuario_atualizacao,
-        data_atualizacao
+        observacoes,
+        created_at,
+        updated_at
       FROM SF_VEICULOS
       WHERE id = ?
       LIMIT 1
@@ -8445,27 +8443,19 @@ app.post('/api/veiculos', async (req, res) => {
   let conn;
 
   try {
-    const modelo = normalizarTextoVeiculos(req.body?.modelo);
     const placa = normalizarTextoVeiculosUpper(req.body?.placa).replace(/[^A-Z0-9]/g, '');
+    const modelo = normalizarTextoVeiculos(req.body?.modelo);
     const marca = normalizarTextoVeiculos(req.body?.marca);
     const cor = normalizarTextoVeiculos(req.body?.cor);
+    const ano = req.body?.ano !== undefined && req.body?.ano !== null && req.body?.ano !== ''
+      ? Number(req.body.ano)
+      : null;
     const kmAtual = req.body?.kmAtual !== undefined && req.body?.kmAtual !== null && req.body?.kmAtual !== ''
       ? Number(req.body.kmAtual)
-      : 0;
+      : null;
     const statusVeiculo = normalizarStatusVeiculo(req.body?.statusVeiculo);
     const ativo = Number(req.body?.ativo ?? 1) === 1 ? 1 : 0;
-    const usuarioCadastro = normalizarTextoVeiculos(
-      req.body?.usuarioCadastro ||
-      req.headers['x-usuario'] ||
-      req.headers['x-user']
-    );
-
-    if (!modelo) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe o modelo do veículo.'
-      });
-    }
+    const observacoes = normalizarTextoVeiculos(req.body?.observacoes);
 
     if (!placa) {
       return res.status(400).json({
@@ -8474,7 +8464,21 @@ app.post('/api/veiculos', async (req, res) => {
       });
     }
 
-    if (!Number.isFinite(kmAtual) || kmAtual < 0) {
+    if (!modelo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o modelo do veículo.'
+      });
+    }
+
+    if (ano !== null && (!Number.isInteger(ano) || ano < 1900 || ano > 2100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um ano válido.'
+      });
+    }
+
+    if (kmAtual !== null && (!Number.isFinite(kmAtual) || kmAtual < 0)) {
       return res.status(400).json({
         success: false,
         message: 'Informe uma quilometragem válida.'
@@ -8489,7 +8493,6 @@ app.post('/api/veiculos', async (req, res) => {
     }
 
     conn = await pool.getConnection();
-    await conn.query("SET time_zone = '-03:00'");
     await conn.beginTransaction();
 
     const [rowsPlaca] = await conn.query(`
@@ -8513,24 +8516,22 @@ app.post('/api/veiculos', async (req, res) => {
         modelo,
         marca,
         cor,
+        ano,
         km_atual,
         status_veiculo,
         ativo,
-        usuario_cadastro,
-        data_cadastro,
-        usuario_atualizacao,
-        data_atualizacao
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, NOW())
+        observacoes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       placa,
       modelo,
       marca || null,
       cor || null,
+      ano,
       kmAtual,
       statusVeiculo,
       ativo,
-      usuarioCadastro || null,
-      usuarioCadastro || null
+      observacoes || null
     ]);
 
     await conn.commit();
@@ -8561,32 +8562,24 @@ app.put('/api/veiculos/:id', async (req, res) => {
 
   try {
     const idVeiculo = Number(req.params.id);
-    const modelo = normalizarTextoVeiculos(req.body?.modelo);
     const placa = normalizarTextoVeiculosUpper(req.body?.placa).replace(/[^A-Z0-9]/g, '');
+    const modelo = normalizarTextoVeiculos(req.body?.modelo);
     const marca = normalizarTextoVeiculos(req.body?.marca);
     const cor = normalizarTextoVeiculos(req.body?.cor);
+    const ano = req.body?.ano !== undefined && req.body?.ano !== null && req.body?.ano !== ''
+      ? Number(req.body.ano)
+      : null;
     const kmAtual = req.body?.kmAtual !== undefined && req.body?.kmAtual !== null && req.body?.kmAtual !== ''
       ? Number(req.body.kmAtual)
-      : 0;
+      : null;
     const statusVeiculo = normalizarStatusVeiculo(req.body?.statusVeiculo);
     const ativo = Number(req.body?.ativo ?? 1) === 1 ? 1 : 0;
-    const usuarioAtualizacao = normalizarTextoVeiculos(
-      req.body?.usuarioAtualizacao ||
-      req.headers['x-usuario'] ||
-      req.headers['x-user']
-    );
+    const observacoes = normalizarTextoVeiculos(req.body?.observacoes);
 
     if (!idVeiculo) {
       return res.status(400).json({
         success: false,
         message: 'Informe um id de veículo válido.'
-      });
-    }
-
-    if (!modelo) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe o modelo do veículo.'
       });
     }
 
@@ -8597,7 +8590,21 @@ app.put('/api/veiculos/:id', async (req, res) => {
       });
     }
 
-    if (!Number.isFinite(kmAtual) || kmAtual < 0) {
+    if (!modelo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o modelo do veículo.'
+      });
+    }
+
+    if (ano !== null && (!Number.isInteger(ano) || ano < 1900 || ano > 2100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um ano válido.'
+      });
+    }
+
+    if (kmAtual !== null && (!Number.isFinite(kmAtual) || kmAtual < 0)) {
       return res.status(400).json({
         success: false,
         message: 'Informe uma quilometragem válida.'
@@ -8612,19 +8619,16 @@ app.put('/api/veiculos/:id', async (req, res) => {
     }
 
     conn = await pool.getConnection();
-    await conn.query("SET time_zone = '-03:00'");
     await conn.beginTransaction();
 
     const [rowsExistente] = await conn.query(`
-      SELECT id, status_veiculo
+      SELECT id
       FROM SF_VEICULOS
       WHERE id = ?
       LIMIT 1
     `, [idVeiculo]);
 
-    const veiculoAtual = rowsExistente?.[0];
-
-    if (!veiculoAtual) {
+    if (!rowsExistente.length) {
       await conn.rollback();
       return res.status(404).json({
         success: false,
@@ -8648,25 +8652,6 @@ app.put('/api/veiculos/:id', async (req, res) => {
       });
     }
 
-    if (statusVeiculo === 'DISPONIVEL') {
-      const [rowsReservaAberta] = await conn.query(`
-        SELECT id
-        FROM SF_RESERVA_CARRO
-        WHERE veiculo_id = ?
-          AND UPPER(TRIM(status_solicitacao)) = 'APROVADA'
-          AND previsao_devolucao >= NOW()
-        LIMIT 1
-      `, [idVeiculo]);
-
-      if (rowsReservaAberta.length) {
-        await conn.rollback();
-        return res.status(400).json({
-          success: false,
-          message: 'Este veículo possui uma reserva aprovada em aberto e não pode ficar como disponível agora.'
-        });
-      }
-    }
-
     await conn.query(`
       UPDATE SF_VEICULOS
       SET
@@ -8674,21 +8659,22 @@ app.put('/api/veiculos/:id', async (req, res) => {
         modelo = ?,
         marca = ?,
         cor = ?,
+        ano = ?,
         km_atual = ?,
         status_veiculo = ?,
         ativo = ?,
-        usuario_atualizacao = ?,
-        data_atualizacao = NOW()
+        observacoes = ?
       WHERE id = ?
     `, [
       placa,
       modelo,
       marca || null,
       cor || null,
+      ano,
       kmAtual,
       statusVeiculo,
       ativo,
-      usuarioAtualizacao || null,
+      observacoes || null,
       idVeiculo
     ]);
 
@@ -8719,11 +8705,6 @@ app.delete('/api/veiculos/:id', async (req, res) => {
 
   try {
     const idVeiculo = Number(req.params.id);
-    const usuarioExclusao = normalizarTextoVeiculos(
-      req.body?.usuarioExclusao ||
-      req.headers['x-usuario'] ||
-      req.headers['x-user']
-    );
 
     if (!idVeiculo) {
       return res.status(400).json({
@@ -8733,7 +8714,6 @@ app.delete('/api/veiculos/:id', async (req, res) => {
     }
 
     conn = await pool.getConnection();
-    await conn.query("SET time_zone = '-03:00'");
     await conn.beginTransaction();
 
     const [rowsVeiculo] = await conn.query(`
@@ -8741,8 +8721,7 @@ app.delete('/api/veiculos/:id', async (req, res) => {
         id,
         modelo,
         placa,
-        status_veiculo,
-        ativo
+        status_veiculo
       FROM SF_VEICULOS
       WHERE id = ?
       LIMIT 1
@@ -8788,8 +8767,7 @@ app.delete('/api/veiculos/:id', async (req, res) => {
       item: {
         id: veiculo.id,
         modelo: veiculo.modelo,
-        placa: veiculo.placa,
-        usuarioExclusao: usuarioExclusao || null
+        placa: veiculo.placa
       }
     });
   } catch (err) {
