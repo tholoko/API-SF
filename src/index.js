@@ -8183,10 +8183,6 @@ app.get('/api/permissoes/aprovar-reserva-carro/:usuarioId', async (req, res) => 
 // Cadastro de Veiculos e Utilização de Veículos
 
 
-function normalizarTexto(v) {
-  return String(v ?? '').trim();
-}
-
 function normalizarStatusReserva(status) {
   return String(status ?? '').trim().toUpperCase();
 }
