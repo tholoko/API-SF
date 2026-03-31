@@ -8319,6 +8319,494 @@ app.get('/api/reservas-carro/:id/veiculos-disponiveis', async (req, res) => {
   }
 });
 
+function normalizarTextoVeiculos(value) {
+  return String(value ?? '').trim();
+}
+
+function normalizarTextoVeiculosUpper(value) {
+  return normalizarTextoVeiculos(value).toUpperCase();
+}
+
+function normalizarStatusVeiculo(value) {
+  const status = normalizarTextoVeiculosUpper(value)
+    .replace(/\s+/g, '_')
+    .replace(/[^A-Z_]/g, '');
+
+  if (status === 'EMUSO') return 'EM_USO';
+  if (status === 'EM_USO') return 'EM_USO';
+  if (status === 'MANUTENCAO') return 'MANUTENCAO';
+  if (status === 'DISPONIVEL') return 'DISPONIVEL';
+
+  return status || 'DISPONIVEL';
+}
+
+app.get('/api/veiculos', async (req, res) => {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+
+    const [rows] = await conn.query(`
+      SELECT
+        id,
+        placa,
+        modelo,
+        marca,
+        cor,
+        km_atual,
+        status_veiculo,
+        ativo,
+        usuario_cadastro,
+        data_cadastro,
+        usuario_atualizacao,
+        data_atualizacao
+      FROM SF_VEICULOS
+      ORDER BY ativo DESC, modelo ASC, placa ASC
+    `);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar veículos:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar veículos.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/veiculos/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idVeiculo = Number(req.params.id);
+
+    if (!idVeiculo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um id de veículo válido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+
+    const [rows] = await conn.query(`
+      SELECT
+        id,
+        placa,
+        modelo,
+        marca,
+        cor,
+        km_atual,
+        status_veiculo,
+        ativo,
+        usuario_cadastro,
+        data_cadastro,
+        usuario_atualizacao,
+        data_atualizacao
+      FROM SF_VEICULOS
+      WHERE id = ?
+      LIMIT 1
+    `, [idVeiculo]);
+
+    const item = rows?.[0];
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: 'Veículo não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item
+    });
+  } catch (err) {
+    console.error('Erro ao buscar veículo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar veículo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/veiculos', async (req, res) => {
+  let conn;
+
+  try {
+    const modelo = normalizarTextoVeiculos(req.body?.modelo);
+    const placa = normalizarTextoVeiculosUpper(req.body?.placa).replace(/[^A-Z0-9]/g, '');
+    const marca = normalizarTextoVeiculos(req.body?.marca);
+    const cor = normalizarTextoVeiculos(req.body?.cor);
+    const kmAtual = req.body?.kmAtual !== undefined && req.body?.kmAtual !== null && req.body?.kmAtual !== ''
+      ? Number(req.body.kmAtual)
+      : 0;
+    const statusVeiculo = normalizarStatusVeiculo(req.body?.statusVeiculo);
+    const ativo = Number(req.body?.ativo ?? 1) === 1 ? 1 : 0;
+    const usuarioCadastro = normalizarTextoVeiculos(
+      req.body?.usuarioCadastro ||
+      req.headers['x-usuario'] ||
+      req.headers['x-user']
+    );
+
+    if (!modelo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o modelo do veículo.'
+      });
+    }
+
+    if (!placa) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a placa do veículo.'
+      });
+    }
+
+    if (!Number.isFinite(kmAtual) || kmAtual < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quilometragem válida.'
+      });
+    }
+
+    if (!['DISPONIVEL', 'EM_USO', 'MANUTENCAO'].includes(statusVeiculo)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status do veículo inválido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+    await conn.beginTransaction();
+
+    const [rowsPlaca] = await conn.query(`
+      SELECT id
+      FROM SF_VEICULOS
+      WHERE UPPER(REPLACE(TRIM(placa), '-', '')) = ?
+      LIMIT 1
+    `, [placa]);
+
+    if (rowsPlaca.length) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Já existe um veículo cadastrado com esta placa.'
+      });
+    }
+
+    const [result] = await conn.query(`
+      INSERT INTO SF_VEICULOS (
+        placa,
+        modelo,
+        marca,
+        cor,
+        km_atual,
+        status_veiculo,
+        ativo,
+        usuario_cadastro,
+        data_cadastro,
+        usuario_atualizacao,
+        data_atualizacao
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, NOW())
+    `, [
+      placa,
+      modelo,
+      marca || null,
+      cor || null,
+      kmAtual,
+      statusVeiculo,
+      ativo,
+      usuarioCadastro || null,
+      usuarioCadastro || null
+    ]);
+
+    await conn.commit();
+
+    return res.status(201).json({
+      success: true,
+      message: 'Veículo cadastrado com sucesso.',
+      id: result.insertId
+    });
+  } catch (err) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao cadastrar veículo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao cadastrar veículo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.put('/api/veiculos/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idVeiculo = Number(req.params.id);
+    const modelo = normalizarTextoVeiculos(req.body?.modelo);
+    const placa = normalizarTextoVeiculosUpper(req.body?.placa).replace(/[^A-Z0-9]/g, '');
+    const marca = normalizarTextoVeiculos(req.body?.marca);
+    const cor = normalizarTextoVeiculos(req.body?.cor);
+    const kmAtual = req.body?.kmAtual !== undefined && req.body?.kmAtual !== null && req.body?.kmAtual !== ''
+      ? Number(req.body.kmAtual)
+      : 0;
+    const statusVeiculo = normalizarStatusVeiculo(req.body?.statusVeiculo);
+    const ativo = Number(req.body?.ativo ?? 1) === 1 ? 1 : 0;
+    const usuarioAtualizacao = normalizarTextoVeiculos(
+      req.body?.usuarioAtualizacao ||
+      req.headers['x-usuario'] ||
+      req.headers['x-user']
+    );
+
+    if (!idVeiculo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um id de veículo válido.'
+      });
+    }
+
+    if (!modelo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o modelo do veículo.'
+      });
+    }
+
+    if (!placa) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a placa do veículo.'
+      });
+    }
+
+    if (!Number.isFinite(kmAtual) || kmAtual < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quilometragem válida.'
+      });
+    }
+
+    if (!['DISPONIVEL', 'EM_USO', 'MANUTENCAO'].includes(statusVeiculo)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status do veículo inválido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+    await conn.beginTransaction();
+
+    const [rowsExistente] = await conn.query(`
+      SELECT id, status_veiculo
+      FROM SF_VEICULOS
+      WHERE id = ?
+      LIMIT 1
+    `, [idVeiculo]);
+
+    const veiculoAtual = rowsExistente?.[0];
+
+    if (!veiculoAtual) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Veículo não encontrado.'
+      });
+    }
+
+    const [rowsPlaca] = await conn.query(`
+      SELECT id
+      FROM SF_VEICULOS
+      WHERE UPPER(REPLACE(TRIM(placa), '-', '')) = ?
+        AND id <> ?
+      LIMIT 1
+    `, [placa, idVeiculo]);
+
+    if (rowsPlaca.length) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Já existe outro veículo cadastrado com esta placa.'
+      });
+    }
+
+    if (statusVeiculo === 'DISPONIVEL') {
+      const [rowsReservaAberta] = await conn.query(`
+        SELECT id
+        FROM SF_RESERVA_CARRO
+        WHERE veiculo_id = ?
+          AND UPPER(TRIM(status_solicitacao)) = 'APROVADA'
+          AND previsao_devolucao >= NOW()
+        LIMIT 1
+      `, [idVeiculo]);
+
+      if (rowsReservaAberta.length) {
+        await conn.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Este veículo possui uma reserva aprovada em aberto e não pode ficar como disponível agora.'
+        });
+      }
+    }
+
+    await conn.query(`
+      UPDATE SF_VEICULOS
+      SET
+        placa = ?,
+        modelo = ?,
+        marca = ?,
+        cor = ?,
+        km_atual = ?,
+        status_veiculo = ?,
+        ativo = ?,
+        usuario_atualizacao = ?,
+        data_atualizacao = NOW()
+      WHERE id = ?
+    `, [
+      placa,
+      modelo,
+      marca || null,
+      cor || null,
+      kmAtual,
+      statusVeiculo,
+      ativo,
+      usuarioAtualizacao || null,
+      idVeiculo
+    ]);
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Veículo atualizado com sucesso.'
+    });
+  } catch (err) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao atualizar veículo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar veículo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.delete('/api/veiculos/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idVeiculo = Number(req.params.id);
+    const usuarioExclusao = normalizarTextoVeiculos(
+      req.body?.usuarioExclusao ||
+      req.headers['x-usuario'] ||
+      req.headers['x-user']
+    );
+
+    if (!idVeiculo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um id de veículo válido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+    await conn.beginTransaction();
+
+    const [rowsVeiculo] = await conn.query(`
+      SELECT
+        id,
+        modelo,
+        placa,
+        status_veiculo,
+        ativo
+      FROM SF_VEICULOS
+      WHERE id = ?
+      LIMIT 1
+    `, [idVeiculo]);
+
+    const veiculo = rowsVeiculo?.[0];
+
+    if (!veiculo) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Veículo não encontrado.'
+      });
+    }
+
+    const [rowsReservaAberta] = await conn.query(`
+      SELECT id
+      FROM SF_RESERVA_CARRO
+      WHERE veiculo_id = ?
+        AND UPPER(TRIM(status_solicitacao)) = 'APROVADA'
+        AND previsao_devolucao >= NOW()
+      LIMIT 1
+    `, [idVeiculo]);
+
+    if (rowsReservaAberta.length) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'O veículo possui reserva aprovada em aberto e não pode ser excluído.'
+      });
+    }
+
+    await conn.query(`
+      DELETE FROM SF_VEICULOS
+      WHERE id = ?
+    `, [idVeiculo]);
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Veículo excluído com sucesso.',
+      item: {
+        id: veiculo.id,
+        modelo: veiculo.modelo,
+        placa: veiculo.placa,
+        usuarioExclusao: usuarioExclusao || null
+      }
+    });
+  } catch (err) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao excluir veículo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir veículo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
 
 
 
