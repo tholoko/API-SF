@@ -8021,6 +8021,69 @@ app.delete('/api/reservas-carro/:id', async (req, res) => {
   }
 });
 
+app.get('/api/permissoes/aprovar-reserva-carro/:usuarioId', async (req, res) => {
+  let conn;
+
+  try {
+    const usuarioId = Number(req.params.usuarioId);
+
+    if (!usuarioId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um usuário válido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(`
+      SELECT
+        u.ID AS id_usuario,
+        u.NOME AS nome_usuario,
+        u.PERFIL AS perfil_usuario,
+        p.id AS id_perfil,
+        p.nome AS nome_perfil,
+        COALESCE(p.aprovar_reserva_carro, 0) AS aprovarreservacarro
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON UPPER(TRIM(p.nome)) = UPPER(TRIM(u.PERFIL))
+      WHERE u.ID = ?
+      LIMIT 1
+    `, [usuarioId]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado.'
+      });
+    }
+
+    const item = rows[0];
+
+    return res.json({
+      success: true,
+      item: {
+        idusuario: item.id_usuario,
+        nomeusuario: item.nome_usuario,
+        perfilusuario: item.perfil_usuario,
+        idperfil: item.id_perfil,
+        nomeperfil: item.nome_perfil,
+        aprovarreservacarro: Number(item.aprovarreservacarro) === 1 ? 1 : 0
+      }
+    });
+  } catch (err) {
+    console.error('Erro ao validar permissão de aprovar/recusar reserva de carro:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao validar permissão.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
 
 
 
