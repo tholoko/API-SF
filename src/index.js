@@ -7647,6 +7647,20 @@ app.post('/api/reservas-carro/:id/aprovar', async (req, res) => {
   let conn;
 
   try {
+
+    const fotoFrente = normalizarTexto(req.body?.fotoFrente);
+    const fotoTraseira = normalizarTexto(req.body?.fotoTraseira);
+    const fotoLateralEsquerda = normalizarTexto(req.body?.fotoLateralEsquerda);
+    const fotoLateralDireita = normalizarTexto(req.body?.fotoLateralDireita);
+    const fotoPainel = normalizarTexto(req.body?.fotoPainel);
+
+    if (!fotoFrente || !fotoTraseira || !fotoLateralEsquerda || !fotoLateralDireita || !fotoPainel) {
+      return res.status(400).json({
+        success: false,
+        message: 'É obrigatório tirar as 5 fotos do veículo no momento da aprovação.'
+      });
+    }
+
     const idReserva = Number(req.params.id);
     const usuarioAprovacao = normalizarTexto(
       req.body?.usuarioAprovacao ||
@@ -7807,7 +7821,12 @@ app.post('/api/reservas-carro/:id/aprovar', async (req, res) => {
         veiculo_id = ?,
         checklist_saida = ?,
         km_saida = ?,
-        nivel_combustivel_saida = ?
+        nivel_combustivel_saida = ?,
+        foto_frente = ?,
+        foto_traseira = ?,
+        foto_lateral_esquerda = ?,
+        foto_lateral_direita = ?,
+        foto_painel = ?
       WHERE id = ?
     `, [
       usuarioAprovacao,
@@ -7815,8 +7834,14 @@ app.post('/api/reservas-carro/:id/aprovar', async (req, res) => {
       JSON.stringify(checklistSaida || {}),
       kmSaida,
       nivelCombustivelSaida || null,
+      fotoFrente,
+      fotoTraseira,
+      fotoLateralEsquerda,
+      fotoLateralDireita,
+      fotoPainel,
       idReserva
     ]);
+
 
     await conn.query(`
       UPDATE SF_VEICULOS
