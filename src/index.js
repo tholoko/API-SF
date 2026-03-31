@@ -8182,22 +8182,6 @@ app.get('/api/permissoes/aprovar-reserva-carro/:usuarioId', async (req, res) => 
 
 // Cadastro de Veiculos e Utilização de Veículos
 
-
-function normalizarStatusReserva(status) {
-  return String(status ?? '').trim().toUpperCase();
-}
-
-function parseJsonSeguro(v, fallback = {}) {
-  if (!v) return fallback;
-  if (typeof v === 'object') return v;
-
-  try {
-    return JSON.parse(v);
-  } catch {
-    return fallback;
-  }
-}
-
 app.get('/api/reservas-carro/:id/veiculos-disponiveis', async (req, res) => {
   let conn;
 
