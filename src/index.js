@@ -7277,7 +7277,10 @@ app.get('/api/reservas-carro/:id', async (req, res) => {
         observacoes,
         usuario_solicitante,
         data_solicitacao,
-        status_solicitacao
+        status_solicitacao,
+        motivo_recusa,
+        usuario_recusa,
+        data_recusa
       FROM SF_RESERVA_CARRO
       WHERE id = ?
       LIMIT 1
