@@ -8649,6 +8649,7 @@ app.get('/api/reservas-carro/:id/veiculos-disponiveis', async (req, res) => {
     }
 
     conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
 
     const [rowsReserva] = await conn.query(`
       SELECT
@@ -8683,8 +8684,9 @@ app.get('/api/reservas-carro/:id/veiculos-disponiveis', async (req, res) => {
         v.status_veiculo,
         v.ativo,
         CASE
-          WHEN v.ativo <> 1 THEN 'INATIVO'
-          WHEN UPPER(TRIM(v.status_veiculo)) = 'MANUTENCAO' THEN 'MANUTENCAO'
+          WHEN COALESCE(v.ativo, 0) <> 1 THEN 'INATIVO'
+          WHEN UPPER(TRIM(COALESCE(v.status_veiculo, ''))) = 'MANUTENCAO' THEN 'MANUTENCAO'
+          WHEN REPLACE(UPPER(TRIM(COALESCE(v.status_veiculo, ''))), ' ', '_') IN ('EM_USO', 'EMUSO') THEN 'EM_USO'
           WHEN EXISTS (
             SELECT 1
             FROM SF_RESERVA_CARRO rc
@@ -8706,10 +8708,11 @@ app.get('/api/reservas-carro/:id/veiculos-disponiveis', async (req, res) => {
           LIMIT 1
         ) AS previsao_retorno
       FROM SF_VEICULOS v
-      WHERE v.ativo = 1
+      WHERE COALESCE(v.ativo, 0) = 1
       ORDER BY
         CASE
-          WHEN UPPER(TRIM(v.status_veiculo)) = 'MANUTENCAO' THEN 3
+          WHEN UPPER(TRIM(COALESCE(v.status_veiculo, ''))) = 'MANUTENCAO' THEN 3
+          WHEN REPLACE(UPPER(TRIM(COALESCE(v.status_veiculo, ''))), ' ', '_') IN ('EM_USO', 'EMUSO') THEN 2
           WHEN EXISTS (
             SELECT 1
             FROM SF_RESERVA_CARRO rc
