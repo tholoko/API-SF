@@ -7421,6 +7421,7 @@ app.get('/api/reservas-carro/usuario/:usuarioSolicitante', async (req, res) => {
 
   try {
     const usuarioSolicitante = String(req.params.usuarioSolicitante || '').trim();
+    const usuarioId = Number(req.query.usuarioId || 0);
 
     if (!usuarioSolicitante) {
       return res.status(400).json({
@@ -7429,20 +7430,37 @@ app.get('/api/reservas-carro/usuario/:usuarioSolicitante', async (req, res) => {
       });
     }
 
+    if (!usuarioId) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do usuário inválido.'
+      });
+    }
+
     conn = await pool.getConnection();
 
     const [permissaoRows] = await conn.query(`
       SELECT
-        COALESCE(p.aprovar_reserva_carro, 0) AS aprovar_reserva_carro
-      FROM SF_USUARIOS u
-      LEFT JOIN SF_PERMISSOES p
-        ON p.id = u.permissao_id
-      WHERE UPPER(TRIM(u.usuario)) = UPPER(TRIM(?))
+        u.ID AS usuario_id,
+        u.NOME AS usuario_nome,
+        u.PERFIL AS perfil,
+        p.aprovar_reserva_carro
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON p.nome = u.perfil
+      WHERE u.ID = ?
       LIMIT 1
-    `, [usuarioSolicitante]);
+    `, [usuarioId]);
 
-    const podeAprovarReservaCarro =
-      Number(permissaoRows?.[0]?.aprovar_reserva_carro || 0) === 1;
+    if (!permissaoRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado.'
+      });
+    }
+
+    const itemPermissao = permissaoRows[0];
+    const podeAprovarReservaCarro = Number(itemPermissao.aprovar_reserva_carro) === 1;
 
     let sql = `
       SELECT
