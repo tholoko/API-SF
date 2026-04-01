@@ -7490,7 +7490,6 @@ app.get('/api/reservas-carro/usuario/:usuarioSolicitante', async (req, res) => {
 
     return res.json({
       success: true,
-      podeAprovarReservaCarro,
       items: rows
     });
 
