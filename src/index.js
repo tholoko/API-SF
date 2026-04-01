@@ -7058,6 +7058,64 @@ app.get('/api/clima-links', async (req, res) => {
 
 // RESERVAR CARRO
 
+function obterStatusQueNaoBloqueiamReserva() {
+  return [
+    'RECUSADA',
+    'DEVOLVIDA',
+    'DEVOLVIDO',
+    'CANCELADA',
+    'CONCLUIDA',
+    'CONCLUÍDA'
+  ];
+}
+
+async function validarConflitoReservaCarro(conn, {
+  usuarioSolicitante,
+  dataNecessariaMysql,
+  previsaoDevolucaoMysql,
+  idIgnorar = null
+}) {
+  const usuarioNormalizado = normalizarTexto(usuarioSolicitante);
+
+  if (!usuarioNormalizado || !dataNecessariaMysql || !previsaoDevolucaoMysql) {
+    return null;
+  }
+
+  const statusQueNaoBloqueiam = obterStatusQueNaoBloqueiamReserva();
+
+  let sql = `
+    SELECT
+      id,
+      data_necessaria,
+      previsao_devolucao,
+      status_solicitacao
+    FROM SF_RESERVA_CARRO
+    WHERE UPPER(TRIM(usuario_solicitante)) = UPPER(TRIM(?))
+      AND UPPER(TRIM(status_solicitacao)) NOT IN (${statusQueNaoBloqueiam.map(() => '?').join(', ')})
+      AND (
+        ? < previsao_devolucao
+        AND ? > data_necessaria
+      )
+  `;
+
+  const params = [
+    usuarioNormalizado,
+    ...statusQueNaoBloqueiam,
+    dataNecessariaMysql,
+    previsaoDevolucaoMysql
+  ];
+
+  if (idIgnorar) {
+    sql += ` AND id <> ?`;
+    params.push(Number(idIgnorar));
+  }
+
+  sql += ` ORDER BY id DESC LIMIT 1`;
+
+  const [rows] = await conn.query(sql, params);
+  return rows?.[0] || null;
+}
+
 app.get('/api/local-trabalho', async (req, res) => {
   let conn;
 
@@ -7148,6 +7206,22 @@ app.post('/api/reservas-carro', async (req, res) => {
     await conn.query("SET time_zone = '-03:00'");
     await conn.beginTransaction();
 
+    const usuarioSolicitanteNormalizado = normalizarTexto(usuarioSolicitante);
+
+    const conflito = await validarConflitoReservaCarro(conn, {
+      usuarioSolicitante: usuarioSolicitanteNormalizado,
+      dataNecessariaMysql,
+      previsaoDevolucaoMysql
+    });
+
+    if (conflito) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Já existe uma solicitação ativa para este usuário no mesmo período. Reserva conflitante #${conflito.id}.`
+      });
+    }
+
     const [insertReserva] = await conn.query(`
       INSERT INTO SF_RESERVA_CARRO (
         tipo_veiculo,
@@ -7158,12 +7232,12 @@ app.post('/api/reservas-carro', async (req, res) => {
         usuario_solicitante
       ) VALUES (?, ?, ?, ?, ?, ?)
     `, [
-      String(tipoVeiculo).trim().toUpperCase(),
+      normalizarTexto(tipoVeiculo).toUpperCase(),
       dataNecessariaMysql,
       previsaoDevolucaoMysql,
-      String(urgencia).trim().toUpperCase(),
-      observacoes ? String(observacoes).trim() : null,
-      String(usuarioSolicitante).trim()
+      normalizarTexto(urgencia).toUpperCase(),
+      observacoes ? normalizarTexto(observacoes) : null,
+      usuarioSolicitanteNormalizado
     ]);
 
     const reservaId = Number(insertReserva.insertId);
@@ -7660,6 +7734,23 @@ app.put('/api/reservas-carro/:id', async (req, res) => {
       });
     }
 
+    const usuarioSolicitanteNormalizado = normalizarTexto(usuarioSolicitante);
+
+    const conflito = await validarConflitoReservaCarro(conn, {
+      usuarioSolicitante: usuarioSolicitanteNormalizado,
+      dataNecessariaMysql,
+      previsaoDevolucaoMysql,
+      idIgnorar: idReserva
+    });
+
+    if (conflito) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Já existe outra solicitação ativa para este usuário no mesmo período. Reserva conflitante #${conflito.id}.`
+      });
+    }
+
     await conn.query(`
       UPDATE SF_RESERVA_CARRO
       SET
@@ -7676,7 +7767,7 @@ app.put('/api/reservas-carro/:id', async (req, res) => {
       previsaoDevolucaoMysql,
       normalizarTexto(urgencia).toUpperCase(),
       observacoes ? normalizarTexto(observacoes) : null,
-      normalizarTexto(usuarioSolicitante),
+      usuarioSolicitanteNormalizado,
       idReserva
     ]);
 
