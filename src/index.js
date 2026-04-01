@@ -7277,20 +7277,39 @@ app.get('/api/reservas-carro/:id', async (req, res) => {
 
     const [rowsReserva] = await conn.query(`
       SELECT
-        id,
-        tipo_veiculo,
-        data_necessaria,
-        previsao_devolucao,
-        urgencia,
-        observacoes,
-        usuario_solicitante,
-        data_solicitacao,
-        status_solicitacao,
-        motivo_recusa,
-        usuario_recusa,
-        data_recusa
-      FROM SF_RESERVA_CARRO
-      WHERE id = ?
+        rc.id,
+        rc.tipo_veiculo,
+        rc.data_necessaria,
+        rc.previsao_devolucao,
+        rc.urgencia,
+        rc.observacoes,
+        rc.usuario_solicitante,
+        rc.data_solicitacao,
+        rc.status_solicitacao,
+        rc.motivo_recusa,
+        rc.usuario_recusa,
+        rc.data_recusa,
+        rc.usuario_aprovacao,
+        rc.data_aprovacao,
+        rc.veiculo_id,
+        rc.checklist_saida,
+        rc.km_saida,
+        rc.nivel_combustivel_saida,
+        rc.foto_frente,
+        rc.foto_traseira,
+        rc.foto_lateral_esquerda,
+        rc.foto_lateral_direita,
+        rc.foto_painel,
+        v.placa AS veiculo_placa,
+        v.modelo AS veiculo_modelo,
+        v.marca AS veiculo_marca,
+        v.cor AS veiculo_cor,
+        v.km_atual AS veiculo_km_atual,
+        v.status_veiculo AS veiculo_status
+      FROM SF_RESERVA_CARRO rc
+      LEFT JOIN SF_VEICULOS v
+        ON v.id = rc.veiculo_id
+      WHERE rc.id = ?
       LIMIT 1
     `, [idReserva]);
 
@@ -7313,14 +7332,23 @@ app.get('/api/reservas-carro/:id', async (req, res) => {
       ORDER BY lt.nome
     `, [idReserva]);
 
+    let checklistSaida = {};
+    try {
+      checklistSaida = reserva.checklist_saida
+        ? JSON.parse(reserva.checklist_saida)
+        : {};
+    } catch (_) {
+      checklistSaida = {};
+    }
+
     return res.json({
       success: true,
       item: {
         ...reserva,
+        checklist_saida: checklistSaida,
         destinos: rowsDestinos
       }
     });
-
   } catch (err) {
     console.error('Erro ao buscar reserva de carro:', err);
     return res.status(500).json({
