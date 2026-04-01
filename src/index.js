@@ -7375,7 +7375,15 @@ app.put('/api/reservas-carro/:id/status', async (req, res) => {
       });
     }
 
-    const statusPermitidos = ['PENDENTE', 'APROVADA', 'RECUSADA', 'CANCELADA', 'CONCLUIDA'];
+    const statusPermitidos = [
+      'PENDENTE',
+      'AGUARDANDO_CONFIRMACAO',
+      'APROVADA',
+      'RECUSADA',
+      'CANCELADA',
+      'DEVOLVIDA',
+      'CONCLUIDA'
+    ];
     if (!statusPermitidos.includes(status)) {
       return res.status(400).json({
         success: false,
