@@ -7431,7 +7431,20 @@ app.get('/api/reservas-carro/usuario/:usuarioSolicitante', async (req, res) => {
 
     conn = await pool.getConnection();
 
-    const [rows] = await conn.query(`
+    const [permissaoRows] = await conn.query(`
+      SELECT
+        COALESCE(p.aprovar_reserva_carro, 0) AS aprovar_reserva_carro
+      FROM SF_USUARIOS u
+      LEFT JOIN SF_PERMISSOES p
+        ON p.id = u.permissao_id
+      WHERE UPPER(TRIM(u.usuario)) = UPPER(TRIM(?))
+      LIMIT 1
+    `, [usuarioSolicitante]);
+
+    const podeAprovarReservaCarro =
+      Number(permissaoRows?.[0]?.aprovar_reserva_carro || 0) === 1;
+
+    let sql = `
       SELECT
         rc.id,
         rc.tipo_veiculo,
@@ -7448,7 +7461,18 @@ app.get('/api/reservas-carro/usuario/:usuarioSolicitante', async (req, res) => {
         ON rcd.reserva_id = rc.id
       LEFT JOIN SF_LOCAL_TRABALHO lt
         ON lt.id = rcd.local_trabalho_id
-      WHERE UPPER(TRIM(rc.usuario_solicitante)) = UPPER(TRIM(?))
+    `;
+
+    const params = [];
+
+    if (!podeAprovarReservaCarro) {
+      sql += `
+        WHERE UPPER(TRIM(rc.usuario_solicitante)) = UPPER(TRIM(?))
+      `;
+      params.push(usuarioSolicitante);
+    }
+
+    sql += `
       GROUP BY
         rc.id,
         rc.tipo_veiculo,
@@ -7460,10 +7484,13 @@ app.get('/api/reservas-carro/usuario/:usuarioSolicitante', async (req, res) => {
         rc.data_solicitacao,
         rc.status_solicitacao
       ORDER BY rc.id DESC
-    `, [usuarioSolicitante]);
+    `;
+
+    const [rows] = await conn.query(sql, params);
 
     return res.json({
       success: true,
+      podeAprovarReservaCarro,
       items: rows
     });
 
