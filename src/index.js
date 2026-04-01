@@ -7368,6 +7368,7 @@ app.get('/api/reservas-carro/:id', async (req, res) => {
         rc.veiculo_id,
         rc.checklist_saida,
         rc.km_saida,
+        rc.km_devolucao,
         rc.nivel_combustivel_saida,
         rc.foto_frente,
         rc.foto_traseira,
