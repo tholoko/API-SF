@@ -8375,6 +8375,263 @@ app.get('/api/permissoes/aprovar-reserva-carro/:usuarioId', async (req, res) => 
   }
 });
 
+app.post('/api/reservas-carro/:id/devolucao', async (req, res) => {
+  let conn;
+
+  try {
+    const idReserva = Number(req.params.id);
+    const usuarioDevolucao = normalizarTexto(
+      req.body?.usuarioDevolucao ||
+      req.headers['x-usuario'] ||
+      req.headers['x-user']
+    );
+
+    const kmDevolucao = req.body?.kmDevolucao !== undefined && req.body?.kmDevolucao !== null && req.body?.kmDevolucao !== ''
+      ? Number(req.body.kmDevolucao)
+      : null;
+
+    const nivelCombustivelDevolucao = normalizarTexto(req.body?.nivelCombustivelDevolucao);
+    const checklistDevolucao = req.body?.checklistDevolucao || {};
+    const observacoesDevolucao = normalizarTexto(req.body?.observacoesDevolucao);
+
+    const fotoFrente = normalizarTexto(req.body?.fotoFrente);
+    const fotoTraseira = normalizarTexto(req.body?.fotoTraseira);
+    const fotoLateralEsquerda = normalizarTexto(req.body?.fotoLateralEsquerda);
+    const fotoLateralDireita = normalizarTexto(req.body?.fotoLateralDireita);
+    const fotoPainel = normalizarTexto(req.body?.fotoPainel);
+
+    if (!idReserva) {
+      return res.status(400).json({ success: false, message: 'Informe um id de reserva válido.' });
+    }
+
+    if (!usuarioDevolucao) {
+      return res.status(400).json({ success: false, message: 'Usuário da devolução não informado.' });
+    }
+
+    if (!fotoFrente || !fotoTraseira || !fotoLateralEsquerda || !fotoLateralDireita || !fotoPainel) {
+      return res.status(400).json({
+        success: false,
+        message: 'É obrigatório informar as 5 fotos na devolução.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+    await conn.beginTransaction();
+
+    const [rowsReserva] = await conn.query(`
+      SELECT
+        id,
+        usuario_solicitante,
+        status_solicitacao,
+        veiculo_id
+      FROM SF_RESERVA_CARRO
+      WHERE id = ?
+      LIMIT 1
+    `, [idReserva]);
+
+    const reserva = rowsReserva?.[0];
+
+    if (!reserva) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Reserva não encontrada.' });
+    }
+
+    if (normalizarStatusReserva(reserva.status_solicitacao) !== 'APROVADA') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente reservas aprovadas podem solicitar devolução.'
+      });
+    }
+
+    const ehCriador =
+      normalizarTexto(reserva.usuario_solicitante).toUpperCase() ===
+      normalizarTexto(usuarioDevolucao).toUpperCase();
+
+    if (!ehCriador) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para fazer a devolução desta reserva.'
+      });
+    }
+
+    await conn.query(`
+      UPDATE SF_RESERVA_CARRO
+      SET
+        status_solicitacao = 'AGUARDANDO_CONFIRMACAO',
+        checklist_devolucao = ?,
+        km_devolucao = ?,
+        nivel_combustivel_devolucao = ?,
+        observacoes_devolucao = ?,
+        foto_devolucao_frente = ?,
+        foto_devolucao_traseira = ?,
+        foto_devolucao_lateral_esquerda = ?,
+        foto_devolucao_lateral_direita = ?,
+        foto_devolucao_painel = ?,
+        usuario_devolucao = ?,
+        data_devolucao = NOW()
+      WHERE id = ?
+    `, [
+      JSON.stringify(checklistDevolucao || {}),
+      kmDevolucao,
+      nivelCombustivelDevolucao || null,
+      observacoesDevolucao || null,
+      fotoFrente,
+      fotoTraseira,
+      fotoLateralEsquerda,
+      fotoLateralDireita,
+      fotoPainel,
+      usuarioDevolucao,
+      idReserva
+    ]);
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Devolução enviada para confirmação com sucesso.'
+    });
+  } catch (err) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao solicitar devolução da reserva:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao solicitar devolução da reserva.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/reservas-carro/:id/confirmar-devolucao', async (req, res) => {
+  let conn;
+
+  try {
+    const idReserva = Number(req.params.id);
+    const usuarioConfirmacao = normalizarTexto(
+      req.body?.usuarioConfirmacao ||
+      req.headers['x-usuario'] ||
+      req.headers['x-user']
+    );
+
+    if (!idReserva) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um id de reserva válido.'
+      });
+    }
+
+    if (!usuarioConfirmacao) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário da confirmação não informado.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+    await conn.beginTransaction();
+
+    const [rowsReserva] = await conn.query(`
+      SELECT
+        id,
+        status_solicitacao,
+        veiculo_id,
+        km_devolucao
+      FROM SF_RESERVA_CARRO
+      WHERE id = ?
+      LIMIT 1
+    `, [idReserva]);
+
+    const reserva = rowsReserva?.[0];
+
+    if (!reserva) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Reserva não encontrada.'
+      });
+    }
+
+    if (![
+      'AGUARDANDO_CONFIRMACAO',
+      'AGUARDANDO CONFIRMACAO'
+    ].includes(normalizarStatusReserva(reserva.status_solicitacao))) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente devoluções aguardando confirmação podem ser confirmadas.'
+      });
+    }
+
+    const [usuarioRows] = await conn.query(`
+      SELECT
+        u.ID,
+        u.NOME,
+        p.aprovar_reserva_carro
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON UPPER(TRIM(p.NOME)) = UPPER(TRIM(u.PERFIL))
+      WHERE UPPER(TRIM(u.NOME)) = UPPER(TRIM(?))
+      LIMIT 1
+    `, [usuarioConfirmacao]);
+
+    const usuarioDb = usuarioRows?.[0];
+
+    if (!usuarioDb || Number(usuarioDb.aprovar_reserva_carro || 0) !== 1) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para confirmar devoluções.'
+      });
+    }
+
+    await conn.query(`
+      UPDATE SF_RESERVA_CARRO
+      SET
+        status_solicitacao = 'DEVOLVIDA',
+        usuario_confirmacao_devolucao = ?,
+        data_confirmacao_devolucao = NOW()
+      WHERE id = ?
+    `, [usuarioConfirmacao, idReserva]);
+
+    if (Number(reserva.veiculo_id || 0)) {
+      await conn.query(`
+        UPDATE SF_VEICULOS
+        SET
+          status_veiculo = 'DISPONIVEL',
+          km_atual = COALESCE(?, km_atual)
+        WHERE id = ?
+      `, [reserva.km_devolucao, reserva.veiculo_id]);
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Devolução confirmada com sucesso.'
+    });
+  } catch (err) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao confirmar devolução:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao confirmar devolução.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
 
 // Cadastro de Veiculos e Utilização de Veículos
 
