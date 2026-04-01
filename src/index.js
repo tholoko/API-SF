@@ -2087,15 +2087,6 @@ app.get('/api/marketing/painel', async (req, res) => {
     const apenasUmaVez = Number(item.APENASUMAVEZ || 0) === 1;
     const jaExibido = !!item.ULTIMAEXIBICAOEM;
 
-    console.log('[MARKETING/FILTER]', {
-      id: item.ID,
-      inicio,
-      fim,
-      hojeStr,
-      rec,
-      apenasUmaVez,
-      jaExibido
-    });
 
     if (inicio && hojeStr < inicio) return false;
     if (fim && hojeStr > fim) return false;
@@ -2130,9 +2121,6 @@ app.get('/api/marketing/painel', async (req, res) => {
   });
 
 
-    console.log('[MARKETING/PAINEL] rows=', rows);
-    console.log('[MARKETING/PAINEL] hoje=', hojeStr);
-    console.log('[MARKETING/PAINEL] ativos=', ativos);
 
     return res.json({
       success: true,
@@ -6870,7 +6858,8 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         COALESCE(p.email_automaticos, 0) AS email_automaticos,
         COALESCE(p.gestao_usuarios, 0) AS gestao_usuarios,
         COALESCE(p.estoque, 0) AS estoque,
-        COALESCE(p.perfil_acesso, 0) AS perfil_acesso
+        COALESCE(p.perfil_acesso, 0) AS perfil_acesso,
+        COALESCE(p.reservar_carro, 0) AS reservar_carro
       FROM SF_USUARIO u
       LEFT JOIN SF_PERFIL p ON p.nome = u.perfil
       WHERE u.ID = ?
@@ -6900,7 +6889,8 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         emailautomaticos: Number(item.email_automaticos ?? 0),
         gestaousuarios: Number(item.gestao_usuarios ?? 0),
         estoque: Number(item.estoque ?? 0),
-        perfilacesso: Number(item.perfil_acesso ?? 0)
+        perfilacesso: Number(item.perfil_acesso ?? 0),
+        reservarcarro: Number(item.reservar_carro ?? 0)
       }
     };
 
