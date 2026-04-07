@@ -13,11 +13,14 @@ import multer from "multer";
 import fetch from 'node-fetch';
 import cron from 'node-cron';
 
+import XLSX from 'xlsx';
+
 dns.setDefaultResultOrder("ipv4first");
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const uploadMemoria = multer({ storage: multer.memoryStorage() });
 
 // =====================
 // Middleware base
@@ -1151,7 +1154,6 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     });
   }
 });
-
 
 app.get('/api/gestao-usuarios', async (req, res) => {
   try {
@@ -9546,6 +9548,276 @@ app.delete('/api/organograma/:id', async (req, res) => {
   }
 });
 
+// IMPORTAR USUÁRIOS VIA TEMPLATE
+
+function somenteNumerosImportar(v) {
+  return String(v ?? '').replace(/\D/g, '');
+}
+
+function excelDateToISO(valor) {
+  if (!valor) return null;
+
+  if (typeof valor === 'number') {
+    const data = XLSX.SSF.parse_date_code(valor);
+    if (!data) return null;
+
+    const yyyy = String(data.y).padStart(4, '0');
+    const mm = String(data.m).padStart(2, '0');
+    const dd = String(data.d).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  const s = String(valor).trim();
+  if (!s) return null;
+
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) {
+    const [, dd, mm, yyyy] = m;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return s.slice(0, 10);
+}
+
+async function obterOuCriarPorNome(conn, tabela, nome) {
+  const valor = titleCaseNome(nome || '');
+  if (!valor) return null;
+
+  const [rows] = await conn.query(
+    `SELECT ID, NOME FROM ${tabela} WHERE UPPER(TRIM(NOME)) = UPPER(TRIM(?)) LIMIT 1`,
+    [valor]
+  );
+
+  if (rows.length) {
+    console.log(`[IMPORTAÇÃO] Registro já existente em ${tabela}:`, rows[0]);
+    return rows[0];
+  }
+
+  const [result] = await conn.query(
+    `INSERT INTO ${tabela} (NOME) VALUES (?)`,
+    [valor]
+  );
+
+  const novo = { ID: result.insertId, NOME: valor };
+  console.log(`[IMPORTAÇÃO] Registro criado em ${tabela}:`, novo);
+  return novo;
+}
+
+app.post('/api/gestao-usuarios-importar', uploadMemoria.single('arquivo'), async (req, res) => {
+  let conn;
+
+  try {
+
+    if (!req.file?.buffer) {
+      return res.status(400).json({
+        success: false,
+        message: 'Arquivo Excel é obrigatório.'
+      });
+    }
+
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+
+    const primeiraAba = wb.SheetNames[0];
+    const ws = wb.Sheets[primeiraAba];
+
+    if (!ws) {
+      return res.status(400).json({
+        success: false,
+        message: 'A primeira aba da planilha não foi encontrada.'
+      });
+    }
+
+    const linhas = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+
+    if (!linhas.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'A planilha está vazia.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const sucessos = [];
+    const ignoradosDetalhes = [];
+    const erros = [];
+
+    let inseridos = 0;
+    let ignorados = 0;
+
+    for (let i = 0; i < linhas.length; i++) {
+      const linha = linhas[i];
+      const numeroLinha = i + 2;
+
+
+      try {
+        const nome = titleCaseNome(linha['NOME']);
+        const cpf = somenteNumerosImportar(linha['CPF']);
+        const dataNascimento = excelDateToISO(linha['DATA NASCIMENTO']);
+        const dataAdmissao = excelDateToISO(linha['DATA ADMISSÃO'] || linha['DATA ADMISSAO']);
+        const funcao = titleCaseNome(linha['FUNÇÃO'] || linha['FUNCAO'] || '');
+        const setor = titleCaseNome(linha['SETOR']);
+        const perfil = texto(linha['PERFIL']);
+        const status = texto(linha['STATUS']) || 'Ativo';
+        const centroCusto = titleCaseNome(linha['CENTRO CUSTO']);
+        const unidadeTrabalho = titleCaseNome(linha['UNIDADE TRABALHO']);
+
+
+        if (!nome || !cpf || !dataNascimento || !setor || !perfil || !status) {
+          const erroMsg = 'Campos obrigatórios ausentes: NOME, CPF, DATA NASCIMENTO, SETOR, PERFIL e STATUS.';
+
+
+          erros.push({
+            linha: numeroLinha,
+            nome: nome || '',
+            erro: erroMsg
+          });
+
+          continue;
+        }
+
+        const [cpfExistente] = await conn.query(
+          `SELECT ID, NOME, CPF FROM SF_USUARIO WHERE CPF = ? LIMIT 1`,
+          [cpf]
+        );
+
+
+
+        if (cpfExistente.length > 0) {
+          ignorados++;
+
+          ignoradosDetalhes.push({
+            linha: numeroLinha,
+            nome,
+            cpf,
+            message: 'CPF já cadastrado. Registro ignorado.'
+          });
+
+          continue;
+        }
+
+        if (setor) {
+          await obterOuCriarPorNome(conn, 'SF_SETOR', setor);
+        }
+
+        if (funcao) {
+          await obterOuCriarPorNome(conn, 'SF_FUNCAO', funcao);
+        }
+
+        if (unidadeTrabalho) {
+          await obterOuCriarPorNome(conn, 'SF_LOCAL_TRABALHO', unidadeTrabalho);
+        }
+
+        if (centroCusto) {
+          await obterOuCriarPorNome(conn, 'SF_CENTRO_CUSTO', centroCusto);
+        }
+
+        const emailGerado = `${cpf}@temp.local`;
+        const senhaHash = await bcrypt.hash('123456', 12);
+
+        const result = await conn.query(
+          `INSERT INTO SF_USUARIO (
+            NOME,
+            EMAIL,
+            SENHA,
+            TELEFONE,
+            PERFIL,
+            SETOR,
+            FUNCAO,
+            DATA_ADMISSAO,
+            CENTRO_CUSTO,
+            LOCAL_TRABALHO,
+            STATUS,
+            CPF,
+            DATA_NASCIMENTO,
+            MUST_CHANGE_PASSWORD
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+          [
+            nome,
+            emailGerado,
+            senhaHash,
+            null,
+            perfil,
+            setor,
+            funcao || null,
+            dataAdmissao,
+            centroCusto || null,
+            unidadeTrabalho || null,
+            status,
+            cpf,
+            dataNascimento
+          ]
+        );
+
+        inseridos++;
+
+        sucessos.push({
+          linha: numeroLinha,
+          id: result.insertId,
+          nome,
+          cpf,
+          message: 'Usuário importado com sucesso.'
+        });
+      } catch (erroLinha) {
+        console.error('[IMPORTAÇÃO] ERRO AO PROCESSAR LINHA:', {
+          linha: numeroLinha,
+          nome: titleCaseNome(linha['NOME']) || '',
+          erro: erroLinha.message,
+          stack: erroLinha.stack
+        });
+
+        erros.push({
+          linha: numeroLinha,
+          nome: titleCaseNome(linha['NOME']) || '',
+          erro: erroLinha.message || 'Erro ao processar a linha.'
+        });
+      }
+    }
+
+
+    await conn.commit();
+
+    const retorno = {
+      success: true,
+      message: 'Importação concluída.',
+      totalLinhas: linhas.length,
+      inseridos,
+      ignorados,
+      totalErros: erros.length,
+      sucessos,
+      ignoradosDetalhes,
+      erros
+    };
+
+
+    return res.json(retorno);
+  } catch (err) {
+    console.error('\n========== [IMPORTAÇÃO USUÁRIOS] ERRO GERAL ==========');
+    console.error('[IMPORTAÇÃO] Mensagem:', err.message);
+    console.error('[IMPORTAÇÃO] Stack:', err.stack);
+
+    if (conn) {
+      try {
+        await conn.rollback();
+        console.error('[IMPORTAÇÃO] Rollback executado com sucesso.');
+      } catch (rollbackErr) {
+        console.error('[IMPORTAÇÃO] Erro ao executar rollback:', rollbackErr.message);
+      }
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao importar planilha.',
+      error: err.message
+    });
+  } finally {
+    if (conn) {
+      conn.release();
+    }
+  }
+});
 
 
 // =====================
