@@ -10333,6 +10333,10 @@ app.post('/api/organograma-usuarios-vinculos', async (req, res) => {
     const idSetorOrganograma = Number(req.body?.id_setor_organograma ?? req.body?.idSetorOrganograma);
     const status = Number(req.body?.status ?? 1) ? 1 : 0;
 
+    console.log(idUsuario);
+    console.log(idSetorOrganograma);
+    console.log(status);
+
     if (!idUsuario || !idSetorOrganograma) {
       return res.status(400).json({
         success: false,
