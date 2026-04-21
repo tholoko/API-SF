@@ -14,6 +14,9 @@ import cron from 'node-cron';
 import XLSX from 'xlsx';
 import puppeteer from 'puppeteer';
 import ping from 'ping';
+import { DistribuicaoDFe } from 'node-mde';
+import AdmZip from 'adm-zip';
+import zlib from 'node:zlib';
 
 import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 
@@ -13786,7 +13789,7 @@ app.post('/api/gestao-usuarios-importar', uploadMemoria.single('arquivo'), async
         const dataAdmissao = excelDateToISO(linha['DATA ADMISSÃO'] || linha['DATA ADMISSAO']);
         const funcao = titleCaseNome(linha['FUNÇÃO'] || linha['FUNCAO'] || '');
         const setor = titleCaseNome(linha['SETOR']);
-        const perfil = texto(linha['PERFIL']);
+        const perfil = texto(linha['PERFIL']) || 'Colaborador';
         const status = texto(linha['STATUS']) || 'Ativo';
         const centroCusto = titleCaseNome(linha['CENTRO CUSTO']);
         const unidadeTrabalho = titleCaseNome(linha['UNIDADE TRABALHO']);
@@ -15648,6 +15651,386 @@ app.get("/api/ping-monitor/:id/contatos", async (req, res) => {
     });
   } finally {
     if (conn) conn.release();
+  }
+});
+
+// DF-e Certificado
+
+const dfeSessions = new Map();
+
+function gerarSessionIdDfe() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function limparDocumento(v) {
+  return String(v || '').replace(/\D+/g, '');
+}
+
+function extrairValorResumoNFe(resNFe = {}) {
+  const total = resNFe.vNF || resNFe.valor || resNFe.valorTotal || 0;
+  const n = Number(String(total).replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function extrairDhEmissaoResumo(resNFe = {}) {
+  return resNFe.dhEmi || resNFe.dEmi || resNFe.dataEmissao || '';
+}
+
+function extrairEmitenteResumo(resNFe = {}) {
+  return resNFe.xNome || resNFe.emitente || resNFe.nomeEmitente || '';
+}
+
+function extrairCnpjEmitenteResumo(resNFe = {}) {
+  return limparDocumento(resNFe.CNPJ || resNFe.CPF || resNFe.emitenteCnpj || '');
+}
+
+function montarItemDfeFromDocZip(doc) {
+  const json = doc?.json || {};
+  const resNFe = json?.resNFe || json?.procNFe?.NFe?.infNFe?.emit || json?.nfeProc?.NFe?.infNFe?.emit || {};
+  const ide = json?.procNFe?.NFe?.infNFe?.ide || json?.nfeProc?.NFe?.infNFe?.ide || {};
+  const prot = json?.procNFe?.protNFe?.infProt || json?.nfeProc?.protNFe?.infProt || {};
+
+  return {
+    nsu: String(doc?.nsu || ''),
+    schema: String(doc?.schema || ''),
+    tipo: doc?.schema?.includes('procNFe') ? 'xml-completo' : 'resumo',
+    chave: String(resNFe.chNFe || prot.chNFe || ide.chave || ''),
+    emitente: extrairEmitenteResumo(resNFe),
+    emitenteCnpj: extrairCnpjEmitenteResumo(resNFe),
+    dataEmissao: extrairDhEmissaoResumo(resNFe),
+    valorTotal: extrairValorResumoNFe(resNFe),
+    xml: String(doc?.xml || ''),
+    json
+  };
+}
+
+function normalizarDocsConsulta(docZip = []) {
+  return (Array.isArray(docZip) ? docZip : []).map(montarItemDfeFromDocZip);
+}
+
+function removerSessoesDfeExpiradas() {
+  const agora = Date.now();
+  for (const [sessionId, sessao] of dfeSessions.entries()) {
+    if (!sessao?.createdAt || (agora - sessao.createdAt > 1000 * 60 * 30)) {
+      dfeSessions.delete(sessionId);
+    }
+  }
+}
+
+setInterval(removerSessoesDfeExpiradas, 1000 * 60 * 5).unref();
+
+const uploadCertificadoDfe = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
+app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async (req, res) => {
+  try {
+    console.log('[DFE] Iniciando consulta /api/dfe/consultar');
+
+    const senha = String(req.body?.senha || '').trim();
+    const documento = limparDocumento(req.body?.documento || '');
+    const cnpj = documento.length === 14 ? documento : '';
+    const cpf = documento.length === 11 ? documento : '';
+    const tpAmb = String(req.body?.tpAmb || '1');
+    const cUFAutor = String(req.body?.cUFAutor || '29');
+    const ultNSU = String(req.body?.ultNSU || '000000000000000').padStart(15, '0');
+    const limiteInformado = Math.max(1, Math.min(50, Number(req.body?.limite || 15)));
+    const consultaSemDocumento = !documento;
+    const limiteFinal = consultaSemDocumento ? 15 : limiteInformado;
+
+    console.log('[DFE] Parâmetros recebidos:', {
+      documento,
+      tipoDocumento: cnpj ? 'CNPJ' : cpf ? 'CPF' : 'VAZIO',
+      tpAmb,
+      cUFAutor,
+      ultNSU,
+      limiteInformado,
+      limiteFinal,
+      consultaSemDocumento,
+      arquivoRecebido: !!req.file,
+      nomeArquivo: req.file?.originalname || null,
+      tamanhoArquivo: req.file?.size || 0
+    });
+
+    if (!req.file?.buffer) {
+      console.log('[DFE] Validação falhou: certificado não enviado');
+      return res.status(400).json({
+        success: false,
+        message: 'Selecione o certificado A1 (.pfx ou .p12) antes de consultar.'
+      });
+    }
+
+    if (!senha) {
+      console.log('[DFE] Validação falhou: senha não informada');
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a senha do certificado digital.'
+      });
+    }
+
+    if (documento && documento.length !== 11 && documento.length !== 14) {
+      console.log('[DFE] Validação falhou: documento inválido', { documento });
+      return res.status(400).json({
+        success: false,
+        message: 'O documento informado é inválido. Informe um CPF com 11 dígitos, um CNPJ com 14 dígitos ou deixe o campo em branco.'
+      });
+    }
+
+    const configDistribuicao = {
+      pfx: req.file.buffer,
+      passphrase: senha,
+      cUFAutor,
+      tpAmb
+    };
+
+    if (cnpj) {
+      configDistribuicao.cnpj = cnpj;
+    }
+
+    if (cpf) {
+      configDistribuicao.cpf = cpf;
+    }
+
+    console.log('[DFE] Configuração montada para DistribuicaoDFe:', {
+      possuiCnpj: !!configDistribuicao.cnpj,
+      possuiCpf: !!configDistribuicao.cpf,
+      cnpj: configDistribuicao.cnpj || null,
+      cpf: configDistribuicao.cpf || null,
+      tpAmb: configDistribuicao.tpAmb,
+      cUFAutor: configDistribuicao.cUFAutor
+    });
+
+    if (!configDistribuicao.cnpj && !configDistribuicao.cpf) {
+      console.log('[DFE] Nenhum CPF/CNPJ informado para a consulta');
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um CPF, um CNPJ ou implemente a leitura automática do documento a partir do certificado.'
+      });
+    }
+
+    console.log('[DFE] Instanciando DistribuicaoDFe...');
+    const distribuicao = new DistribuicaoDFe(configDistribuicao);
+
+    console.log('[DFE] Executando consultaUltNSU...', { ultNSU });
+    const consulta = await distribuicao.consultaUltNSU(ultNSU);
+
+    console.log('[DFE] Retorno bruto da consulta recebido:', {
+      possuiError: !!consulta?.error,
+      possuiData: !!consulta?.data,
+      cStat: consulta?.data?.cStat || null,
+      xMotivo: consulta?.data?.xMotivo || null,
+      ultNSU: consulta?.data?.ultNSU || null,
+      maxNSU: consulta?.data?.maxNSU || null,
+      quantidadeDocZip: Array.isArray(consulta?.data?.docZip) ? consulta.data.docZip.length : 0
+    });
+
+    if (consulta?.error) {
+      console.log('[DFE] Consulta retornou erro de negócio:', consulta.error);
+      return res.status(400).json({
+        success: false,
+        message: `Falha no retorno da distribuição DF-e: ${consulta.error}`
+      });
+    }
+
+    const data = consulta?.data || {};
+    let docs = normalizarDocsConsulta(data?.docZip || []);
+
+    console.log('[DFE] Documentos normalizados:', {
+      quantidadeAntesDoSlice: docs.length
+    });
+
+    docs = docs.slice(0, limiteFinal);
+
+    console.log('[DFE] Documentos após aplicar limite:', {
+      quantidadeFinal: docs.length,
+      limiteFinal
+    });
+
+    if (docs.length) {
+      console.log('[DFE] Primeiro documento retornado:', {
+        nsu: docs[0]?.nsu || null,
+        chave: docs[0]?.chave || null,
+        emitente: docs[0]?.emitente || null,
+        tipo: docs[0]?.tipo || null,
+        dataEmissao: docs[0]?.dataEmissao || null
+      });
+    } else {
+      console.log('[DFE] Nenhum documento retornado após normalização/filtro');
+    }
+
+    const sessionId = gerarSessionIdDfe();
+
+    dfeSessions.set(sessionId, {
+      createdAt: Date.now(),
+      lastAccessAt: Date.now(),
+      cnpj,
+      cpf,
+      documentoInformado: documento || '',
+      consultaSemDocumento,
+      tpAmb,
+      cUFAutor,
+      ultNSU: data?.ultNSU || ultNSU,
+      maxNSU: data?.maxNSU || ultNSU,
+      items: docs
+    });
+
+    console.log('[DFE] Sessão criada com sucesso:', {
+      sessionId,
+      quantidadeItens: docs.length,
+      ultNSU: data?.ultNSU || ultNSU,
+      maxNSU: data?.maxNSU || ultNSU
+    });
+
+    const qtd = docs.length;
+    const documentoUsado = cnpj || cpf || '';
+    const tipoDocumentoUsado = cnpj ? 'CNPJ' : cpf ? 'CPF' : '';
+
+    const msgConsulta = consultaSemDocumento
+      ? `Consulta concluída com sucesso. ${qtd} documento(s) retornado(s).`
+      : `Consulta concluída com sucesso. ${qtd} documento(s) retornado(s) para o ${tipoDocumentoUsado} informado.`;
+
+    console.log('[DFE] Finalizando rota com sucesso:', {
+      sessionId,
+      mensagem: msgConsulta
+    });
+
+    return res.json({
+      success: true,
+      message: msgConsulta,
+      sessionId,
+      items: docs.map(({ xml, json, ...rest }) => rest),
+      meta: {
+        tpAmb: data?.tpAmb || tpAmb,
+        ultNSU: data?.ultNSU || ultNSU,
+        maxNSU: data?.maxNSU || ultNSU,
+        cStat: data?.cStat || '',
+        xMotivo: data?.xMotivo || '',
+        documentoUsado,
+        tipoDocumentoUsado,
+        origemDocumento: documento ? 'informado' : 'certificado',
+        consultaSemDocumento,
+        limiteAplicado: limiteFinal
+      }
+    });
+  } catch (err) {
+    console.error('[DFE] Erro /api/dfe/consultar:', {
+      message: err?.message,
+      stack: err?.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Não foi possível consultar os DF-e com o certificado informado.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/dfe/xml/:sessionId/:nsu', async (req, res) => {
+  try {
+    const { sessionId, nsu } = req.params;
+    const sessao = obterSessaoDfeAtiva(sessionId);
+
+    if (!sessao) {
+      return res.status(440).json({
+        success: false,
+        expired: true,
+        message: 'Sua sessão de consulta expirou. Faça uma nova consulta para visualizar o XML.'
+      });
+    }
+
+    const item = (sessao.items || []).find(x => String(x.nsu) === String(nsu));
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: 'O XML solicitado não foi encontrado nesta sessão.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      xml: item.xml || ''
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao recuperar o XML da nota.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/dfe/xml-download/:sessionId/:nsu', async (req, res) => {
+  try {
+    const { sessionId, nsu } = req.params;
+    const sessao = obterSessaoDfeAtiva(sessionId);
+
+    if (!sessao) {
+      return res.status(440).send('Sessão expirada. Refaça a consulta para baixar o XML.');
+    }
+
+    const item = (sessao.items || []).find(x => String(x.nsu) === String(nsu));
+    if (!item) {
+      return res.status(404).send('Documento não encontrado na sessão atual.');
+    }
+
+    const nome = `dfe-${String(item.nsu || 'sem-nsu')}.xml`;
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${nome}"`);
+    return res.send(item.xml || '');
+  } catch (err) {
+    return res.status(500).send('Erro ao baixar XML.');
+  }
+});
+
+app.post('/api/dfe/xml-lote', async (req, res) => {
+  try {
+    const sessionId = String(req.body?.sessionId || '');
+    const nsus = Array.isArray(req.body?.nsus) ? req.body.nsus.map(String) : [];
+    const sessao = obterSessaoDfeAtiva(sessionId);
+
+    if (!sessao) {
+      return res.status(440).json({
+        success: false,
+        expired: true,
+        message: 'Sua sessão expirou. Refaça a consulta para gerar o ZIP.'
+      });
+    }
+
+    if (!nsus.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selecione ao menos um documento para gerar o ZIP.'
+      });
+    }
+
+    const zip = new AdmZip();
+
+    for (const nsu of nsus) {
+      const item = (sessao.items || []).find(x => String(x.nsu) === String(nsu));
+      if (!item?.xml) continue;
+      zip.addFile(`dfe-${nsu}.xml`, Buffer.from(item.xml, 'utf8'));
+    }
+
+    if (!zip.getEntries().length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nenhum XML válido foi encontrado para os NSUs selecionados.'
+      });
+    }
+
+    const bufferZip = zip.toBuffer();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="dfe-selecionadas.zip"');
+    return res.send(bufferZip);
+  } catch (err) {
+    console.error('Erro /api/dfe/xml-lote', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao gerar o arquivo ZIP das notas selecionadas.',
+      error: err.message
+    });
   }
 });
 
