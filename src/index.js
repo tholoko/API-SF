@@ -2,18 +2,61 @@ import express from 'express';
 import cors from 'cors';
 import { pool } from './db.js';
 import dotenv from 'dotenv';
-import dns from "node:dns";
+import dns from 'node:dns';
 import bcrypt from 'bcryptjs';
-import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 import crypto from 'node:crypto';
-
-import fs from "node:fs";
-import path from "node:path";
-import multer from "multer";
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import multer from 'multer';
 import fetch from 'node-fetch';
 import cron from 'node-cron';
-
 import XLSX from 'xlsx';
+import puppeteer from 'puppeteer';
+import ping from 'ping';
+
+import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
+
+
+
+function getEnv(name, required = true) {
+  const value = String(process.env[name] || '').trim();
+
+  if (required && !value) {
+    throw new Error(`Variável de ambiente obrigatória não configurada: ${name}`);
+  }
+
+  return value;
+}
+
+function getZApiConfig() {
+  const baseUrl = getEnv('ZAPI_BASE_URL');
+  const instanceId = getEnv('ZAPI_INSTANCE_ID');
+  const instanceToken = getEnv('ZAPI_INSTANCE_TOKEN');
+  const clientToken = String(process.env.ZAPI_CLIENT_TOKEN || '').trim();
+
+  return {
+    baseUrl,
+    instanceId,
+    instanceToken,
+    clientToken
+  };
+}
+
+function getZApiSendTextUrl() {
+  const { baseUrl, instanceId, instanceToken } = getZApiConfig();
+  return `${baseUrl}/instances/${instanceId}/token/${instanceToken}/send-text`;
+}
+
+function getZApiSendImageUrl() {
+  const { baseUrl, instanceId, instanceToken } = getZApiConfig();
+  return `${baseUrl}/instances/${instanceId}/token/${instanceToken}/send-image`;
+}
+
+function getZApiStatusUrl() {
+  const { baseUrl, instanceId, instanceToken } = getZApiConfig();
+  return `${baseUrl}/instances/${instanceId}/token/${instanceToken}/status`;
+}
 
 dns.setDefaultResultOrder("ipv4first");
 dotenv.config();
@@ -92,6 +135,9 @@ app.get('/debug', (req, res) => {
     }
   });
 });
+
+
+
 
 // =====================
 // API Login
@@ -259,6 +305,608 @@ app.get('/api/aniversariantes/mes', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Erro ao listar aniversariantes do mês.',
+      error: err.message
+    });
+  }
+});
+
+async function listarAniversariantesHoje(conn) {
+  const [rows] = await conn.query(`
+    SELECT
+      ID,
+      NOME,
+      SETOR,
+      LOCAL_TRABALHO,
+      FOTO,
+      DATA_NASCIMENTO,
+      TELEFONE,
+      TELEFONE_PESSOAL
+    FROM SF_USUARIO
+    WHERE STATUS = 'Ativo'
+      AND DATA_NASCIMENTO IS NOT NULL
+      AND DAY(DATA_NASCIMENTO) = DAY(CURDATE())
+      AND MONTH(DATA_NASCIMENTO) = MONTH(CURDATE())
+    ORDER BY NOME ASC
+  `);
+
+  return rows;
+}
+
+function obterTelefonesUsuario(usuario) {
+  const telefones = [
+    normalizarNumeroWhatsAppBR(usuario.TELEFONE_PESSOAL),
+    normalizarNumeroWhatsAppBR(usuario.TELEFONE)
+  ].filter(Boolean);
+
+  return [...new Set(telefones)];
+}
+
+function montarHtmlCardAniversario(usuario) {
+  const nome = usuario?.NOME || 'Colaborador(a)';
+  const setor = usuario?.SETOR || 'Setor não informado';
+  const local = usuario?.LOCAL_TRABALHO || 'Local não informado';
+
+  const logoSementes = 'https://sf-link-copy.up.railway.app/anexos/marketing/Logo%20Sementes-1775074662246-36db3a313b0ed.png';
+  const logoSociedade = 'https://sf-link-copy.up.railway.app/anexos/marketing/Logo%20Sociedade-1774616271956-ca397ee063a7b.png';
+
+  return `
+  <!DOCTYPE html>
+  <html lang="pt-BR">
+    <head>
+      <meta charset="UTF-8" />
+      <title>Feliz Aniversário</title>
+      <style>
+        * { box-sizing: border-box; }
+
+        body {
+          margin: 0;
+          font-family: Arial, Helvetica, sans-serif;
+          background: #ffffff;
+        }
+
+        .canvas {
+          width: 1080px;
+          height: 1350px;
+          padding: 40px;
+          background:
+            radial-gradient(circle at top left, rgba(11, 31, 58, 0.05), transparent 28%),
+            radial-gradient(circle at bottom right, rgba(22, 163, 74, 0.08), transparent 28%),
+            linear-gradient(180deg, #ffffff 0%, #f7fbff 55%, #f4fbf6 100%);
+        }
+
+        .card {
+          width: 100%;
+          height: 100%;
+          border-radius: 34px;
+          overflow: hidden;
+          background: linear-gradient(180deg, #ffffff 0%, #f8fbff 65%, #f5fbf7 100%);
+          box-shadow: 0 24px 70px rgba(11, 31, 58, 0.10);
+          border: 1px solid #e5edf5;
+          display: flex;
+          flex-direction: column;
+          position: relative;
+        }
+
+        .balloon {
+          position: absolute;
+          border-radius: 50%;
+          z-index: 0;
+          opacity: 0.9;
+        }
+
+        .balloon::after {
+          content: '';
+          position: absolute;
+          width: 2px;
+          height: 95px;
+          background: rgba(148, 163, 184, 0.45);
+          left: 50%;
+          top: calc(100% - 4px);
+          transform: translateX(-50%);
+        }
+
+        .balloon-1 {
+          width: 130px;
+          height: 155px;
+          top: 95px;
+          left: 38px;
+          background: radial-gradient(circle at 30% 30%, #dbeafe 0%, #93c5fd 45%, #2563eb 100%);
+          box-shadow: inset -12px -16px 24px rgba(11, 31, 58, 0.12);
+        }
+
+        .balloon-2 {
+          width: 110px;
+          height: 135px;
+          top: 210px;
+          right: 58px;
+          background: radial-gradient(circle at 30% 30%, #dcfce7 0%, #86efac 45%, #16a34a 100%);
+          box-shadow: inset -12px -16px 24px rgba(20, 83, 45, 0.12);
+        }
+
+        .balloon-3 {
+          width: 88px;
+          height: 108px;
+          bottom: 220px;
+          left: 78px;
+          background: radial-gradient(circle at 30% 30%, #e0f2fe 0%, #7dd3fc 45%, #0284c7 100%);
+          box-shadow: inset -10px -14px 18px rgba(8, 47, 73, 0.12);
+        }
+
+        .balloon-4 {
+          width: 95px;
+          height: 118px;
+          bottom: 260px;
+          right: 110px;
+          background: radial-gradient(circle at 30% 30%, #dcfce7 0%, #4ade80 48%, #15803d 100%);
+          box-shadow: inset -10px -14px 18px rgba(20, 83, 45, 0.12);
+        }
+
+        .balloon-5 {
+          width: 58px;
+          height: 72px;
+          top: 360px;
+          right: 180px;
+          background: radial-gradient(circle at 30% 30%, #eff6ff 0%, #bfdbfe 50%, #3b82f6 100%);
+          box-shadow: inset -8px -10px 14px rgba(30, 64, 175, 0.10);
+        }
+
+        .content-wrap {
+          position: relative;
+          z-index: 1;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .header {
+          padding: 54px 56px 26px;
+          background: transparent;
+          color: #0b1f3a;
+          text-align: center;
+        }
+
+        .tag {
+          display: inline-block;
+          padding: 10px 22px;
+          border-radius: 999px;
+          background: #eaf3ff;
+          border: 1px solid #d7e6f7;
+          color: #0f5132;
+          font-size: 22px;
+          font-weight: 800;
+          letter-spacing: 1px;
+          margin-bottom: 22px;
+          text-transform: uppercase;
+        }
+
+        .titulo {
+          margin: 0;
+          font-size: 66px;
+          line-height: 1.06;
+          font-weight: 800;
+          letter-spacing: -1px;
+          color: #0b1f3a;
+        }
+
+        .subtitulo {
+          margin: 18px 0 0;
+          font-size: 28px;
+          line-height: 1.5;
+          color: #334155;
+        }
+
+        .content {
+          flex: 1;
+          padding: 20px 56px 30px;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          gap: 24px;
+        }
+
+        .nome-box {
+          background: linear-gradient(135deg, #eff6ff 0%, #ecfdf5 100%);
+          border: 1px solid #d9e8f4;
+          border-radius: 28px;
+          padding: 30px 32px;
+          text-align: center;
+          backdrop-filter: blur(1px);
+        }
+
+        .nome-label {
+          font-size: 20px;
+          color: #64748b;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: .8px;
+          margin-bottom: 12px;
+        }
+
+        .nome {
+          font-size: 54px;
+          line-height: 1.15;
+          color: #0b1f3a;
+          font-weight: 800;
+          word-break: break-word;
+        }
+
+        .mensagem {
+          background: rgba(255, 255, 255, 0.92);
+          border: 1px solid #dce7f1;
+          border-radius: 24px;
+          padding: 28px 30px;
+          font-size: 30px;
+          line-height: 1.6;
+          color: #1f2937;
+          font-weight: 500;
+          box-shadow: 0 10px 30px rgba(11, 31, 58, 0.04);
+        }
+
+        .mensagem strong {
+          color: #0b1f3a;
+        }
+
+        .grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 18px;
+        }
+
+        .info {
+          background: rgba(255, 255, 255, 0.96);
+          border: 1px solid #dce7f1;
+          border-radius: 22px;
+          padding: 22px 24px;
+        }
+
+        .label {
+          font-size: 17px;
+          text-transform: uppercase;
+          letter-spacing: .8px;
+          color: #6b7280;
+          font-weight: 800;
+          margin-bottom: 10px;
+        }
+
+        .valor {
+          font-size: 29px;
+          line-height: 1.35;
+          color: #0f172a;
+          font-weight: 700;
+          word-break: break-word;
+        }
+
+        .footer {
+          margin-top: auto;
+          padding: 24px 56px 34px;
+          border-top: 1px solid #e5edf5;
+          background: transparent;
+        }
+
+        .footer-texto {
+          text-align: center;
+          font-size: 23px;
+          line-height: 1.6;
+          color: #166534;
+          font-weight: 600;
+          margin-bottom: 24px;
+        }
+
+        .footer-texto strong {
+          color: #0b1f3a;
+        }
+
+        .logos-footer {
+          display: flex;
+          justify-content: center;
+          align-items: stretch;
+          gap: 18px;
+        }
+
+        .logo-slot {
+          width: 320px;
+          height: 110px;
+          border-radius: 22px;
+          border: 1px solid #dbe7f1;
+          background: rgba(255, 255, 255, 0.96);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 14px 18px;
+        }
+
+        .logo-slot img {
+          display: block;
+          width: auto;
+          height: auto;
+          object-fit: contain;
+          max-width: 100%;
+        }
+
+        .logo-slot.logo-esquerda img {
+          max-width: 240px;
+          max-height: 52px;
+        }
+
+        .logo-slot.logo-direita img {
+          max-width: 300px;
+          max-height: 85px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="canvas">
+        <div class="card">
+          <div class="balloon balloon-1"></div>
+          <div class="balloon balloon-2"></div>
+          <div class="balloon balloon-3"></div>
+          <div class="balloon balloon-4"></div>
+          <div class="balloon balloon-5"></div>
+
+          <div class="content-wrap">
+            <div class="header">
+              <div class="tag">Mensagem Especial</div>
+              <h1 class="titulo">Feliz Aniversário!</h1>
+              <p class="subtitulo">
+                Hoje celebramos uma data especial com reconhecimento, carinho e gratidão.
+              </p>
+            </div>
+
+            <div class="content">
+              <div class="nome-box">
+                <div class="nome-label">Homenagem para</div>
+                <div class="nome">${escapeHtml(nome)}</div>
+              </div>
+
+              <div class="mensagem">
+                A <strong>Sociedade Franciosi</strong> cumprimenta você pelo seu aniversário e deseja
+                um novo ciclo de muita <strong>saúde</strong>, <strong>paz</strong>,
+                <strong>prosperidade</strong> e <strong>realizações</strong>.
+                Receba nossa consideração e os votos de um dia muito especial.
+              </div>
+
+              <div class="grid">
+                <div class="info">
+                  <div class="label">Setor</div>
+                  <div class="valor">${escapeHtml(setor)}</div>
+                </div>
+
+                <div class="info">
+                  <div class="label">Local de trabalho</div>
+                  <div class="valor">${escapeHtml(local)}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="footer">
+              <div class="footer-texto">
+                Com estima e reconhecimento,<br />
+                <strong>Sociedade Franciosi</strong>
+              </div>
+
+              <div class="logos-footer">
+                <div class="logo-slot logo-esquerda">
+                  <img
+                    src="${logoSementes}"
+                    alt="Logo Sementes"
+                    width="240"
+                    height="52"
+                  />
+                </div>
+
+                <div class="logo-slot logo-direita">
+                  <img
+                    src="${logoSociedade}"
+                    alt="Logo Sociedade Franciosi"
+                    width="255"
+                    height="60"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </body>
+  </html>
+  `;
+}
+
+async function gerarImagemAniversarioBase64(usuario) {
+  const html = montarHtmlCardAniversario(usuario);
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    const buffer = await page.screenshot({
+      type: 'png'
+    });
+
+    return `data:image/png;base64,${buffer.toString('base64')}`;
+  } finally {
+    await browser.close();
+  }
+}
+
+async function enviarParabensParaUsuario(usuario) {
+  const telefones = obterTelefonesUsuario(usuario);
+
+  if (!telefones.length) {
+    return {
+      usuarioId: usuario.ID,
+      nome: usuario.NOME,
+      sucesso: false,
+      erro: 'Usuário sem telefone válido'
+    };
+  }
+
+  const imageBase64 = await gerarImagemAniversarioBase64(usuario);
+  const caption = `🎉 Feliz aniversário, ${usuario.NOME || 'colaborador(a)'}! Desejamos um dia especial e muitas felicidades.`;
+
+  const envios = [];
+
+  for (const telefone of telefones) {
+    try {
+      const retorno = await enviarImagemWhatsAppZApi({
+        telefone,
+        imageBase64,
+        caption
+      });
+
+      envios.push({
+        telefone,
+        sucesso: true,
+        retorno
+      });
+    } catch (err) {
+      envios.push({
+        telefone,
+        sucesso: false,
+        erro: err.message
+      });
+    }
+  }
+
+  return {
+    usuarioId: usuario.ID,
+    nome: usuario.NOME,
+    sucesso: envios.some(item => item.sucesso),
+    envios
+  };
+}
+
+async function jaEnviadoAniversarioHoje(conn, usuarioId) {
+  const [rows] = await conn.query(
+    `
+    SELECT ID
+    FROM SF_LOG_ANIVERSARIO_WHATSAPP
+    WHERE USUARIO_ID = ?
+      AND DATA_ENVIO = CURDATE()
+    LIMIT 1
+    `,
+    [usuarioId]
+  );
+
+  return rows.length > 0;
+}
+
+async function registrarEnvioAniversario(conn, usuarioId, telefones, statusEnvio, observacao = null) {
+  await conn.query(
+    `
+    INSERT INTO SF_LOG_ANIVERSARIO_WHATSAPP
+      (USUARIO_ID, DATA_ENVIO, TELEFONES, STATUS_ENVIO, OBSERVACAO)
+    VALUES
+      (?, CURDATE(), ?, ?, ?)
+    `,
+    [
+      usuarioId,
+      Array.isArray(telefones) ? telefones.join(', ') : String(telefones || ''),
+      statusEnvio,
+      observacao
+    ]
+  );
+}
+
+async function executarRotinaAniversariantes() {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+
+    const aniversariantes = await listarAniversariantesHoje(conn);
+
+    if (!aniversariantes.length) {
+      console.log('[ANIVERSARIANTES] Nenhum aniversariante hoje.');
+      return;
+    }
+
+    for (const usuario of aniversariantes) {
+      try {
+        const jaEnviado = await jaEnviadoAniversarioHoje(conn, usuario.ID);
+
+        if (jaEnviado) {
+          console.log(`[ANIVERSARIANTES] Já enviado hoje para ${usuario.NOME}.`);
+          continue;
+        }
+
+        const resultado = await enviarParabensParaUsuario(usuario);
+        const telefones = obterTelefonesUsuario(usuario);
+
+        await registrarEnvioAniversario(
+          conn,
+          usuario.ID,
+          telefones,
+          resultado.sucesso ? 'ENVIADO' : 'ERRO',
+          resultado.sucesso ? null : (resultado?.envios?.map(e => `${e.telefone}: ${e.erro || 'falha'}`).join(' | ') || 'Falha no envio')
+        );
+
+        console.log('[ANIVERSARIANTES] Resultado:', resultado);
+      } catch (errUsuario) {
+        console.error(`[ANIVERSARIANTES] Erro ao processar ${usuario.NOME}:`, errUsuario.message);
+
+        try {
+          await registrarEnvioAniversario(
+            conn,
+            usuario.ID,
+            obterTelefonesUsuario(usuario),
+            'ERRO',
+            errUsuario.message
+          );
+        } catch {}
+      }
+    }
+  } catch (err) {
+    console.error('[ANIVERSARIANTES] Erro na rotina automática:', err);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+cron.schedule('0 8,14 * * *', async () => {
+  console.log('[CRON] Iniciando verificação de aniversariantes...');
+  await executarRotinaAniversariantes();
+}, {
+  timezone: 'America/Bahia'
+});
+
+app.post('/api/aniversariantes/enviar-hoje', async (req, res) => {
+  try {
+    await executarRotinaAniversariantes();
+
+    return res.json({
+      success: true,
+      message: 'Rotina de aniversariantes executada com sucesso.'
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao executar rotina de aniversariantes.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/aniversariantes/testar-hoje', async (req, res) => {
+  try {
+    const resultado = await executarRotinaAniversariantes();
+
+    return res.json({
+      success: true,
+      message: 'Rotina de aniversariantes executada com sucesso.',
+      resultado
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao executar rotina de aniversariantes.',
       error: err.message
     });
   }
@@ -4644,362 +5292,6 @@ app.get('/api/estoque/transferencias', async (req, res) => {
   }
 });
 
-app.post('/api/estoque/transferencias', async (req, res) => {
-  let conn;
-
-  try {
-    const idProduto = Number(req.body.idProduto);
-    const idLocalOrigem = Number(req.body.idLocalOrigem);
-    const idLocalDestino = Number(req.body.idLocalDestino);
-    const quantidade = parseDecimal(req.body.quantidade);
-    const unidade = textolivreTr(req.body.unidade, 10);
-    const observacao = textolivreTr(req.body.observacao, 255);
-    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
-
-    const tipoTransferencia = textolivreTr(req.body.tipoTransferencia, 20).toUpperCase();
-    const responsavelTransporte = textolivreTr(req.body.responsavelTransporte, 150);
-    const responsavelEntrega = textolivreTr(req.body.responsavelEntrega, 150);
-
-    if (!idProduto || !idLocalOrigem || !idLocalDestino) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe idProduto, idLocalOrigem e idLocalDestino.'
-      });
-    }
-
-    if (!['LOCAL', 'EXTERNA'].includes(tipoTransferencia)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe um tipo de transferência válido: LOCAL ou EXTERNA.'
-      });
-    }
-
-    if (tipoTransferencia === 'EXTERNA' && (!responsavelTransporte || !responsavelEntrega)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe quem levará o material e para quem será entregue.'
-      });
-    }
-
-    if (idLocalOrigem === idLocalDestino) {
-      return res.status(400).json({
-        success: false,
-        message: 'O local de destino deve ser diferente do local de origem.'
-      });
-    }
-
-    if (!(quantidade > 0)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe uma quantidade válida para transferência.'
-      });
-    }
-
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    const produto = await validarProdutoSistema(conn, idProduto);
-    if (!produto) {
-      await conn.rollback();
-      return res.status(404).json({ success: false, message: 'Produto não encontrado na SF_PRODUTOS.' });
-    }
-
-    if (Number(produto.ativo ?? 1) !== 1) {
-      await conn.rollback();
-      return res.status(400).json({ success: false, message: 'O produto informado está inativo.' });
-    }
-
-    const localOrigem = await validarLocalAlmoxarifado(conn, idLocalOrigem);
-    if (!localOrigem) {
-      await conn.rollback();
-      return res.status(404).json({ success: false, message: 'Local de origem não encontrado.' });
-    }
-
-    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
-    if (!localDestino) {
-      await conn.rollback();
-      return res.status(404).json({ success: false, message: 'Local de destino não encontrado.' });
-    }
-
-    const [rowsEntradaOrigem] = await conn.query(
-      `
-      SELECT pe.id, pe.unidade_nf, pe.ID_LOCAL_ALMOXARIFADO
-      FROM SF_PRODUTO_ENTRADA pe
-      WHERE pe.produto_sistema_id = ?
-        AND pe.ID_LOCAL_ALMOXARIFADO = ?
-      ORDER BY pe.id ASC
-      LIMIT 1
-      `,
-      [idProduto, idLocalOrigem]
-    );
-
-    const entradaOrigem = rowsEntradaOrigem[0] || null;
-    if (!entradaOrigem) {
-      await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'Não existe entrada desse produto nesse local para transferir.'
-      });
-    }
-
-    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
-    const saldoAntes = saldoInfo.saldo;
-
-    if (quantidade > saldoAntes) {
-      await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: `Quantidade excede o saldo disponível (${saldoAntes}).`
-      });
-    }
-
-    const statusTransferencia =
-      tipoTransferencia === 'LOCAL'
-        ? 'AGUARDANDO_RECEBIMENTO'
-        : 'EM_TRANSITO';
-
-    const [result] = await conn.query(
-      `
-      INSERT INTO SF_ESTOQUE_TRANSFERENCIA
-        (
-          ID_PRODUTO,
-          ID_ENTRADA_ORIGEM,
-          ID_LOCAL_ORIGEM,
-          ID_LOCAL_DESTINO,
-          QUANTIDADE,
-          UNIDADE,
-          OBSERVACAO,
-          TIPO_TRANSFERENCIA,
-          RESPONSAVEL_TRANSPORTE,
-          RESPONSAVEL_ENTREGA,
-          STATUS_TRANSFERENCIA,
-          USUARIO_CADASTRO
-        )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-      [
-        idProduto,
-        Number(entradaOrigem.id),
-        idLocalOrigem,
-        idLocalDestino,
-        quantidade,
-        unidade || produto.unidade || entradaOrigem.unidade_nf || null,
-        observacao || null,
-        tipoTransferencia,
-        tipoTransferencia === 'EXTERNA' ? responsavelTransporte : null,
-        tipoTransferencia === 'EXTERNA' ? responsavelEntrega : null,
-        statusTransferencia,
-        usuario
-      ]
-    );
-
-    const idTransferencia = result.insertId;
-    const saldoDepois = saldoAntes - quantidade;
-
-    await inserirLogTransferencia(conn, {
-      idTransferencia,
-      acao: 'CRIACAO',
-      saldoAntes,
-      quantidadeTransferida: quantidade,
-      saldoDepois,
-      usuario,
-      observacao: `Tipo: ${tipoTransferencia}; Status inicial: ${statusTransferencia}${observacao ? `; Obs: ${observacao}` : ''}`
-    });
-
-    await conn.commit();
-
-    return res.json({
-      success: true,
-      id: idTransferencia,
-      statusTransferencia,
-      message: 'Transferência registrada com sucesso.'
-    });
-  } catch (err) {
-    console.error('Erro ao registrar transferência:', err);
-    try {
-      if (conn) await conn.rollback();
-    } catch {}
-    return res.status(500).json({
-      success: false,
-      message: 'Erro ao registrar transferência.',
-      error: err.message
-    });
-  } finally {
-    if (conn) conn.release();
-  }
-});
-
-app.put('/api/estoque/transferencias/:id', async (req, res) => {
-  let conn;
-
-  try {
-    const idTransferencia = Number(req.params.id);
-    const idLocalDestino = Number(req.body.idLocalDestino);
-    const quantidadeNova = parseDecimal(req.body.quantidade);
-    const observacao = textolivreTr(req.body.observacao, 255);
-    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
-
-    if (!idTransferencia) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe o ID da transferência.'
-      });
-    }
-
-    if (!idLocalDestino) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe o local de destino.'
-      });
-    }
-
-    if (!(quantidadeNova > 0)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe uma quantidade válida.'
-      });
-    }
-
-    conn = await pool.getConnection();
-    await conn.beginTransaction();
-
-    const [rowsAtual] = await conn.query(
-      `
-      SELECT *
-      FROM SF_ESTOQUE_TRANSFERENCIA
-      WHERE ID = ?
-      LIMIT 1
-      `,
-      [idTransferencia]
-    );
-
-    const atual = rowsAtual[0];
-
-    if (!atual) {
-      await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Transferência não encontrada.'
-      });
-    }
-
-    if (atual.STATUS_TRANSFERENCIA !== 'AGUARDANDO_RECEBIMENTO') {
-      await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'Apenas transferências aguardando recebimento podem ser editadas.'
-      });
-    }
-
-
-    const produto = await validarProdutoSistema(conn, atual.ID_PRODUTO);
-    if (!produto) {
-      await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Produto vinculado à transferência não foi encontrado.'
-      });
-    }
-
-    const localOrigem = await validarLocalAlmoxarifado(conn, atual.ID_LOCAL_ORIGEM);
-    if (!localOrigem) {
-      await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Local de origem da transferência não encontrado.'
-      });
-    }
-
-    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
-    if (!localDestino) {
-      await conn.rollback();
-      return res.status(404).json({
-        success: false,
-        message: 'Local de destino não encontrado.'
-      });
-    }
-
-    if (Number(atual.ID_LOCAL_ORIGEM) === idLocalDestino) {
-      await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'O local de destino deve ser diferente do local de origem.'
-      });
-    }
-
-    const saldoInfo = await obterSaldoTransferivel(
-      conn,
-      atual.ID_PRODUTO,
-      atual.ID_LOCAL_ORIGEM,
-      idTransferencia
-    );
-
-    const quantidadeAtual = Number(atual.QUANTIDADE ?? 0);
-    const saldoAntes = saldoInfo.saldo + quantidadeAtual;
-    const saldoMaximoPermitido = saldoInfo.saldo + quantidadeAtual;
-
-    if (quantidadeNova > saldoMaximoPermitido) {
-      await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: `Quantidade excede o saldo disponível (${saldoMaximoPermitido}).`
-      });
-    }
-
-    await conn.query(
-      `
-      UPDATE SF_ESTOQUE_TRANSFERENCIA
-      SET
-        ID_LOCAL_DESTINO = ?,
-        QUANTIDADE = ?,
-        OBSERVACAO = ?,
-        UNIDADE = ?,
-        USUARIO_ALTERACAO = ?,
-        DATA_ALTERACAO = NOW()
-      WHERE ID = ?
-      `,
-      [
-        idLocalDestino,
-        quantidadeNova,
-        observacao || null,
-        atual.UNIDADE || produto.unidade || null,
-        usuario,
-        idTransferencia
-      ]
-    );
-
-    const saldoDepois = saldoAntes - quantidadeNova;
-
-    await inserirLogTransferencia(conn, {
-      idTransferencia,
-      acao: 'EDICAO',
-      saldoAntes,
-      quantidadeTransferida: quantidadeNova,
-      saldoDepois,
-      usuario,
-      observacao
-    });
-
-    await conn.commit();
-
-    return res.json({
-      success: true,
-      message: 'Transferência atualizada com sucesso.'
-    });
-  } catch (err) {
-    console.error('Erro ao editar transferência:', err);
-
-    try { if (conn) await conn.rollback(); } catch {}
-
-    return res.status(500).json({
-      success: false,
-      message: 'Erro ao editar transferência.',
-      error: err.message
-    });
-  } finally {
-    if (conn) conn.release();
-  }
-});
 
 app.delete('/api/estoque/transferencias/:id', async (req, res) => {
   let conn;
@@ -5244,13 +5536,12 @@ app.post('/api/estoque/transferencias/:id/recebimento', async (req, res) => {
     }
 
     const centroCustoUsuario = String(
-      usuarioDb.LOCAL_TRABALHO ?? usuarioDb.LOCAL_TRABALHO ?? ''
+      usuarioDb.CENTRO_CUSTO ?? usuarioDb.CENTRO_CUSTO ?? ''
     ).trim().toUpperCase();
 
     const localDestinoNome = String(
       transferencia.LOCAL_DESTINO_NOME ?? ''
     ).trim().toUpperCase();
-
 
 
     if (!centroCustoUsuario || centroCustoUsuario !== localDestinoNome) {
@@ -5411,7 +5702,7 @@ app.post('/api/estoque/transferencias/:id/recusa', async (req, res) => {
     }
 
     const centroCustoUsuario = String(
-      usuarioDb.LOCAL_TRABALHO ?? usuarioDb.LOCAL_TRABALHO ?? ''
+      usuarioDb.CENTRO_CUSTO ?? usuarioDb.CENTRO_CUSTO ?? ''
     ).trim().toUpperCase();
 
     const localDestinoNome = String(
@@ -5553,27 +5844,27 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
       `
       SELECT
         t.ID,
-        t.ID_PRODUTO,
-        t.ID_ENTRADA_ORIGEM,
-        p.codigo AS CODIGO_PRODUTO,
-        p.descricao AS DESCRICAO_PRODUTO,
+        t.ID_PRODUTO AS IDPRODUTO,
+        t.ID_ENTRADA_ORIGEM AS IDENTRADAORIGEM,
+        p.codigo AS CODIGOPRODUTO,
+        p.descricao AS DESCRICAOPRODUTO,
         COALESCE(t.UNIDADE, p.unidade, 'UN') AS UNIDADE,
-        t.ID_LOCAL_ORIGEM,
-        COALESCE(loa.NOME, lot.NOME) AS LOCAL_ORIGEM,
-        t.ID_LOCAL_DESTINO,
-        ld.NOME AS LOCAL_DESTINO,
+        t.ID_LOCAL_ORIGEM AS IDLOCALORIGEM,
+        COALESCE(loa.NOME, lot.NOME) AS LOCALORIGEM,
+        t.ID_LOCAL_DESTINO AS IDLOCALDESTINO,
+        ld.NOME AS LOCALDESTINO,
         t.QUANTIDADE,
         t.OBSERVACAO,
-        t.TIPO_TRANSFERENCIA,
-        t.RESPONSAVEL_TRANSPORTE,
-        t.RESPONSAVEL_ENTREGA,
-        t.USUARIO_RECEBIMENTO,
-        t.DATA_HORA_RECEBIMENTO,
-        t.STATUS_TRANSFERENCIA,
-        t.USUARIO_CADASTRO,
-        t.DATA_CADASTRO,
-        t.USUARIO_ALTERACAO,
-        t.DATA_ALTERACAO
+        t.TIPO_TRANSFERENCIA AS TIPOTRANSFERENCIA,
+        t.RESPONSAVEL_TRANSPORTE AS RESPONSAVELTRANSPORTE,
+        t.RESPONSAVEL_ENTREGA AS RESPONSAVELENTREGA,
+        t.USUARIO_RECEBIMENTO AS USUARIORECEBIMENTO,
+        t.DATA_HORA_RECEBIMENTO AS DATAHORARECEBIMENTO,
+        t.STATUS_TRANSFERENCIA AS STATUSTRANSFERENCIA,
+        t.USUARIO_CADASTRO AS USUARIOCADASTRO,
+        t.DATA_CADASTRO AS DATACADASTRO,
+        t.USUARIO_ALTERACAO AS USUARIOALTERACAO,
+        t.DATA_ALTERACAO AS DATAALTERACAO
       FROM SF_ESTOQUE_TRANSFERENCIA t
       INNER JOIN SF_PRODUTOS p
         ON p.id = t.ID_PRODUTO
@@ -5593,20 +5884,42 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
     const [items] = await conn.query(
       `
       SELECT
-        p.id AS ID_PRODUTO,
-        p.codigo AS CODIGO_PRODUTO,
-        p.descricao AS DESCRICAO_PRODUTO,
+        p.id AS IDPRODUTO,
+        p.codigo AS CODIGOPRODUTO,
+        p.descricao AS DESCRICAOPRODUTO,
         COALESCE(p.unidade, 'UN') AS UNIDADE,
-        centro.ID AS ID_LOCAL_DESTINO,
-        centro.NOME AS LOCAL_DESTINO,
-        COALESCE(rec.qtd_recebida, 0) AS QTD_RECEBIDA,
-        COALESCE(env.qtd_enviada, 0) AS QTD_ENVIADA,
-        COALESCE(pend.qtd_transferida_nao_recebida, 0) AS QTD_TRANSFERIDA_NAO_RECEBIDA,
+
+        centro.ID AS IDLOCALDESTINO,
+        centro.NOME AS LOCALDESTINO,
+
+        COALESCE(rec.qtd_recebida, 0) AS QTDRECEBIDA,
+        COALESCE(env.qtd_enviada, 0) AS QTDENVIADA,
+        COALESCE(pend.qtd_transferida_nao_recebida, 0) AS QTDTRANSFERIDANAORECEBIDA,
+
+        COALESCE(saida.qtd_saida, 0) AS QTDSAIDA,
+        COALESCE(dev.qtd_devolvida, 0) AS QTDDEVOLVIDA,
+
         CASE
-          WHEN COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0) < 0 THEN 0
-          ELSE COALESCE(rec.qtd_recebida, 0) - COALESCE(env.qtd_enviada, 0)
+          WHEN COALESCE(saida.qtd_saida, 0) - COALESCE(dev.qtd_devolvida, 0) < 0 THEN 0
+          ELSE COALESCE(saida.qtd_saida, 0) - COALESCE(dev.qtd_devolvida, 0)
+        END AS QTDSAIDALIQUIDA,
+
+        CASE
+          WHEN
+            COALESCE(rec.qtd_recebida, 0)
+            - COALESCE(env.qtd_enviada, 0)
+            - COALESCE(saida.qtd_saida, 0)
+            + COALESCE(dev.qtd_devolvida, 0) < 0
+          THEN 0
+          ELSE
+            COALESCE(rec.qtd_recebida, 0)
+            - COALESCE(env.qtd_enviada, 0)
+            - COALESCE(saida.qtd_saida, 0)
+            + COALESCE(dev.qtd_devolvida, 0)
         END AS QUANTIDADE
+
       FROM SF_PRODUTOS p
+
       LEFT JOIN (
         SELECT
           t.ID_PRODUTO,
@@ -5616,6 +5929,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
           AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) = 'RECEBIDO'
         GROUP BY t.ID_PRODUTO
       ) rec ON rec.ID_PRODUTO = p.id
+
       LEFT JOIN (
         SELECT
           t.ID_PRODUTO,
@@ -5625,6 +5939,7 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
           AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO', 'RECEBIDO')
         GROUP BY t.ID_PRODUTO
       ) env ON env.ID_PRODUTO = p.id
+
       LEFT JOIN (
         SELECT
           t.ID_PRODUTO,
@@ -5634,26 +5949,69 @@ app.get('/api/estoque/centro-custo', async (req, res) => {
           AND UPPER(TRIM(COALESCE(t.STATUS_TRANSFERENCIA, ''))) IN ('AGUARDANDO_RECEBIMENTO', 'EM_TRANSITO')
         GROUP BY t.ID_PRODUTO
       ) pend ON pend.ID_PRODUTO = p.id
+
+      LEFT JOIN (
+        SELECT
+          s.ID_PRODUTO,
+          SUM(COALESCE(s.QUANTIDADE, 0)) AS qtd_saida
+        FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+        WHERE s.ID_LOCAL_ORIGEM = ?
+        GROUP BY s.ID_PRODUTO
+      ) saida ON saida.ID_PRODUTO = p.id
+
+      LEFT JOIN (
+        SELECT
+          s.ID_PRODUTO,
+          SUM(COALESCE(d.QUANTIDADE, 0)) AS qtd_devolvida
+        FROM SF_ESTOQUE_SAIDA_DEVOLUCAO d
+        INNER JOIN SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+          ON s.ID = d.ID_SAIDA
+        WHERE s.ID_LOCAL_ORIGEM = ?
+        GROUP BY s.ID_PRODUTO
+      ) dev ON dev.ID_PRODUTO = p.id
+
       CROSS JOIN (
         SELECT ID, NOME
         FROM SF_CENTRO_CUSTO
         WHERE ID = ?
       ) centro
+
       WHERE EXISTS (
         SELECT 1
         FROM SF_ESTOQUE_TRANSFERENCIA t
         WHERE t.ID_PRODUTO = p.id
           AND (t.ID_LOCAL_DESTINO = ? OR t.ID_LOCAL_ORIGEM = ?)
       )
+      OR EXISTS (
+        SELECT 1
+        FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+        WHERE s.ID_PRODUTO = p.id
+          AND s.ID_LOCAL_ORIGEM = ?
+      )
+
       ORDER BY p.codigo ASC, p.descricao ASC
       `,
-      [centro.ID, centro.ID, centro.ID, centro.ID, centro.ID, centro.ID]
+      [
+        centro.ID, // rec
+        centro.ID, // env
+        centro.ID, // pend
+        centro.ID, // saida
+        centro.ID, // dev
+        centro.ID, // centro cross
+        centro.ID, // exists transferencia destino
+        centro.ID, // exists transferencia origem
+        centro.ID  // exists saida
+      ]
     );
 
     return res.json({
       success: true,
       usuario,
+      usuarioId: usuarioDb.ID,
+      usuarioNome: usuarioDb.nome,
       centroCusto: centroCustoUsuario,
+      centroCustoId: centro.ID,
+      centroCustoNome: centro.NOME,
       notificacoesPendentes,
       items
     });
@@ -5722,7 +6080,7 @@ app.post('/api/locais-centrocusto', async (req, res) => {
   }
 });
 
-async function obterSaldoCentroCusto(conn, idProduto, idLocalOrigem, ignoreTransferenciaId = null) {
+async function obterSaldoCentroCusto(conn, idProduto, idLocalOrigem, ignoreTransferenciaId = null, ignoreSaidaId = null) {
   const paramsRecebidas = [Number(idProduto), Number(idLocalOrigem)];
   const [rowsRecebidas] = await conn.query(
     `
@@ -5751,13 +6109,50 @@ async function obterSaldoCentroCusto(conn, idProduto, idLocalOrigem, ignoreTrans
 
   const [rowsEnviadas] = await conn.query(sqlEnviadas, paramsEnviadas);
 
+  const paramsSaidas = [Number(idProduto), Number(idLocalOrigem)];
+  let sqlSaidas = `
+    SELECT COALESCE(SUM(COALESCE(s.QUANTIDADE, 0)), 0) AS qtd_saida
+    FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+    WHERE s.ID_PRODUTO = ?
+      AND s.ID_LOCAL_ORIGEM = ?
+  `;
+
+  if (ignoreSaidaId) {
+    sqlSaidas += ' AND s.ID <> ?';
+    paramsSaidas.push(Number(ignoreSaidaId));
+  }
+
+  const [rowsSaidas] = await conn.query(sqlSaidas, paramsSaidas);
+
+  const paramsDevolvidas = [Number(idProduto), Number(idLocalOrigem)];
+  let sqlDevolvidas = `
+    SELECT COALESCE(SUM(COALESCE(d.QUANTIDADE, 0)), 0) AS qtd_devolvida
+    FROM SF_ESTOQUE_SAIDA_DEVOLUCAO d
+    INNER JOIN SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+      ON s.ID = d.ID_SAIDA
+    WHERE s.ID_PRODUTO = ?
+      AND s.ID_LOCAL_ORIGEM = ?
+  `;
+
+  if (ignoreSaidaId) {
+    sqlDevolvidas += ' AND s.ID <> ?';
+    paramsDevolvidas.push(Number(ignoreSaidaId));
+  }
+
+  const [rowsDevolvidas] = await conn.query(sqlDevolvidas, paramsDevolvidas);
+
   const qtdRecebida = Number(rowsRecebidas?.[0]?.qtd_recebida ?? 0);
   const qtdEnviada = Number(rowsEnviadas?.[0]?.qtd_enviada ?? 0);
-  const saldo = qtdRecebida - qtdEnviada;
+  const qtdSaida = Number(rowsSaidas?.[0]?.qtd_saida ?? 0);
+  const qtdDevolvida = Number(rowsDevolvidas?.[0]?.qtd_devolvida ?? 0);
+
+  const saldo = qtdRecebida - qtdEnviada - qtdSaida + qtdDevolvida;
 
   return {
     qtdRecebida,
     qtdEnviada,
+    qtdSaida,
+    qtdDevolvida,
     saldo: saldo < 0 ? 0 : saldo
   };
 }
@@ -6317,6 +6712,772 @@ app.delete('/api/estoque/centro-custo/transferencias/:id', async (req, res) => {
   }
 });
 
+async function obterSaldoCentroCustoComSaidas(conn, idProduto, idLocalOrigem, ignoreSaidaId = null) {
+  const saldoBase = await obterSaldoCentroCusto(conn, idProduto, idLocalOrigem);
+
+  const paramsSaidas = [Number(idProduto), Number(idLocalOrigem)];
+  let sqlSaidas = `
+    SELECT COALESCE(SUM(COALESCE(s.QUANTIDADE, 0)), 0) AS qtd_saida
+    FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+    WHERE s.ID_PRODUTO = ?
+      AND s.ID_LOCAL_ORIGEM = ?
+  `;
+
+  if (ignoreSaidaId) {
+    sqlSaidas += ' AND s.ID <> ?';
+    paramsSaidas.push(Number(ignoreSaidaId));
+  }
+
+  const [rowsSaidas] = await conn.query(sqlSaidas, paramsSaidas);
+
+  const paramsDevolvidas = [Number(idProduto), Number(idLocalOrigem)];
+  let sqlDevolvidas = `
+    SELECT COALESCE(SUM(COALESCE(d.QUANTIDADE, 0)), 0) AS qtd_devolvida
+    FROM SF_ESTOQUE_SAIDA_DEVOLUCAO d
+    INNER JOIN SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+      ON s.ID = d.ID_SAIDA
+    WHERE s.ID_PRODUTO = ?
+      AND s.ID_LOCAL_ORIGEM = ?
+  `;
+
+  if (ignoreSaidaId) {
+    sqlDevolvidas += ' AND s.ID <> ?';
+    paramsDevolvidas.push(Number(ignoreSaidaId));
+  }
+
+  const [rowsDevolvidas] = await conn.query(sqlDevolvidas, paramsDevolvidas);
+
+  const qtdSaida = Number(rowsSaidas?.[0]?.qtd_saida ?? 0);
+  const qtdDevolvida = Number(rowsDevolvidas?.[0]?.qtd_devolvida ?? 0);
+  const saldo = Number(saldoBase?.saldo ?? 0) - qtdSaida + qtdDevolvida;
+
+  return {
+    qtdRecebida: Number(saldoBase?.qtdRecebida ?? 0),
+    qtdEnviada: Number(saldoBase?.qtdEnviada ?? 0),
+    qtdSaida,
+    qtdDevolvida,
+    saldo: saldo < 0 ? 0 : saldo
+  };
+}
+
+async function obterResumoSaidaCentroCusto(conn, idSaida) {
+  const [rows] = await conn.query(
+    `
+    SELECT
+      s.*,
+      COALESCE(SUM(COALESCE(d.QUANTIDADE, 0)), 0) AS QTD_DEVOLVIDA
+    FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+    LEFT JOIN SF_ESTOQUE_SAIDA_DEVOLUCAO d
+      ON d.ID_SAIDA = s.ID
+    WHERE s.ID = ?
+    GROUP BY s.ID
+    LIMIT 1
+    `,
+    [Number(idSaida)]
+  );
+
+  const saida = rows[0] || null;
+  if (!saida) return null;
+
+  const quantidadeSaida = Number(saida.QUANTIDADE ?? 0);
+  const qtdDevolvida = Number(saida.QTD_DEVOLVIDA ?? 0);
+  const saldoPendente = Math.max(quantidadeSaida - qtdDevolvida, 0);
+
+  let statusSaida = 'ATIVA';
+  if (qtdDevolvida > 0 && saldoPendente > 0) statusSaida = 'PARCIALMENTE_DEVOLVIDA';
+  if (saldoPendente === 0) statusSaida = 'DEVOLVIDA_TOTALMENTE';
+
+  return {
+    ...saida,
+    QTD_DEVOLVIDA: qtdDevolvida,
+    SALDO_PENDENTE: saldoPendente,
+    STATUS_SAIDA: statusSaida
+  };
+}
+
+async function inserirLogSaidaCentroCusto(conn, {
+  idSaida,
+  acao,
+  saldoAntes,
+  quantidadeSaida,
+  saldoDepois,
+  usuario,
+  observacao
+}) {
+  await conn.query(
+    `
+    INSERT INTO SF_ESTOQUE_SAIDA_CENTRO_CUSTO_LOG
+      (
+        ID_SAIDA,
+        ACAO,
+        SALDO_ANTES,
+        QUANTIDADE_SAIDA,
+        SALDO_DEPOIS,
+        USUARIO,
+        OBSERVACAO
+      )
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      Number(idSaida),
+      textolivreTr(acao, 50),
+      parseDecimal(saldoAntes) || 0,
+      parseDecimal(quantidadeSaida) || 0,
+      parseDecimal(saldoDepois) || 0,
+      textolivreTr(usuario, 150) || 'SISTEMA',
+      textolivreTr(observacao, 255) || null
+    ]
+  );
+}
+
+async function inserirLogDevolucaoSaidaCentroCusto(conn, {
+  idDevolucao,
+  idSaida,
+  acao,
+  saldoSaidaAntes,
+  quantidadeDevolvida,
+  saldoSaidaDepois,
+  usuario,
+  observacao
+}) {
+  await conn.query(
+    `
+    INSERT INTO SF_ESTOQUE_SAIDA_DEVOLUCAO_LOG
+      (
+        ID_DEVOLUCAO,
+        ID_SAIDA,
+        ACAO,
+        SALDO_SAIDA_ANTES,
+        QUANTIDADE_DEVOLVIDA,
+        SALDO_SAIDA_DEPOIS,
+        USUARIO,
+        OBSERVACAO
+      )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      Number(idDevolucao),
+      Number(idSaida),
+      textolivreTr(acao, 50),
+      parseDecimal(saldoSaidaAntes) || 0,
+      parseDecimal(quantidadeDevolvida) || 0,
+      parseDecimal(saldoSaidaDepois) || 0,
+      textolivreTr(usuario, 150) || 'SISTEMA',
+      textolivreTr(observacao, 255) || null
+    ]
+  );
+}
+
+app.get('/api/estoque/centro-custo/saidas', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.query.idProduto);
+    const idLocalOrigem = Number(req.query.idLocalOrigem);
+
+    if (!idProduto || !idLocalOrigem) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto e idLocalOrigem.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalCentrocusto(conn, idLocalOrigem);
+    if (!localOrigem) {
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de origem não encontrado.'
+      });
+    }
+
+    const [saidas] = await conn.query(
+      `
+      SELECT
+        s.ID,
+        s.ID_PRODUTO,
+        s.ID_LOCAL_ORIGEM,
+        p.codigo AS CODIGO_PRODUTO,
+        p.descricao AS DESCRICAO_PRODUTO,
+        COALESCE(s.UNIDADE, p.unidade, 'UN') AS UNIDADE,
+        lo.NOME AS LOCAL_ORIGEM,
+        s.QUANTIDADE,
+        s.FINALIDADE,
+        s.USUARIO_SOLICITANTE,
+        s.OBSERVACAO,
+        s.USUARIO_CADASTRO,
+        s.DATA_CADASTRO,
+        s.USUARIO_ALTERACAO,
+        s.DATA_ALTERACAO
+      FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+      INNER JOIN SF_PRODUTOS p
+        ON p.id = s.ID_PRODUTO
+      INNER JOIN SF_CENTRO_CUSTO lo
+        ON lo.ID = s.ID_LOCAL_ORIGEM
+      WHERE s.ID_PRODUTO = ?
+        AND s.ID_LOCAL_ORIGEM = ?
+      ORDER BY s.DATA_CADASTRO DESC, s.ID DESC
+      `,
+      [idProduto, idLocalOrigem]
+    );
+
+    const idsSaida = saidas.map(s => Number(s.ID)).filter(Boolean);
+
+    let devolucoes = [];
+    if (idsSaida.length) {
+      const placeholders = idsSaida.map(() => '?').join(',');
+
+      const [rowsDevolucoes] = await conn.query(
+        `
+        SELECT
+          d.ID,
+          d.ID_SAIDA,
+          d.QUANTIDADE,
+          d.OBSERVACAO,
+          d.USUARIO_DEVOLUCAO,
+          d.DATA_CADASTRO
+        FROM SF_ESTOQUE_SAIDA_DEVOLUCAO d
+        WHERE d.ID_SAIDA IN (${placeholders})
+        ORDER BY d.DATA_CADASTRO DESC, d.ID DESC
+        `,
+        idsSaida
+      );
+
+      devolucoes = rowsDevolucoes;
+    }
+
+    const devolucoesPorSaida = devolucoes.reduce((acc, dev) => {
+      const idSaida = Number(dev.ID_SAIDA);
+      if (!acc[idSaida]) acc[idSaida] = [];
+      acc[idSaida].push(dev);
+      return acc;
+    }, {});
+
+    const items = saidas.map(saida => {
+      const listaDevolucoes = devolucoesPorSaida[Number(saida.ID)] || [];
+      const quantidadeSaida = Number(saida.QUANTIDADE ?? 0);
+      const quantidadeDevolvida = listaDevolucoes.reduce(
+        (total, d) => total + Number(d.QUANTIDADE ?? 0),
+        0
+      );
+      const saldoPendente = Math.max(quantidadeSaida - quantidadeDevolvida, 0);
+
+      let statusSaida = 'ATIVA';
+      if (quantidadeDevolvida > 0 && saldoPendente > 0) {
+        statusSaida = 'PARCIALMENTE_DEVOLVIDA';
+      }
+      if (saldoPendente === 0) {
+        statusSaida = 'DEVOLVIDA_TOTALMENTE';
+      }
+
+      return {
+        ...saida,
+        QUANTIDADE_DEVOLVIDA: quantidadeDevolvida,
+        SALDO_PENDENTE: saldoPendente,
+        STATUS_SAIDA: statusSaida,
+        devolucoes: listaDevolucoes
+      };
+    });
+
+    const saldoInfo = await obterSaldoCentroCustoComSaidas(conn, idProduto, idLocalOrigem);
+
+    return res.json({
+      success: true,
+      produto,
+      localOrigem,
+      saldo: saldoInfo.saldo,
+      qtdRecebida: saldoInfo.qtdRecebida,
+      qtdEnviada: saldoInfo.qtdEnviada,
+      qtdSaida: saldoInfo.qtdSaida,
+      qtdDevolvida: saldoInfo.qtdDevolvida,
+      items
+    });
+  } catch (err) {
+    console.error('Erro ao listar saídas do centro de custo:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar saídas do centro de custo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/estoque/centro-custo/saidas', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.body.idProduto);
+    const idLocalOrigem = Number(req.body.idLocalOrigem);
+    const quantidade = parseDecimal(req.body.quantidade);
+    const unidade = textolivreTr(req.body.unidade, 10);
+    const finalidade = textolivreTr(req.body.finalidade, 255);
+    const usuarioSolicitante = textolivreTr(req.body.usuarioSolicitante, 150);
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+
+    if (!idProduto || !idLocalOrigem) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto e idLocalOrigem.'
+      });
+    }
+
+    if (!(quantidade > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida para saída.'
+      });
+    }
+
+    if (!finalidade) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a finalidade da utilização.'
+      });
+    }
+
+    if (!usuarioSolicitante) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o usuário solicitante.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Produto não encontrado na SF_PRODUTOS.'
+      });
+    }
+
+    const localOrigem = await validarLocalCentrocusto(conn, idLocalOrigem);
+    if (!localOrigem) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Centro de custo de origem não encontrado.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoCentroCustoComSaidas(conn, idProduto, idLocalOrigem);
+    const saldoAntes = Number(saldoInfo.saldo ?? 0);
+
+    if (quantidade > saldoAntes) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Quantidade excede o saldo disponível (${saldoAntes}).`
+      });
+    }
+
+    const [result] = await conn.query(
+      `
+      INSERT INTO SF_ESTOQUE_SAIDA_CENTRO_CUSTO
+        (
+          ID_PRODUTO,
+          ID_LOCAL_ORIGEM,
+          QUANTIDADE,
+          UNIDADE,
+          FINALIDADE,
+          USUARIO_SOLICITANTE,
+          OBSERVACAO,
+          USUARIO_CADASTRO
+        )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        idProduto,
+        idLocalOrigem,
+        quantidade,
+        unidade || produto.unidade || 'UN',
+        finalidade,
+        usuarioSolicitante,
+        observacao || null,
+        usuario
+      ]
+    );
+
+    const idSaida = result.insertId;
+    const saldoDepois = saldoAntes - quantidade;
+
+    await inserirLogSaidaCentroCusto(conn, {
+      idSaida,
+      acao: 'CRIACAO',
+      saldoAntes,
+      quantidadeSaida: quantidade,
+      saldoDepois,
+      usuario,
+      observacao: observacao || 'Saída de material registrada.'
+    });
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      id: idSaida,
+      message: 'Saída registrada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao registrar saída do centro de custo:', err);
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao registrar saída do centro de custo.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/estoque/centro-custo/saidas/:id/logs', async (req, res) => {
+  let conn;
+
+  try {
+    const idSaida = Number(req.params.id);
+
+    if (!idSaida) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o id da saída.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const saida = await obterResumoSaidaCentroCusto(conn, idSaida);
+    if (!saida) {
+      return res.status(404).json({
+        success: false,
+        message: 'Saída não encontrada.'
+      });
+    }
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        l.ID,
+        l.ID_SAIDA,
+        l.ACAO,
+        l.SALDO_ANTES,
+        l.QUANTIDADE_SAIDA,
+        l.SALDO_DEPOIS,
+        l.USUARIO,
+        l.OBSERVACAO,
+        l.DATA_HORA
+      FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO_LOG l
+      WHERE l.ID_SAIDA = ?
+      ORDER BY l.DATA_HORA DESC, l.ID DESC
+      `,
+      [idSaida]
+    );
+
+    return res.json({
+      success: true,
+      item: saida,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar logs da saída:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar logs da saída.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/estoque/centro-custo/saidas/:id/devolucoes', async (req, res) => {
+  let conn;
+
+  try {
+    const idSaida = Number(req.params.id);
+
+    if (!idSaida) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o id da saída.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const saida = await obterResumoSaidaCentroCusto(conn, idSaida);
+    if (!saida) {
+      return res.status(404).json({
+        success: false,
+        message: 'Saída não encontrada.'
+      });
+    }
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        d.ID,
+        d.ID_SAIDA,
+        d.QUANTIDADE,
+        d.OBSERVACAO,
+        d.USUARIO_DEVOLUCAO,
+        d.DATA_CADASTRO
+      FROM SF_ESTOQUE_SAIDA_DEVOLUCAO d
+      WHERE d.ID_SAIDA = ?
+      ORDER BY d.DATA_CADASTRO DESC, d.ID DESC
+      `,
+      [idSaida]
+    );
+
+    return res.json({
+      success: true,
+      item: saida,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar devoluções da saída:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar devoluções da saída.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/estoque/centro-custo/saidas/:id/devolucoes', async (req, res) => {
+  let conn;
+
+  try {
+    const idSaida = Number(req.params.id);
+    const quantidade = parseDecimal(req.body.quantidade);
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+
+    if (!idSaida) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o id da saída.'
+      });
+    }
+
+    if (!(quantidade > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida para devolução.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const saida = await obterResumoSaidaCentroCusto(conn, idSaida);
+    if (!saida) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Saída não encontrada.'
+      });
+    }
+
+    const saldoPendente = Number(saida.SALDO_PENDENTE ?? 0);
+    if (saldoPendente <= 0) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Esta saída já foi totalmente devolvida.'
+      });
+    }
+
+    if (quantidade > saldoPendente) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `A devolução não pode exceder o saldo pendente da saída (${saldoPendente}).`
+      });
+    }
+
+    const [result] = await conn.query(
+      `
+      INSERT INTO SF_ESTOQUE_SAIDA_DEVOLUCAO
+        (
+          ID_SAIDA,
+          QUANTIDADE,
+          OBSERVACAO,
+          USUARIO_DEVOLUCAO
+        )
+      VALUES (?, ?, ?, ?)
+      `,
+      [
+        idSaida,
+        quantidade,
+        observacao || null,
+        usuario
+      ]
+    );
+
+    const idDevolucao = result.insertId;
+    const saldoSaidaAntes = saldoPendente;
+    const saldoSaidaDepois = saldoPendente - quantidade;
+
+    await inserirLogDevolucaoSaidaCentroCusto(conn, {
+      idDevolucao,
+      idSaida,
+      acao: 'CRIACAO',
+      saldoSaidaAntes,
+      quantidadeDevolvida: quantidade,
+      saldoSaidaDepois,
+      usuario,
+      observacao: observacao || 'Devolução de saída registrada.'
+    });
+
+    await conn.query(
+      `
+      UPDATE SF_ESTOQUE_SAIDA_CENTRO_CUSTO
+      SET
+        USUARIO_ALTERACAO = ?,
+        DATA_ALTERACAO = NOW()
+      WHERE ID = ?
+      `,
+      [usuario, idSaida]
+    );
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      id: idDevolucao,
+      devolucaoParcial: saldoSaidaDepois > 0,
+      devolucaoTotal: saldoSaidaDepois <= 0,
+      message:
+        saldoSaidaDepois > 0
+          ? 'Devolução parcial registrada com sucesso.'
+          : 'Devolução total registrada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao registrar devolução da saída:', err);
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao registrar devolução da saída.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/estoque/centro-custo/saidas/:id/historico', async (req, res) => {
+  let conn;
+
+  try {
+    const idSaida = Number(req.params.id);
+
+    if (!idSaida) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o id da saída.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const saida = await obterResumoSaidaCentroCusto(conn, idSaida);
+    if (!saida) {
+      return res.status(404).json({
+        success: false,
+        message: 'Saída não encontrada.'
+      });
+    }
+
+    const [rows] = await conn.query(
+      `
+      SELECT
+        'SAIDA' AS TIPO_EVENTO,
+        l.ID,
+        l.ID_SAIDA,
+        NULL AS ID_DEVOLUCAO,
+        l.ACAO,
+        l.SALDO_ANTES,
+        l.QUANTIDADE_SAIDA AS QUANTIDADE_EVENTO,
+        l.SALDO_DEPOIS,
+        l.USUARIO,
+        l.OBSERVACAO,
+        l.DATA_HORA,
+        s.FINALIDADE,
+        s.USUARIO_SOLICITANTE,
+        COALESCE(s.UNIDADE, 'UN') AS UNIDADE
+      FROM SF_ESTOQUE_SAIDA_CENTRO_CUSTO_LOG l
+      INNER JOIN SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+        ON s.ID = l.ID_SAIDA
+      WHERE l.ID_SAIDA = ?
+
+      UNION ALL
+
+      SELECT
+        'DEVOLUCAO' AS TIPO_EVENTO,
+        dl.ID,
+        dl.ID_SAIDA,
+        dl.ID_DEVOLUCAO,
+        dl.ACAO,
+        dl.SALDO_SAIDA_ANTES AS SALDO_ANTES,
+        dl.QUANTIDADE_DEVOLVIDA AS QUANTIDADE_EVENTO,
+        dl.SALDO_SAIDA_DEPOIS AS SALDO_DEPOIS,
+        dl.USUARIO,
+        dl.OBSERVACAO,
+        dl.DATA_HORA,
+        s.FINALIDADE,
+        s.USUARIO_SOLICITANTE,
+        COALESCE(s.UNIDADE, 'UN') AS UNIDADE
+      FROM SF_ESTOQUE_SAIDA_DEVOLUCAO_LOG dl
+      INNER JOIN SF_ESTOQUE_SAIDA_CENTRO_CUSTO s
+        ON s.ID = dl.ID_SAIDA
+      WHERE dl.ID_SAIDA = ?
+
+      ORDER BY DATA_HORA DESC, ID DESC
+      `,
+      [idSaida, idSaida]
+    );
+
+    return res.json({
+      success: true,
+      item: saida,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar histórico da saída:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar histórico da saída.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
+
 // emails
 
 // PUT Destinatário (editar)
@@ -6502,7 +7663,8 @@ app.get('/api/perfis', async (req, res) => {
         estoque_cadastrar,
         estoque_transferir,
         estoque_receber,
-        perfil_acesso
+        perfil_acesso,
+        monitor_ping
       FROM SF_PERFIL
       ORDER BY nome ASC
     `);
@@ -6564,7 +7726,8 @@ app.get('/api/perfis/:id', async (req, res) => {
         estoque_cadastrar,
         estoque_transferir,
         estoque_receber,
-        perfil_acesso
+        perfil_acesso,
+        monitor_ping
       FROM SF_PERFIL
       WHERE id = ?
       LIMIT 1
@@ -6641,7 +7804,8 @@ app.post('/api/perfis', async (req, res) => {
       estoque_cadastrar: bit(req.body?.estoque_cadastrar),
       estoque_transferir: bit(req.body?.estoque_transferir),
       estoque_receber: bit(req.body?.estoque_receber),
-      perfil_acesso: bit(req.body?.perfil_acesso)
+      perfil_acesso: bit(req.body?.perfil_acesso),
+      monitor_ping: bit(req.body?.monitor_ping)
     };
 
     const [result] = await conn.query(`
@@ -6677,8 +7841,9 @@ app.post('/api/perfis', async (req, res) => {
         estoque_cadastrar,
         estoque_transferir,
         estoque_receber,
-        perfil_acesso
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        perfil_acesso,
+        monitor_ping
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payloadDepois.nome,
       payloadDepois.pedidos,
@@ -6711,7 +7876,8 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.estoque_cadastrar,
       payloadDepois.estoque_transferir,
       payloadDepois.estoque_receber,
-      payloadDepois.perfil_acesso
+      payloadDepois.perfil_acesso,
+      payloadDepois.monitor_ping
     ]);
 
     const idPerfil = Number(result?.insertId || 0);
@@ -6834,7 +8000,8 @@ app.put('/api/perfis/:id', async (req, res) => {
       estoque_cadastrar: bit(req.body?.estoque_cadastrar),
       estoque_transferir: bit(req.body?.estoque_transferir),
       estoque_receber: bit(req.body?.estoque_receber),
-      perfil_acesso: bit(req.body?.perfil_acesso)
+      perfil_acesso: bit(req.body?.perfil_acesso),
+      monitor_ping: bit(req.body?.monitor_ping)
     };
 
     const [result] = await conn.query(`
@@ -6870,7 +8037,8 @@ app.put('/api/perfis/:id', async (req, res) => {
         estoque_cadastrar = ?,
         estoque_transferir = ?,
         estoque_receber = ?,
-        perfil_acesso = ?
+        perfil_acesso = ?,
+        monitor_ping = ?
       WHERE id = ?
     `, [
       depois.nome,
@@ -6905,6 +8073,7 @@ app.put('/api/perfis/:id', async (req, res) => {
       depois.estoque_transferir,
       depois.estoque_receber,
       depois.perfil_acesso,
+      depois.monitor_ping,
       id
     ]);
 
@@ -7075,7 +8244,8 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         COALESCE(p.gestao_usuarios, 0) AS gestao_usuarios,
         COALESCE(p.estoque, 0) AS estoque,
         COALESCE(p.perfil_acesso, 0) AS perfil_acesso,
-        COALESCE(p.reservar_carro, 0) AS reservar_carro
+        COALESCE(p.reservar_carro, 0) AS reservar_carro,
+        COALESCE(p.monitor_ping, 0) AS monitor_ping
       FROM SF_USUARIO u
       LEFT JOIN SF_PERFIL p ON p.nome = u.perfil
       WHERE u.ID = ?
@@ -7106,7 +8276,8 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         gestaousuarios: Number(item.gestao_usuarios ?? 0),
         estoque: Number(item.estoque ?? 0),
         perfilacesso: Number(item.perfil_acesso ?? 0),
-        reservarcarro: Number(item.reservar_carro ?? 0)
+        reservarcarro: Number(item.reservar_carro ?? 0),
+        monitorping: Number(item.monitor_ping ?? 0)
       }
     };
 
@@ -12792,6 +13963,1691 @@ app.post('/api/gestao-usuarios-importar', uploadMemoria.single('arquivo'), async
     if (conn) {
       conn.release();
     }
+  }
+});
+
+// notificação transferencias via WhatsApp
+
+function obterNomeCentroCustoDestino(localDestino) {
+  return (
+    localDestino?.CENTRO_CUSTO ||
+    localDestino?.centro_custo ||
+    localDestino?.NOME ||
+    localDestino?.nome ||
+    localDestino?.DESCRICAO ||
+    localDestino?.descricao ||
+    ''
+  ).toString().trim();
+}
+
+function normalizarNumeroWhatsAppBR(numero) {
+  const digitos = String(numero || '').replace(/\D/g, '');
+
+  if (!digitos) return null;
+  if (digitos.length === 11) return `55${digitos}`;
+  if (digitos.length === 13 && digitos.startsWith('55')) return digitos;
+
+  return null;
+}
+
+function escapeHtml(valor) {
+  return String(valor ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+async function listarUsuariosCentroCustoWhatsapp(conn, centroCusto) {
+  const [rows] = await conn.query(
+    `
+    SELECT
+      id,
+      nome,
+      EMAIL,
+      TELEFONE,
+      CENTRO_CUSTO,
+      status
+    FROM SF_USUARIO
+    WHERE status = 'Ativo'
+      AND TELEFONE IS NOT NULL
+      AND TELEFONE <> ''
+      AND TRIM(UPPER(CENTRO_CUSTO)) = TRIM(UPPER(?))
+    `,
+    [centroCusto]
+  );
+
+  return rows;
+}
+
+async function validarStatusInstanciaZApi() {
+  const { clientToken } = getZApiConfig();
+  const statusUrl = getZApiStatusUrl();
+
+  console.log('[ZAPI] Validando status da instância...');
+  console.log('[ZAPI] Status URL:', statusUrl);
+
+  const resp = await fetch(statusUrl, {
+    method: 'GET',
+    headers: {
+      ...(clientToken ? { 'Client-Token': clientToken } : {})
+    }
+  });
+
+  const data = await resp.json().catch(() => null);
+
+  console.log('[ZAPI] Status response code:', resp.status);
+  console.log('[ZAPI] Status response body:', data);
+
+  if (!resp.ok) {
+    throw new Error(data?.message || data?.error || `Erro ao consultar status da instância Z-API. HTTP ${resp.status}`);
+  }
+
+  return data;
+}
+
+function montarHtmlCardTransferencia({
+  acao,
+  codigo,
+  descricao,
+  quantidade,
+  unidade,
+  localOrigem,
+  localDestino,
+  centroCusto,
+  usuario,
+  tipoTransferencia,
+  observacao
+}) {
+  const titulo = acao === 'EDICAO'
+    ? 'Transferência Atualizada'
+    : 'Nova Transferência Registrada';
+
+  const subtitulo = tipoTransferencia === 'EXTERNA'
+    ? 'Movimentação externa de material'
+    : 'Movimentação interna de material';
+
+  const corPrincipal = acao === 'EDICAO' ? '#d97706' : '#0f766e';
+  const badgeCor = tipoTransferencia === 'EXTERNA' ? '#b45309' : '#1d4ed8';
+  const badgeTexto = tipoTransferencia === 'EXTERNA' ? 'EXTERNA' : 'LOCAL';
+
+  return `
+  <!DOCTYPE html>
+  <html lang="pt-BR">
+    <head>
+      <meta charset="UTF-8" />
+      <title>Transferência</title>
+      <style>
+        * { box-sizing: border-box; }
+        body {
+          margin: 0;
+          font-family: Arial, Helvetica, sans-serif;
+          background: #eef2f7;
+        }
+        .canvas {
+          width: 1080px;
+          height: 1080px;
+          padding: 48px;
+          background:
+            radial-gradient(circle at top right, rgba(15, 118, 110, 0.15), transparent 30%),
+            linear-gradient(135deg, #f8fafc 0%, #eef2f7 100%);
+        }
+        .card {
+          width: 100%;
+          height: 100%;
+          background: #ffffff;
+          border-radius: 36px;
+          box-shadow: 0 25px 80px rgba(15, 23, 42, 0.10);
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          border: 1px solid #e5e7eb;
+        }
+        .header {
+          padding: 42px 46px 30px;
+          background: linear-gradient(135deg, ${corPrincipal} 0%, #111827 100%);
+          color: #fff;
+        }
+        .topline {
+          font-size: 26px;
+          letter-spacing: 1.5px;
+          text-transform: uppercase;
+          opacity: .9;
+          margin-bottom: 18px;
+          font-weight: 700;
+        }
+        .titulo {
+          font-size: 52px;
+          line-height: 1.1;
+          font-weight: 800;
+          margin: 0 0 12px;
+        }
+        .subtitulo {
+          font-size: 28px;
+          line-height: 1.4;
+          opacity: .92;
+          margin: 0;
+        }
+        .content {
+          padding: 42px 46px;
+          display: flex;
+          flex-direction: column;
+          gap: 24px;
+          flex: 1;
+        }
+        .badge {
+          align-self: flex-start;
+          background: ${badgeCor};
+          color: white;
+          padding: 10px 18px;
+          border-radius: 999px;
+          font-size: 24px;
+          font-weight: 700;
+          letter-spacing: .5px;
+        }
+        .grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 18px;
+        }
+        .item, .item-full {
+          background: #f8fafc;
+          border: 1px solid #e5e7eb;
+          border-radius: 24px;
+          padding: 22px 24px;
+        }
+        .item-full {
+          grid-column: 1 / -1;
+        }
+        .label {
+          font-size: 20px;
+          font-weight: 700;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: .6px;
+          margin-bottom: 10px;
+        }
+        .valor {
+          font-size: 30px;
+          color: #0f172a;
+          font-weight: 700;
+          line-height: 1.35;
+          word-break: break-word;
+        }
+        .footer {
+          margin-top: auto;
+          padding: 26px 46px 34px;
+          border-top: 1px solid #e5e7eb;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          color: #64748b;
+          font-size: 22px;
+        }
+        .footer strong {
+          color: #0f172a;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="canvas">
+        <div class="card">
+          <div class="header">
+            <div class="topline">Controle de Estoque</div>
+            <h1 class="titulo">${escapeHtml(titulo)}</h1>
+            <p class="subtitulo">${escapeHtml(subtitulo)}</p>
+          </div>
+
+          <div class="content">
+            <div class="badge">${escapeHtml(badgeTexto)}</div>
+
+            <div class="grid">
+              <div class="item">
+                <div class="label">Código</div>
+                <div class="valor">${escapeHtml(codigo || '—')}</div>
+              </div>
+
+              <div class="item">
+                <div class="label">Quantidade</div>
+                <div class="valor">${escapeHtml(String(quantidade))} ${escapeHtml(unidade || 'UN')}</div>
+              </div>
+
+              <div class="item-full">
+                <div class="label">Material</div>
+                <div class="valor">${escapeHtml(descricao || 'Material não informado')}</div>
+              </div>
+
+              <div class="item">
+                <div class="label">Origem</div>
+                <div class="valor">${escapeHtml(localOrigem || '—')}</div>
+              </div>
+
+              <div class="item">
+                <div class="label">Destino</div>
+                <div class="valor">${escapeHtml(localDestino || '—')}</div>
+              </div>
+
+              <div class="item">
+                <div class="label">Usuário</div>
+                <div class="valor">${escapeHtml(usuario || 'SISTEMA')}</div>
+              </div>
+
+              ${
+                observacao
+                  ? `
+                    <div class="item-full">
+                      <div class="label">Observação</div>
+                      <div class="valor">${escapeHtml(observacao)}</div>
+                    </div>
+                  `
+                  : ''
+              }
+            </div>
+          </div>
+
+          <div class="footer">
+            <div><strong>Status:</strong> ${escapeHtml(acao === 'EDICAO' ? 'Atualizada' : 'Registrada')}</div>
+            <div>Notificação automática</div>
+          </div>
+        </div>
+      </div>
+    </body>
+  </html>
+  `;
+}
+
+async function gerarImagemTransferenciaBase64(dados) {
+  const html = montarHtmlCardTransferencia(dados);
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1080, height: 1080, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    const buffer = await page.screenshot({
+      type: 'png'
+    });
+
+    const base64 = `data:image/png;base64,${buffer.toString('base64')}`;
+    return base64;
+  } finally {
+    await browser.close();
+  }
+}
+
+async function enviarImagemWhatsAppZApi({ telefone, imageBase64, caption = '' }) {
+  const { clientToken } = getZApiConfig();
+  const endpoint = getZApiSendImageUrl();
+
+  const numero = normalizarNumeroWhatsAppBR(telefone);
+
+  if (!numero) {
+    throw new Error(`Número inválido para WhatsApp: ${telefone}`);
+  }
+
+  const payload = {
+    phone: numero,
+    image: imageBase64,
+    caption,
+    viewOnce: false
+  };
+
+  console.log('[ZAPI][IMAGE] Enviando imagem...');
+  console.log('[ZAPI][IMAGE] Endpoint:', endpoint);
+  console.log('[ZAPI][IMAGE] Instance ID:', process.env.ZAPI_INSTANCE_ID);
+  console.log('[ZAPI][IMAGE] Telefone original:', telefone);
+  console.log('[ZAPI][IMAGE] Telefone normalizado:', numero);
+  console.log('[ZAPI][IMAGE] Caption:', caption);
+
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(clientToken ? { 'Client-Token': clientToken } : {})
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await resp.json().catch(() => null);
+
+  console.log('[ZAPI][IMAGE] Response code:', resp.status);
+  console.log('[ZAPI][IMAGE] Response body:', data);
+
+  if (!resp.ok) {
+    throw new Error(data?.message || data?.error || `Erro ao enviar imagem via Z-API. HTTP ${resp.status}`);
+  }
+
+  return data;
+}
+
+async function notificarUsuariosCentroCustoTransferenciaImagem(conn, {
+  centroCusto,
+  dadosImagem,
+  caption
+}) {
+  if (!centroCusto) return [];
+
+  const usuarios = await listarUsuariosCentroCustoWhatsapp(conn, centroCusto);
+  const resultados = [];
+
+  if (!usuarios.length) {
+    console.log('[WHATSAPP][IMAGE] Nenhum usuário encontrado para o centro de custo:', centroCusto);
+    return resultados;
+  }
+
+  const imageBase64 = await gerarImagemTransferenciaBase64(dadosImagem);
+
+  for (const usuario of usuarios) {
+    try {
+      const numero = normalizarNumeroWhatsAppBR(usuario.TELEFONE);
+
+      if (!numero) {
+        resultados.push({
+          usuarioId: usuario.id,
+          nome: usuario.nome,
+          telefone: usuario.TELEFONE,
+          sucesso: false,
+          erro: 'Telefone inválido'
+        });
+        continue;
+      }
+
+      const retorno = await enviarImagemWhatsAppZApi({
+        telefone: numero,
+        imageBase64,
+        caption
+      });
+
+      resultados.push({
+        usuarioId: usuario.id,
+        nome: usuario.nome,
+        telefone: numero,
+        sucesso: true,
+        retorno
+      });
+    } catch (err) {
+      console.error(`Erro ao notificar com imagem ${usuario.nome}:`, err.message);
+
+      resultados.push({
+        usuarioId: usuario.id,
+        nome: usuario.nome,
+        telefone: usuario.TELEFONE,
+        sucesso: false,
+        erro: err.message
+      });
+    }
+  }
+
+  return resultados;
+}
+
+app.post('/api/estoque/transferencias', async (req, res) => {
+  let conn;
+
+  try {
+    const idProduto = Number(req.body.idProduto);
+    const idLocalOrigem = Number(req.body.idLocalOrigem);
+    const idLocalDestino = Number(req.body.idLocalDestino);
+    const quantidade = parseDecimal(req.body.quantidade);
+    const unidade = textolivreTr(req.body.unidade, 10);
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+
+    const tipoTransferencia = textolivreTr(req.body.tipoTransferencia, 20).toUpperCase();
+    const responsavelTransporte = textolivreTr(req.body.responsavelTransporte, 150);
+    const responsavelEntrega = textolivreTr(req.body.responsavelEntrega, 150);
+
+    if (!idProduto || !idLocalOrigem || !idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idProduto, idLocalOrigem e idLocalDestino.'
+      });
+    }
+
+    if (!['LOCAL', 'EXTERNA'].includes(tipoTransferencia)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um tipo de transferência válido: LOCAL ou EXTERNA.'
+      });
+    }
+
+    if (tipoTransferencia === 'EXTERNA' && (!responsavelTransporte || !responsavelEntrega)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe quem levará o material e para quem será entregue.'
+      });
+    }
+
+    if (idLocalOrigem === idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'O local de destino deve ser diferente do local de origem.'
+      });
+    }
+
+    if (!(quantidade > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida para transferência.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const produto = await validarProdutoSistema(conn, idProduto);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Produto não encontrado na SF_PRODUTOS.' });
+    }
+
+    if (Number(produto.ativo ?? 1) !== 1) {
+      await conn.rollback();
+      return res.status(400).json({ success: false, message: 'O produto informado está inativo.' });
+    }
+
+    const localOrigem = await validarLocalAlmoxarifado(conn, idLocalOrigem);
+    if (!localOrigem) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Local de origem não encontrado.' });
+    }
+
+    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
+    if (!localDestino) {
+      await conn.rollback();
+      return res.status(404).json({ success: false, message: 'Local de destino não encontrado.' });
+    }
+
+    const [rowsEntradaOrigem] = await conn.query(
+      `
+      SELECT pe.id, pe.unidade_nf, pe.ID_LOCAL_ALMOXARIFADO
+      FROM SF_PRODUTO_ENTRADA pe
+      WHERE pe.produto_sistema_id = ?
+        AND pe.ID_LOCAL_ALMOXARIFADO = ?
+      ORDER BY pe.id ASC
+      LIMIT 1
+      `,
+      [idProduto, idLocalOrigem]
+    );
+
+    const entradaOrigem = rowsEntradaOrigem[0] || null;
+    if (!entradaOrigem) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Não existe entrada desse produto nesse local para transferir.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoTransferivel(conn, idProduto, idLocalOrigem);
+    const saldoAntes = saldoInfo.saldo;
+
+    if (quantidade > saldoAntes) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Quantidade excede o saldo disponível (${saldoAntes}).`
+      });
+    }
+
+    const statusTransferencia =
+      tipoTransferencia === 'LOCAL'
+        ? 'AGUARDANDO_RECEBIMENTO'
+        : 'EM_TRANSITO';
+
+    const [result] = await conn.query(
+      `
+      INSERT INTO SF_ESTOQUE_TRANSFERENCIA
+        (
+          ID_PRODUTO,
+          ID_ENTRADA_ORIGEM,
+          ID_LOCAL_ORIGEM,
+          ID_LOCAL_DESTINO,
+          QUANTIDADE,
+          UNIDADE,
+          OBSERVACAO,
+          TIPO_TRANSFERENCIA,
+          RESPONSAVEL_TRANSPORTE,
+          RESPONSAVEL_ENTREGA,
+          STATUS_TRANSFERENCIA,
+          USUARIO_CADASTRO
+        )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        idProduto,
+        Number(entradaOrigem.id),
+        idLocalOrigem,
+        idLocalDestino,
+        quantidade,
+        unidade || produto.unidade || entradaOrigem.unidade_nf || null,
+        observacao || null,
+        tipoTransferencia,
+        tipoTransferencia === 'EXTERNA' ? responsavelTransporte : null,
+        tipoTransferencia === 'EXTERNA' ? responsavelEntrega : null,
+        statusTransferencia,
+        usuario
+      ]
+    );
+
+    const idTransferencia = result.insertId;
+    const saldoDepois = saldoAntes - quantidade;
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'CRIACAO',
+      saldoAntes,
+      quantidadeTransferida: quantidade,
+      saldoDepois,
+      usuario,
+      observacao: `Tipo: ${tipoTransferencia}; Status inicial: ${statusTransferencia}${observacao ? `; Obs: ${observacao}` : ''}`
+    });
+
+    await conn.commit();
+
+    const centroCustoDestino = obterNomeCentroCustoDestino(localDestino);
+
+    const dadosImagem = {
+      acao: 'CRIACAO',
+      codigo: produto?.CODIGO || produto?.codigo || '',
+      descricao: produto?.DESCRICAO || produto?.descricao || 'Material',
+      quantidade,
+      unidade: unidade || produto?.unidade || 'UN',
+      localOrigem: localOrigem?.NOME || localOrigem?.nome || '',
+      localDestino: localDestino?.NOME || localDestino?.nome || '',
+      centroCusto: centroCustoDestino,
+      usuario,
+      tipoTransferencia,
+      observacao
+    };
+
+    const caption = '📦 Nova transferência registrada no sistema.';
+
+    try {
+      await validarStatusInstanciaZApi();
+
+      await notificarUsuariosCentroCustoTransferenciaImagem(conn, {
+        centroCusto: centroCustoDestino,
+        dadosImagem,
+        caption
+      });
+    } catch (erroNotificacao) {
+      console.error('Transferência criada com sucesso, mas houve falha ao enviar imagem via WhatsApp:', erroNotificacao);
+    }
+
+    return res.json({
+      success: true,
+      id: idTransferencia,
+      statusTransferencia,
+      message: 'Transferência registrada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao registrar transferência:', err);
+    try {
+      if (conn) await conn.rollback();
+    } catch {}
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao registrar transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.put('/api/estoque/transferencias/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const idTransferencia = Number(req.params.id);
+    const idLocalDestino = Number(req.body.idLocalDestino);
+    const quantidadeNova = parseDecimal(req.body.quantidade);
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuario = textolivreTr(req.body.usuario, 150) || 'SISTEMA';
+
+    if (!idTransferencia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o ID da transferência.'
+      });
+    }
+
+    if (!idLocalDestino) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o local de destino.'
+      });
+    }
+
+    if (!(quantidadeNova > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe uma quantidade válida.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const [rowsAtual] = await conn.query(
+      `
+      SELECT *
+      FROM SF_ESTOQUE_TRANSFERENCIA
+      WHERE ID = ?
+      LIMIT 1
+      `,
+      [idTransferencia]
+    );
+
+    const atual = rowsAtual[0];
+
+    if (!atual) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Transferência não encontrada.'
+      });
+    }
+
+    if (atual.STATUS_TRANSFERENCIA !== 'AGUARDANDO_RECEBIMENTO') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Apenas transferências aguardando recebimento podem ser editadas.'
+      });
+    }
+
+
+    const produto = await validarProdutoSistema(conn, atual.ID_PRODUTO);
+    if (!produto) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Produto vinculado à transferência não foi encontrado.'
+      });
+    }
+
+    const localOrigem = await validarLocalAlmoxarifado(conn, atual.ID_LOCAL_ORIGEM);
+    if (!localOrigem) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Local de origem da transferência não encontrado.'
+      });
+    }
+
+    const localDestino = await validarLocalCentrocusto(conn, idLocalDestino);
+    if (!localDestino) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Local de destino não encontrado.'
+      });
+    }
+
+    if (Number(atual.ID_LOCAL_ORIGEM) === idLocalDestino) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'O local de destino deve ser diferente do local de origem.'
+      });
+    }
+
+    const saldoInfo = await obterSaldoTransferivel(
+      conn,
+      atual.ID_PRODUTO,
+      atual.ID_LOCAL_ORIGEM,
+      idTransferencia
+    );
+
+    const quantidadeAtual = Number(atual.QUANTIDADE ?? 0);
+    const saldoAntes = saldoInfo.saldo + quantidadeAtual;
+    const saldoMaximoPermitido = saldoInfo.saldo + quantidadeAtual;
+
+    if (quantidadeNova > saldoMaximoPermitido) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Quantidade excede o saldo disponível (${saldoMaximoPermitido}).`
+      });
+    }
+
+    await conn.query(
+      `
+      UPDATE SF_ESTOQUE_TRANSFERENCIA
+      SET
+        ID_LOCAL_DESTINO = ?,
+        QUANTIDADE = ?,
+        OBSERVACAO = ?,
+        UNIDADE = ?,
+        USUARIO_ALTERACAO = ?,
+        DATA_ALTERACAO = NOW()
+      WHERE ID = ?
+      `,
+      [
+        idLocalDestino,
+        quantidadeNova,
+        observacao || null,
+        atual.UNIDADE || produto.unidade || null,
+        usuario,
+        idTransferencia
+      ]
+    );
+
+    const saldoDepois = saldoAntes - quantidadeNova;
+
+    await inserirLogTransferencia(conn, {
+      idTransferencia,
+      acao: 'EDICAO',
+      saldoAntes,
+      quantidadeTransferida: quantidadeNova,
+      saldoDepois,
+      usuario,
+      observacao
+    });
+
+        await conn.commit();
+
+    const centroCustoDestino = obterNomeCentroCustoDestino(localDestino);
+
+    const dadosImagem = {
+      acao: 'EDICAO',
+      codigo: produto?.CODIGO || produto?.codigo || '',
+      descricao: produto?.DESCRICAO || produto?.descricao || 'Material',
+      quantidade: quantidadeNova,
+      unidade: atual.UNIDADE || produto?.unidade || 'UN',
+      localOrigem: localOrigem?.NOME || localOrigem?.nome || '',
+      localDestino: localDestino?.NOME || localDestino?.nome || '',
+      centroCusto: centroCustoDestino,
+      usuario,
+      tipoTransferencia: atual.TIPO_TRANSFERENCIA || req.body.tipoTransferencia || 'LOCAL',
+      observacao
+    };
+
+    const caption = '🔄 Transferência atualizada no sistema.';
+
+    try {
+      await validarStatusInstanciaZApi();
+
+      await notificarUsuariosCentroCustoTransferenciaImagem(conn, {
+        centroCusto: centroCustoDestino,
+        dadosImagem,
+        caption
+      });
+    } catch (erroNotificacao) {
+      console.error('Transferência editada com sucesso, mas houve falha ao enviar imagem via WhatsApp:', erroNotificacao);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Transferência atualizada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao editar transferência:', err);
+
+    try { if (conn) await conn.rollback(); } catch {}
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao editar transferência.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+
+
+// Notificação monitoramento de Ping  //
+// ---------------------------------- //
+
+app.get('/apiusuarios', async (req, res) => {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+    const items = await listarUsuariosAtivosComTelefone(conn);
+
+    return res.json({
+      success: true,
+      items
+    });
+  } catch (err) {
+    console.error('Erro ao listar usuários:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar usuários.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+function parseIntSeguro(valor, padrao = 0) {
+  const n = Number.parseInt(valor, 10);
+  return Number.isFinite(n) ? n : padrao;
+}
+
+async function listarUsuariosAtivosComTelefone(conn) {
+  const [rows] = await conn.query(`
+    SELECT
+      id,
+      nome,
+      EMAIL,
+      TELEFONE,
+      CENTRO_CUSTO,
+      status
+    FROM SF_USUARIO
+    WHERE status = 'Ativo'
+      AND TELEFONE IS NOT NULL
+      AND TELEFONE <> ''
+    ORDER BY nome
+  `);
+
+  return rows;
+}
+
+async function listarContatosMonitor(conn, monitorId) {
+  const [rows] = await conn.query(
+    `
+    SELECT
+      c.ID,
+      c.MONITOR_ID,
+      c.TIPO_CONTATO,
+      c.USUARIO_ID,
+      c.NOME_CONTATO,
+      c.TELEFONE,
+      c.ATIVO,
+      u.nome AS USUARIO_NOME,
+      u.EMAIL AS USUARIO_EMAIL
+    FROM SF_PING_MONITOR_CONTATO c
+    LEFT JOIN SF_USUARIO u ON u.id = c.USUARIO_ID
+    WHERE c.MONITOR_ID = ?
+      AND c.ATIVO = '1'
+    ORDER BY c.ID ASC
+    `,
+    [monitorId]
+  );
+
+  return rows;
+}
+
+async function verificarPingHost(ip) {
+  const resp = await ping.promise.probe(ip, {
+    timeout: 5,
+    extra: ['-c', '1']
+  });
+
+  return {
+    alive: !!resp.alive,
+    time: resp.time ? Number(resp.time) : null,
+    output: resp.output || ''
+  };
+}
+
+function montarMensagemAlertaPing({ equipamento, ip, localizacao, status, tempoMs, erro }) {
+  const base = [
+    `🚨 ALERTA DE PING`,
+    ``,
+    `Equipamento: ${equipamento}`,
+    `IP: ${ip}`,
+    `Local: ${localizacao}`,
+    `Status: ${status}`,
+    tempoMs != null ? `Tempo: ${tempoMs} ms` : null,
+    erro ? `Erro: ${erro}` : null,
+    `Data/Hora: ${new Date().toLocaleString('pt-BR')}`
+  ].filter(Boolean);
+
+  return base.join('\n');
+}
+
+async function obterContatosParaEnvio(conn, monitorId) {
+  const contatos = await listarContatosMonitor(conn, monitorId);
+  const saida = [];
+  const usados = new Set();
+
+  for (const c of contatos) {
+    let nome = c.NOME_CONTATO || c.USUARIO_NOME || 'Contato';
+    let telefone = c.TELEFONE;
+
+    if (c.TIPO_CONTATO === 'USUARIO' && c.USUARIO_ID) {
+      telefone = c.TELEFONE || '';
+      nome = c.USUARIO_NOME || nome;
+    }
+
+    const normalizado = normalizarNumeroWhatsAppBR(telefone);
+    if (!normalizado) continue;
+
+    const chave = `${normalizado}`;
+    if (usados.has(chave)) continue;
+    usados.add(chave);
+
+    saida.push({
+      nome,
+      telefone: normalizado,
+      tipo: c.TIPO_CONTATO
+    });
+  }
+
+  return saida;
+}
+
+async function enviarWhatsAppParaLista({ lista, mensagem }) {
+  const resultados = [];
+
+  for (const item of lista) {
+    try {
+      const retorno = await enviarTextoWhatsAppZApi({
+        telefone: item.telefone,
+        message: mensagem
+      });
+
+      resultados.push({
+        nome: item.nome,
+        telefone: item.telefone,
+        sucesso: true,
+        retorno
+      });
+    } catch (err) {
+      resultados.push({
+        nome: item.nome,
+        telefone: item.telefone,
+        sucesso: false,
+        erro: err.message
+      });
+    }
+  }
+
+  return resultados;
+}
+
+async function enviarTextoWhatsAppZApi({ telefone, message }) {
+  const { clientToken } = getZApiConfig();
+  const endpoint = getZApiSendTextUrl();
+
+  const numero = normalizarNumeroWhatsAppBR(telefone);
+  if (!numero) {
+    throw new Error(`Número inválido para WhatsApp: ${telefone}`);
+  }
+
+  const payload = {
+    phone: numero,
+    message
+  };
+
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(clientToken ? { 'Client-Token': clientToken } : {})
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await resp.json().catch(() => null);
+
+  if (!resp.ok) {
+    throw new Error(data?.message || data?.error || `Erro ao enviar WhatsApp. HTTP ${resp.status}`);
+  }
+
+  return data;
+}
+
+app.post('/api/ping-monitor', async (req, res) => {
+  let conn;
+
+  try {
+    const ip = textolivreTr(req.body.ip, 45);
+    const equipamento = textolivreTr(req.body.equipamento, 150);
+    const localizacao = textolivreTr(req.body.localizacao, 150);
+    const intervaloMinutos = parseIntSeguro(req.body.intervaloMinutos, 5);
+    const ativo = String(req.body.ativo ?? '1') === '1' ? '1' : '0';
+    const enviarWhatsApp = String(req.body.enviarWhatsApp ?? '1') === '1' ? '1' : '0';
+    const observacao = textolivreTr(req.body.observacao, 255);
+    const usuarioCadastro = textolivreTr(req.body.usuarioCadastro, 150) || 'SISTEMA';
+
+    if (!ip || !equipamento || !localizacao) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe IP, equipamento e localizacao.'
+      });
+    }
+
+    if (!(intervaloMinutos > 0)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um intervalo válido em minutos.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [result] = await conn.query(
+      `
+      INSERT INTO SF_PING_MONITOR
+        (IP, EQUIPAMENTO, LOCALIZACAO, INTERVALO_MINUTOS, ATIVO, ENVIAR_WHATSAPP, OBSERVACAO, USUARIO_CADASTRO)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [ip, equipamento, localizacao, intervaloMinutos, ativo, enviarWhatsApp, observacao || null, usuarioCadastro]
+    );
+
+    return res.json({
+      success: true,
+      id: result.insertId,
+      message: 'Monitor cadastrado com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao cadastrar monitor:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao cadastrar monitor.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/ping-monitor', async (req, res) => {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(`
+      SELECT *
+      FROM SF_PING_MONITOR
+      ORDER BY ID DESC
+    `);
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar monitores.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.put('/api/ping-monitor/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const id = Number(req.params.id);
+    const ip = textolivreTr(req.body.ip, 45);
+    const equipamento = textolivreTr(req.body.equipamento, 150);
+    const localizacao = textolivreTr(req.body.localizacao, 150);
+    const intervaloMinutos = parseIntSeguro(req.body.intervaloMinutos, 5);
+    const ativo = String(req.body.ativo ?? '1') === '1' ? '1' : '0';
+    const enviarWhatsApp = String(req.body.enviarWhatsApp ?? '1') === '1' ? '1' : '0';
+    const observacao = textolivreTr(req.body.observacao, 255);
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID inválido.' });
+    }
+
+    conn = await pool.getConnection();
+
+    const [result] = await conn.query(
+      `
+      UPDATE SF_PING_MONITOR
+      SET IP = ?, EQUIPAMENTO = ?, LOCALIZACAO = ?, INTERVALO_MINUTOS = ?, ATIVO = ?, ENVIAR_WHATSAPP = ?, OBSERVACAO = ?
+      WHERE ID = ?
+      `,
+      [ip, equipamento, localizacao, intervaloMinutos, ativo, enviarWhatsApp, observacao || null, id]
+    );
+
+    return res.json({
+      success: true,
+      affectedRows: result.affectedRows,
+      message: 'Monitor atualizado com sucesso.'
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar monitor.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/ping-monitor/:id/contatos', async (req, res) => {
+  let conn;
+
+  try {
+    const monitorId = Number(req.params.id);
+    const contatos = Array.isArray(req.body.contatos) ? req.body.contatos : [];
+
+    if (!monitorId) {
+      return res.status(400).json({ success: false, message: 'Monitor inválido.' });
+    }
+
+    if (!contatos.length) {
+      return res.status(400).json({ success: false, message: 'Informe ao menos um contato.' });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    await conn.query(`DELETE FROM SF_PING_MONITOR_CONTATO WHERE MONITOR_ID = ?`, [monitorId]);
+
+    for (const item of contatos) {
+      const tipoContato = String(item.tipoContato || 'MANUAL').toUpperCase();
+      const usuarioId = item.usuarioId ? Number(item.usuarioId) : null;
+      const nomeContato = textolivreTr(item.nomeContato, 150);
+      const telefone = textolivreTr(item.telefone, 20);
+
+      if (!telefone) continue;
+
+      await conn.query(
+        `
+        INSERT INTO SF_PING_MONITOR_CONTATO
+          (MONITOR_ID, TIPO_CONTATO, USUARIO_ID, NOME_CONTATO, TELEFONE)
+        VALUES (?, ?, ?, ?, ?)
+        `,
+        [
+          monitorId,
+          ['USUARIO', 'MANUAL'].includes(tipoContato) ? tipoContato : 'MANUAL',
+          usuarioId || null,
+          nomeContato || null,
+          telefone
+        ]
+      );
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Contatos salvos com sucesso.'
+    });
+  } catch (err) {
+    if (conn) await conn.rollback().catch(() => {});
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao salvar contatos.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/ping-monitor/verificar', async (req, res) => {
+  let conn;
+
+  console.log('[PING] Iniciando verificação manual', {
+    body: req.body,
+    dataHora: new Date().toISOString()
+  });
+
+  try {
+    const idMonitor = Number(req.body.idMonitor);
+    console.log('[PING] idMonitor recebido:', idMonitor);
+
+    if (!idMonitor) {
+      console.log('[PING] idMonitor inválido');
+      return res.status(400).json({
+        success: false,
+        message: 'Informe idMonitor.'
+      });
+    }
+
+    console.log('[PING] Obtendo conexão com banco...');
+    conn = await pool.getConnection();
+    console.log('[PING] Conexão obtida com sucesso');
+
+    console.log('[PING] Buscando monitor no banco...', { idMonitor });
+    const [rows] = await conn.query(
+      `SELECT * FROM SF_PING_MONITOR WHERE ID = ? LIMIT 1`,
+      [idMonitor]
+    );
+
+    const monitor = rows[0];
+    console.log('[PING] Resultado da busca do monitor:', monitor);
+
+    if (!monitor) {
+      console.log('[PING] Monitor não encontrado', { idMonitor });
+      return res.status(404).json({
+        success: false,
+        message: 'Monitor não encontrado.'
+      });
+    }
+
+    const statusAnterior = monitor.STATUS_ATUAL || 'UNKNOWN';
+    console.log('[PING] Status anterior:', statusAnterior);
+
+    console.log('[PING] Executando ping no host...', {
+      ip: monitor.IP,
+      equipamento: monitor.EQUIPAMENTO,
+      localizacao: monitor.LOCALIZACAO
+    });
+
+    const resultadoPing = await verificarPingHost(monitor.IP);
+    console.log('[PING] Resultado do ping:', resultadoPing);
+
+    const statusNovo = resultadoPing.alive ? 'UP' : 'DOWN';
+    const agora = new Date();
+
+    const qtdFalhas = resultadoPing.alive
+      ? 0
+      : Number(monitor.QTD_FALHAS_CONSECUTIVAS || 0) + 1;
+
+    const qtdSucessos = resultadoPing.alive
+      ? Number(monitor.QTD_SUCESSOS_CONSECUTIVOS || 0) + 1
+      : 0;
+
+    console.log('[PING] Status calculado após verificação:', {
+      statusAnterior,
+      statusNovo,
+      qtdFalhas,
+      qtdSucessos,
+      agora
+    });
+
+    console.log('[PING] Atualizando tabela SF_PING_MONITOR...');
+    await conn.query(
+      `
+      UPDATE SF_PING_MONITOR
+      SET
+        STATUS_ATUAL = ?,
+        ULTIMA_VERIFICACAO = ?,
+        ULTIMO_OK = ?,
+        ULTIMA_FALHA = ?,
+        QTD_FALHAS_CONSECUTIVAS = ?,
+        QTD_SUCESSOS_CONSECUTIVOS = ?
+      WHERE ID = ?
+      `,
+      [
+        statusNovo,
+        agora,
+        resultadoPing.alive ? agora : monitor.ULTIMO_OK,
+        !resultadoPing.alive ? agora : monitor.ULTIMA_FALHA,
+        qtdFalhas,
+        qtdSucessos,
+        idMonitor
+      ]
+    );
+    console.log('[PING] Monitor atualizado com sucesso');
+
+    console.log('[PING] Inserindo log em SF_PING_MONITOR_LOG...');
+    const [logResult] = await conn.query(
+      `
+      INSERT INTO SF_PING_MONITOR_LOG
+        (MONITOR_ID, IP, STATUS_ANTERIOR, STATUS_NOVO, TEMPO_MS, ERRO, DATA_VERIFICACAO)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        idMonitor,
+        monitor.IP,
+        statusAnterior,
+        statusNovo,
+        resultadoPing.alive ? resultadoPing.time : null,
+        resultadoPing.alive ? null : resultadoPing.output || 'Host indisponível',
+        agora
+      ]
+    );
+
+    console.log('[PING] Log inserido com sucesso', {
+      logId: logResult.insertId
+    });
+
+    let notificacao = null;
+
+    const houveMudanca = statusAnterior !== statusNovo;
+    const deveNotificar =
+      monitor.ENVIAR_WHATSAPP === '1' &&
+      (
+        (statusNovo === 'DOWN' && qtdFalhas >= 1 && houveMudanca) ||
+        (statusNovo === 'UP' && houveMudanca)
+      );
+
+    console.log('[PING] Avaliação de notificação:', {
+      enviarWhatsApp: monitor.ENVIAR_WHATSAPP,
+      houveMudanca,
+      deveNotificar,
+      statusAnterior,
+      statusNovo
+    });
+
+    if (deveNotificar) {
+      console.log('[PING] Buscando contatos para envio...', { idMonitor });
+      const contatos = await obterContatosParaEnvio(conn, idMonitor);
+      console.log('[PING] Contatos encontrados:', contatos);
+
+      if (contatos.length) {
+        const mensagem = montarMensagemAlertaPing({
+          equipamento: monitor.EQUIPAMENTO,
+          ip: monitor.IP,
+          localizacao: monitor.LOCALIZACAO,
+          status: statusNovo,
+          tempoMs: resultadoPing.time,
+          erro: resultadoPing.alive ? null : resultadoPing.output
+        });
+
+        console.log('[PING] Mensagem montada para envio:');
+        console.log(mensagem);
+
+        console.log('[PING] Enviando WhatsApp para lista...');
+        notificacao = await enviarWhatsAppParaLista({
+          lista: contatos,
+          mensagem
+        });
+
+        console.log('[PING] Resultado do envio WhatsApp:', notificacao);
+
+        console.log('[PING] Atualizando log como notificado...');
+        await conn.query(
+          `UPDATE SF_PING_MONITOR_LOG SET NOTIFICADO = '1', DATA_ENVIO_NOTIFICACAO = ? WHERE ID = ?`,
+          [new Date(), logResult.insertId]
+        );
+        console.log('[PING] Log atualizado como notificado');
+      } else {
+        console.log('[PING] Nenhum contato válido encontrado para notificação');
+      }
+    } else {
+      console.log('[PING] Notificação não será enviada');
+    }
+
+    console.log('[PING] Finalizando verificação com sucesso', {
+      idMonitor,
+      statusAnterior,
+      statusNovo
+    });
+
+    return res.json({
+      success: true,
+      idMonitor,
+      statusAnterior,
+      statusNovo,
+      ping: resultadoPing,
+      notificacao
+    });
+  } catch (err) {
+    console.error('[PING] Erro ao verificar monitor:', {
+      message: err.message,
+      stack: err.stack
+    });
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao verificar ping.',
+      error: err.message
+    });
+  } finally {
+    if (conn) {
+      console.log('[PING] Liberando conexão com banco');
+      conn.release();
+    }
+  }
+});
+
+async function verificarMonitoresPendentes(conn) {
+  const [rows] = await conn.query(`
+    SELECT *
+    FROM SF_PING_MONITOR
+    WHERE ATIVO = '1'
+    ORDER BY ID ASC
+  `);
+
+  const agora = Date.now();
+  const resultados = [];
+
+  for (const monitor of rows) {
+    const ultima = monitor.ULTIMA_VERIFICACAO ? new Date(monitor.ULTIMA_VERIFICACAO).getTime() : 0;
+    const intervaloMs = Number(monitor.INTERVALO_MINUTOS || 5) * 60 * 1000;
+
+    if (ultima && agora - ultima < intervaloMs) {
+      continue;
+    }
+
+    try {
+      const resp = await fetch(`http://localhost:3000/api/ping-monitor/verificar-interno/${monitor.ID}`, {
+        method: 'POST'
+      }).catch(() => null);
+
+      resultados.push({
+        id: monitor.ID,
+        executado: true,
+        ok: !!resp
+      });
+    } catch (err) {
+      resultados.push({
+        id: monitor.ID,
+        executado: false,
+        erro: err.message
+      });
+    }
+  }
+
+  return resultados;
+}
+
+async function rotinaPingMonitoramento() {
+  let conn;
+
+  try {
+    conn = await pool.getConnection();
+    const [rows] = await conn.query(`
+      SELECT *
+      FROM SF_PING_MONITOR
+      WHERE ATIVO = '1'
+      ORDER BY ID ASC
+    `);
+
+    for (const monitor of rows) {
+      const ultima = monitor.ULTIMA_VERIFICACAO ? new Date(monitor.ULTIMA_VERIFICACAO).getTime() : 0;
+      const intervaloMs = Number(monitor.INTERVALO_MINUTOS || 5) * 60 * 1000;
+      const agora = Date.now();
+
+      if (ultima && agora - ultima < intervaloMs) continue;
+
+      try {
+        const statusAnterior = monitor.STATUS_ATUAL || 'UNKNOWN';
+        const resultadoPing = await verificarPingHost(monitor.IP);
+        const statusNovo = resultadoPing.alive ? 'UP' : 'DOWN';
+        const dataAgora = new Date();
+
+        const qtdFalhas = resultadoPing.alive
+          ? 0
+          : Number(monitor.QTD_FALHAS_CONSECUTIVAS || 0) + 1;
+
+        const qtdSucessos = resultadoPing.alive
+          ? Number(monitor.QTD_SUCESSOS_CONSECUTIVOS || 0) + 1
+          : 0;
+
+        await conn.query(
+          `
+          UPDATE SF_PING_MONITOR
+          SET STATUS_ATUAL = ?, ULTIMA_VERIFICACAO = ?, ULTIMO_OK = ?, ULTIMA_FALHA = ?, QTD_FALHAS_CONSECUTIVAS = ?, QTD_SUCESSOS_CONSECUTIVOS = ?
+          WHERE ID = ?
+          `,
+          [
+            statusNovo,
+            dataAgora,
+            resultadoPing.alive ? dataAgora : monitor.ULTIMO_OK,
+            !resultadoPing.alive ? dataAgora : monitor.ULTIMA_FALHA,
+            qtdFalhas,
+            qtdSucessos,
+            monitor.ID
+          ]
+        );
+
+        const [logResult] = await conn.query(
+          `
+          INSERT INTO SF_PING_MONITOR_LOG
+            (MONITOR_ID, IP, STATUS_ANTERIOR, STATUS_NOVO, TEMPO_MS, ERRO, DATA_VERIFICACAO)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            monitor.ID,
+            monitor.IP,
+            statusAnterior,
+            statusNovo,
+            resultadoPing.alive ? resultadoPing.time : null,
+            resultadoPing.alive ? null : resultadoPing.output || 'Host indisponível',
+            dataAgora
+          ]
+        );
+
+        const houveMudanca = statusAnterior !== statusNovo;
+        const deveNotificar =
+          monitor.ENVIAR_WHATSAPP === '1' &&
+          (
+            (statusNovo === 'DOWN' && houveMudanca) ||
+            (statusNovo === 'UP' && houveMudanca)
+          );
+
+        if (deveNotificar) {
+          const contatos = await obterContatosParaEnvio(conn, monitor.ID);
+          if (contatos.length) {
+            const mensagem = montarMensagemAlertaPing({
+              equipamento: monitor.EQUIPAMENTO,
+              ip: monitor.IP,
+              localizacao: monitor.LOCALIZACAO,
+              status: statusNovo,
+              tempoMs: resultadoPing.time,
+              erro: resultadoPing.alive ? null : resultadoPing.output
+            });
+
+            const retornoEnvio = await enviarWhatsAppParaLista({
+              lista: contatos,
+              mensagem
+            });
+
+            await conn.query(
+              `UPDATE SF_PING_MONITOR_LOG SET NOTIFICADO = '1', DATA_ENVIO_NOTIFICACAO = ? WHERE ID = ?`,
+              [new Date(), logResult.insertId]
+            );
+
+            console.log('Notificação enviada', monitor.ID, retornoEnvio);
+          }
+        }
+      } catch (err) {
+        console.error(`Erro ao verificar monitor ${monitor.ID}:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error('Erro na rotina de monitoramento:', err.message);
+  } finally {
+    if (conn) conn.release();
+  }
+}
+
+
+app.delete('/api/ping-monitor/:id', async (req, res) => {
+  let conn;
+
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    await conn.query(
+      'DELETE FROM SF_PING_MONITOR_CONTATO WHERE MONITOR_ID = ?',
+      [id]
+    );
+
+    const [result] = await conn.query(
+      'DELETE FROM SF_PING_MONITOR WHERE ID = ?',
+      [id]
+    );
+
+    if (result.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Monitor não encontrado.'
+      });
+    }
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Monitor e contatos vinculados excluídos com sucesso.'
+    });
+  } catch (err) {
+    if (conn) await conn.rollback();
+
+    console.error('Erro ao excluir monitor:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir monitor.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get("/api/ping-monitor/:id/contatos", async (req, res) => {
+  let conn;
+
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "ID inválido."
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [rows] = await conn.query(`
+      SELECT
+        c.ID,
+        c.MONITOR_ID,
+        c.TIPO_CONTATO,
+        c.USUARIO_ID,
+        c.NOME_CONTATO,
+        c.TELEFONE,
+        c.ATIVO,
+        u.nome AS USUARIO_NOME,
+        u.EMAIL AS USUARIO_EMAIL
+      FROM SF_PING_MONITOR_CONTATO c
+      LEFT JOIN SF_USUARIO u ON u.id = c.USUARIO_ID
+      WHERE c.MONITOR_ID = ?
+      ORDER BY c.ID ASC
+    `, [id]);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Erro ao carregar contatos do monitor.",
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
   }
 });
 
