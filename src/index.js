@@ -17,6 +17,10 @@ import ping from 'ping';
 import { DistribuicaoDFe } from 'node-mde';
 import AdmZip from 'adm-zip';
 import zlib from 'node:zlib';
+import https from 'node:https';
+import http from 'node:http';
+
+
 
 import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 
@@ -827,7 +831,6 @@ async function executarRotinaAniversariantes() {
     const aniversariantes = await listarAniversariantesHoje(conn);
 
     if (!aniversariantes.length) {
-      console.log('[ANIVERSARIANTES] Nenhum aniversariante hoje.');
       return;
     }
 
@@ -836,7 +839,6 @@ async function executarRotinaAniversariantes() {
         const jaEnviado = await jaEnviadoAniversarioHoje(conn, usuario.ID);
 
         if (jaEnviado) {
-          console.log(`[ANIVERSARIANTES] Já enviado hoje para ${usuario.NOME}.`);
           continue;
         }
 
@@ -851,7 +853,6 @@ async function executarRotinaAniversariantes() {
           resultado.sucesso ? null : (resultado?.envios?.map(e => `${e.telefone}: ${e.erro || 'falha'}`).join(' | ') || 'Falha no envio')
         );
 
-        console.log('[ANIVERSARIANTES] Resultado:', resultado);
       } catch (errUsuario) {
         console.error(`[ANIVERSARIANTES] Erro ao processar ${usuario.NOME}:`, errUsuario.message);
 
@@ -874,7 +875,6 @@ async function executarRotinaAniversariantes() {
 }
 
 cron.schedule('0 8,14 * * *', async () => {
-  console.log('[CRON] Iniciando verificação de aniversariantes...');
   await executarRotinaAniversariantes();
 }, {
   timezone: 'America/Bahia'
@@ -1287,9 +1287,6 @@ function soNumeros(v) {
   return String(v ?? '').replace(/\D+/g, '');
 }
 
-function texto(v) {
-  return String(v ?? '').trim();
-}
 
 function normalizarEmailNullable(v) {
   const s = String(v ?? '').trim().toLowerCase();
@@ -1371,7 +1368,7 @@ app.post('/api/gestao-usuarios-centro-custo', async (req, res) => {
 app.get('/api/usuarios', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT id, nome, email, setor, telefone
+      `SELECT id, nome, email, setor, telefone, local_trabalho
          FROM SF_USUARIO
         WHERE email IS NOT NULL AND email <> ''
         AND status <> 'Desativado'
@@ -1457,7 +1454,10 @@ app.patch('/api/gestao-usuarios/:id(\\d+)/senha-reset', async (req, res) => {
 app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
   try {
     const nome = titleCaseNome(req.body?.nome);
-    const email = normalizarEmail(req.body?.email);
+
+    const emailBruto = texto(req.body?.email);
+    const email = emailBruto ? normalizarEmail(emailBruto) : null;
+
     const senha = texto(req.body?.senha);
     const telefone = somenteNumeros(req.body?.telefone);
     const perfil = texto(req.body?.perfil);
@@ -1466,8 +1466,12 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const funcao = texto(req.body?.funcao);
     const data_admissao = nullableDate(req.body?.dataadmissao || req.body?.data_admissao);
 
-    const centro_custo = titleCaseNome(req.body?.localtrabalho || req.body?.local_trabalho || req.body?.centro_custo);
-    const local_trabalho = titleCaseNome(req.body?.unidadetrabalho || req.body?.unidade_trabalho || req.body?.local_trabalho);
+    const centro_custo = titleCaseNome(
+      req.body?.localtrabalho || req.body?.local_trabalho || req.body?.centro_custo
+    );
+    const local_trabalho = titleCaseNome(
+      req.body?.unidadetrabalho || req.body?.unidade_trabalho || req.body?.local_trabalho
+    );
 
     const status = texto(req.body?.status) || 'Ativo';
 
@@ -1488,11 +1492,12 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const email_pessoal = emailPessoalBruto ? normalizarEmail(emailPessoalBruto) : null;
 
     const foto = texto(req.body?.foto);
-
     const apelido = texto(req.body?.apelido);
+
     const numero_calcado = String(req.body?.numerocalcado ?? '').trim() !== ''
       ? Number(req.body?.numerocalcado)
       : null;
+
     const tamanhoCamisaBruto = texto(req.body?.tamanhocamisa || req.body?.tamanho_camisa);
     const tamanho_camisa = tamanhoCamisaBruto ? tamanhoCamisaBruto.toUpperCase() : null;
     const tamanho_calca = texto(req.body?.tamanhocalca || req.body?.tamanho_calca);
@@ -1503,24 +1508,39 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const temFilhosBruto = texto(req.body?.temfilhos || req.body?.tem_filhos);
     const tem_filhos = temFilhosBruto ? temFilhosBruto.toUpperCase() : 'NAO';
 
-    const quantidade_filhos = tem_filhos === 'SIM' && String(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos ?? '').trim() !== ''
-      ? Number(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos)
-      : null;
+    const quantidade_filhos = tem_filhos === 'SIM' &&
+      String(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos ?? '').trim() !== ''
+        ? Number(req.body?.quantidadefilhos ?? req.body?.quantidade_filhos)
+        : null;
 
     const filhos = tem_filhos === 'SIM'
       ? JSON.stringify(Array.isArray(req.body?.filhos) ? req.body.filhos : [])
       : null;
 
-    const [emailExistente] = await pool.query(
+    const [cpfExistente] = await pool.query(
       `SELECT ID FROM SF_USUARIO WHERE CPF = ? LIMIT 1`,
       [cpf]
     );
 
-    if (emailExistente.length > 0) {
+    if (cpfExistente.length > 0) {
       return res.status(409).json({
         success: false,
         message: 'Já existe usuário com este CPF cadastrado.'
       });
+    }
+
+    if (email && email !== '') {
+      const [emailExistente] = await pool.query(
+        `SELECT ID FROM SF_USUARIO WHERE EMAIL = ? LIMIT 1`,
+        [email]
+      );
+
+      if (emailExistente.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Já existe usuário com este E-mail cadastrado.'
+        });
+      }
     }
 
     const senhaHash = await bcrypt.hash(senha, 12);
@@ -1600,7 +1620,15 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         email
       }
     });
+
   } catch (err) {
+    console.error('Erro ao cadastrar usuário:');
+    console.error('Mensagem:', err.message);
+    console.error('Code:', err.code || 'N/A');
+    console.error('SQL Message:', err.sqlMessage || 'N/A');
+    console.error('Stack:', err.stack);
+    console.error('Body recebido:', req.body);
+
     res.status(500).json({
       success: false,
       message: 'Erro ao cadastrar usuário.',
@@ -1689,6 +1717,20 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
         success: false,
         message: 'Já existe outro usuário com este CPF.'
       });
+    }
+
+    if (email && email !== '') {
+      const [emailExistente] = await pool.query(
+        `SELECT ID FROM SF_USUARIO WHERE EMAIL = ? LIMIT 1`,
+        [email]
+      );
+
+      if (emailExistente.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: 'Já existe usuário com este E-mail cadastrado.'
+        });
+      }
     }
 
     let fotoFinal = atual.FOTO ?? null;
@@ -1942,6 +1984,7 @@ app.get('/api/setores', async (req, res) => {
 // =====================
 // Gestão Usuários
 // =====================
+
 app.get('/api/gestao-usuarios-perfis', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -2008,7 +2051,6 @@ const uploadFotoUsuario = multer({
   },
 });
 
-// Upload único da foto do usuário
 app.post('/api/gestao-usuarios/foto', uploadFotoUsuario.single('foto'), async (req, res) => {
   try {
     if (!req.file) {
@@ -2029,7 +2071,6 @@ app.post('/api/gestao-usuarios/foto', uploadFotoUsuario.single('foto'), async (r
   }
 });
 
-// Remover arquivo da foto do usuário
 app.delete('/api/gestao-usuarios/foto/:nome', async (req, res) => {
   try {
     const nome = apenasNomeArquivoSeguroCNH(req.params.nome);
@@ -2236,10 +2277,6 @@ app.delete('/api/gestao-usuarios-locais-trabalho/:id', async (req, res) => {
   }
 });
 
-
-// ======================================================
-// GESTÃO DE USUÁRIOS - APOIO CNH
-// ======================================================
 const PASTA_CNH_USUARIO = path.join(DIRETORIO_VOLUME_anexos, 'cnh-usuario');
 fs.mkdirSync(PASTA_CNH_USUARIO, { recursive: true });
 
@@ -2547,7 +2584,6 @@ const upload = multer({
   },
 });
 
-// LISTAR
 app.get("/api/marketing/imagens", async (req, res) => {
   try {
     const files = await fs.promises.readdir(PASTA_MARKETING, { withFileTypes: true });
@@ -2593,7 +2629,6 @@ app.patch('/api/marketing/cards/:id/exibido', async (req, res) => {
   }
 });
 
-// UPLOAD (múltiplos) - campo FormData: "files" [web:647]
 app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) => {
   try {
     const arquivos = Array.isArray(req.files) ? req.files : [];
@@ -2622,7 +2657,6 @@ app.post("/api/marketing/imagens", upload.array("files", 20), async (req, res) =
   }
 });
 
-// REMOVER
 app.delete("/api/marketing/imagens/:nome", async (req, res) => {
   try {
     const nome = apenasNomeArquivoSeguro(req.params.nome);
@@ -14028,8 +14062,6 @@ async function validarStatusInstanciaZApi() {
   const { clientToken } = getZApiConfig();
   const statusUrl = getZApiStatusUrl();
 
-  console.log('[ZAPI] Validando status da instância...');
-  console.log('[ZAPI] Status URL:', statusUrl);
 
   const resp = await fetch(statusUrl, {
     method: 'GET',
@@ -14040,8 +14072,6 @@ async function validarStatusInstanciaZApi() {
 
   const data = await resp.json().catch(() => null);
 
-  console.log('[ZAPI] Status response code:', resp.status);
-  console.log('[ZAPI] Status response body:', data);
 
   if (!resp.ok) {
     throw new Error(data?.message || data?.error || `Erro ao consultar status da instância Z-API. HTTP ${resp.status}`);
@@ -14301,12 +14331,6 @@ async function enviarImagemWhatsAppZApi({ telefone, imageBase64, caption = '' })
     viewOnce: false
   };
 
-  console.log('[ZAPI][IMAGE] Enviando imagem...');
-  console.log('[ZAPI][IMAGE] Endpoint:', endpoint);
-  console.log('[ZAPI][IMAGE] Instance ID:', process.env.ZAPI_INSTANCE_ID);
-  console.log('[ZAPI][IMAGE] Telefone original:', telefone);
-  console.log('[ZAPI][IMAGE] Telefone normalizado:', numero);
-  console.log('[ZAPI][IMAGE] Caption:', caption);
 
   const resp = await fetch(endpoint, {
     method: 'POST',
@@ -14319,8 +14343,6 @@ async function enviarImagemWhatsAppZApi({ telefone, imageBase64, caption = '' })
 
   const data = await resp.json().catch(() => null);
 
-  console.log('[ZAPI][IMAGE] Response code:', resp.status);
-  console.log('[ZAPI][IMAGE] Response body:', data);
 
   if (!resp.ok) {
     throw new Error(data?.message || data?.error || `Erro ao enviar imagem via Z-API. HTTP ${resp.status}`);
@@ -14340,7 +14362,6 @@ async function notificarUsuariosCentroCustoTransferenciaImagem(conn, {
   const resultados = [];
 
   if (!usuarios.length) {
-    console.log('[WHATSAPP][IMAGE] Nenhum usuário encontrado para o centro de custo:', centroCusto);
     return resultados;
   }
 
@@ -15193,38 +15214,27 @@ app.post('/api/ping-monitor/:id/contatos', async (req, res) => {
 app.post('/api/ping-monitor/verificar', async (req, res) => {
   let conn;
 
-  console.log('[PING] Iniciando verificação manual', {
-    body: req.body,
-    dataHora: new Date().toISOString()
-  });
 
   try {
     const idMonitor = Number(req.body.idMonitor);
-    console.log('[PING] idMonitor recebido:', idMonitor);
 
     if (!idMonitor) {
-      console.log('[PING] idMonitor inválido');
       return res.status(400).json({
         success: false,
         message: 'Informe idMonitor.'
       });
     }
 
-    console.log('[PING] Obtendo conexão com banco...');
     conn = await pool.getConnection();
-    console.log('[PING] Conexão obtida com sucesso');
 
-    console.log('[PING] Buscando monitor no banco...', { idMonitor });
     const [rows] = await conn.query(
       `SELECT * FROM SF_PING_MONITOR WHERE ID = ? LIMIT 1`,
       [idMonitor]
     );
 
     const monitor = rows[0];
-    console.log('[PING] Resultado da busca do monitor:', monitor);
 
     if (!monitor) {
-      console.log('[PING] Monitor não encontrado', { idMonitor });
       return res.status(404).json({
         success: false,
         message: 'Monitor não encontrado.'
@@ -15232,16 +15242,8 @@ app.post('/api/ping-monitor/verificar', async (req, res) => {
     }
 
     const statusAnterior = monitor.STATUS_ATUAL || 'UNKNOWN';
-    console.log('[PING] Status anterior:', statusAnterior);
-
-    console.log('[PING] Executando ping no host...', {
-      ip: monitor.IP,
-      equipamento: monitor.EQUIPAMENTO,
-      localizacao: monitor.LOCALIZACAO
-    });
 
     const resultadoPing = await verificarPingHost(monitor.IP);
-    console.log('[PING] Resultado do ping:', resultadoPing);
 
     const statusNovo = resultadoPing.alive ? 'UP' : 'DOWN';
     const agora = new Date();
@@ -15254,15 +15256,8 @@ app.post('/api/ping-monitor/verificar', async (req, res) => {
       ? Number(monitor.QTD_SUCESSOS_CONSECUTIVOS || 0) + 1
       : 0;
 
-    console.log('[PING] Status calculado após verificação:', {
-      statusAnterior,
-      statusNovo,
-      qtdFalhas,
-      qtdSucessos,
-      agora
-    });
 
-    console.log('[PING] Atualizando tabela SF_PING_MONITOR...');
+
     await conn.query(
       `
       UPDATE SF_PING_MONITOR
@@ -15285,9 +15280,7 @@ app.post('/api/ping-monitor/verificar', async (req, res) => {
         idMonitor
       ]
     );
-    console.log('[PING] Monitor atualizado com sucesso');
 
-    console.log('[PING] Inserindo log em SF_PING_MONITOR_LOG...');
     const [logResult] = await conn.query(
       `
       INSERT INTO SF_PING_MONITOR_LOG
@@ -15305,9 +15298,6 @@ app.post('/api/ping-monitor/verificar', async (req, res) => {
       ]
     );
 
-    console.log('[PING] Log inserido com sucesso', {
-      logId: logResult.insertId
-    });
 
     let notificacao = null;
 
@@ -15319,18 +15309,10 @@ app.post('/api/ping-monitor/verificar', async (req, res) => {
         (statusNovo === 'UP' && houveMudanca)
       );
 
-    console.log('[PING] Avaliação de notificação:', {
-      enviarWhatsApp: monitor.ENVIAR_WHATSAPP,
-      houveMudanca,
-      deveNotificar,
-      statusAnterior,
-      statusNovo
-    });
+
 
     if (deveNotificar) {
-      console.log('[PING] Buscando contatos para envio...', { idMonitor });
       const contatos = await obterContatosParaEnvio(conn, idMonitor);
-      console.log('[PING] Contatos encontrados:', contatos);
 
       if (contatos.length) {
         const mensagem = montarMensagemAlertaPing({
@@ -15342,35 +15324,22 @@ app.post('/api/ping-monitor/verificar', async (req, res) => {
           erro: resultadoPing.alive ? null : resultadoPing.output
         });
 
-        console.log('[PING] Mensagem montada para envio:');
-        console.log(mensagem);
 
-        console.log('[PING] Enviando WhatsApp para lista...');
         notificacao = await enviarWhatsAppParaLista({
           lista: contatos,
           mensagem
         });
 
-        console.log('[PING] Resultado do envio WhatsApp:', notificacao);
 
-        console.log('[PING] Atualizando log como notificado...');
         await conn.query(
           `UPDATE SF_PING_MONITOR_LOG SET NOTIFICADO = '1', DATA_ENVIO_NOTIFICACAO = ? WHERE ID = ?`,
           [new Date(), logResult.insertId]
         );
-        console.log('[PING] Log atualizado como notificado');
       } else {
-        console.log('[PING] Nenhum contato válido encontrado para notificação');
       }
     } else {
-      console.log('[PING] Notificação não será enviada');
     }
 
-    console.log('[PING] Finalizando verificação com sucesso', {
-      idMonitor,
-      statusAnterior,
-      statusNovo
-    });
 
     return res.json({
       success: true,
@@ -15393,7 +15362,6 @@ app.post('/api/ping-monitor/verificar', async (req, res) => {
     });
   } finally {
     if (conn) {
-      console.log('[PING] Liberando conexão com banco');
       conn.release();
     }
   }
@@ -15537,7 +15505,6 @@ async function rotinaPingMonitoramento() {
               [new Date(), logResult.insertId]
             );
 
-            console.log('Notificação enviada', monitor.ID, retornoEnvio);
           }
         }
       } catch (err) {
@@ -15724,9 +15691,39 @@ const uploadCertificadoDfe = multer({
   limits: { fileSize: 5 * 1024 * 1024 }
 });
 
+function mapearStatusHttpPorCStat(cStat) {
+  if (['472', '593', '656'].includes(String(cStat))) return 400;
+  return 422;
+}
+
+function montarMensagemCStat(cStat, xMotivo, ultNSU, maxNSU) {
+  const codigo = String(cStat || '');
+
+  if (codigo === '137') {
+    return `Nenhum documento localizado para este CPF/CNPJ. Use o ultNSU ${ultNSU || '000000000000000'} nas próximas consultas e aguarde ao menos 1 hora antes de consultar novamente se não houver novos documentos.`;
+  }
+
+  if (codigo === '138') {
+    return xMotivo || 'Documento(s) localizado(s).';
+  }
+
+  if (codigo === '472') {
+    return 'O CPF informado na consulta difere do CPF do certificado digital utilizado.';
+  }
+
+  if (codigo === '593') {
+    return 'O CNPJ informado na consulta difere do CNPJ-base do certificado digital utilizado.';
+  }
+
+  if (codigo === '656') {
+    return `Consumo indevido detectado pela SEFAZ. Utilize o ultNSU ${ultNSU || '000000000182444'} nas solicitações subsequentes e aguarde 1 hora antes de nova consulta.`;
+  }
+
+  return xMotivo || `Consulta rejeitada pela SEFAZ (cStat ${codigo}).`;
+}
+
 app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async (req, res) => {
   try {
-    console.log('[DFE] Iniciando consulta /api/dfe/consultar');
 
     const senha = String(req.body?.senha || '').trim();
     const documento = limparDocumento(req.body?.documento || '');
@@ -15739,22 +15736,9 @@ app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async
     const consultaSemDocumento = !documento;
     const limiteFinal = consultaSemDocumento ? 15 : limiteInformado;
 
-    console.log('[DFE] Parâmetros recebidos:', {
-      documento,
-      tipoDocumento: cnpj ? 'CNPJ' : cpf ? 'CPF' : 'VAZIO',
-      tpAmb,
-      cUFAutor,
-      ultNSU,
-      limiteInformado,
-      limiteFinal,
-      consultaSemDocumento,
-      arquivoRecebido: !!req.file,
-      nomeArquivo: req.file?.originalname || null,
-      tamanhoArquivo: req.file?.size || 0
-    });
+
 
     if (!req.file?.buffer) {
-      console.log('[DFE] Validação falhou: certificado não enviado');
       return res.status(400).json({
         success: false,
         message: 'Selecione o certificado A1 (.pfx ou .p12) antes de consultar.'
@@ -15762,7 +15746,6 @@ app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async
     }
 
     if (!senha) {
-      console.log('[DFE] Validação falhou: senha não informada');
       return res.status(400).json({
         success: false,
         message: 'Informe a senha do certificado digital.'
@@ -15770,7 +15753,6 @@ app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async
     }
 
     if (documento && documento.length !== 11 && documento.length !== 14) {
-      console.log('[DFE] Validação falhou: documento inválido', { documento });
       return res.status(400).json({
         success: false,
         message: 'O documento informado é inválido. Informe um CPF com 11 dígitos, um CNPJ com 14 dígitos ou deixe o campo em branco.'
@@ -15784,49 +15766,23 @@ app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async
       tpAmb
     };
 
-    if (cnpj) {
-      configDistribuicao.cnpj = cnpj;
-    }
-
-    if (cpf) {
-      configDistribuicao.cpf = cpf;
-    }
-
-    console.log('[DFE] Configuração montada para DistribuicaoDFe:', {
-      possuiCnpj: !!configDistribuicao.cnpj,
-      possuiCpf: !!configDistribuicao.cpf,
-      cnpj: configDistribuicao.cnpj || null,
-      cpf: configDistribuicao.cpf || null,
-      tpAmb: configDistribuicao.tpAmb,
-      cUFAutor: configDistribuicao.cUFAutor
-    });
+    if (cnpj) configDistribuicao.cnpj = cnpj;
+    if (cpf) configDistribuicao.cpf = cpf;
 
     if (!configDistribuicao.cnpj && !configDistribuicao.cpf) {
-      console.log('[DFE] Nenhum CPF/CNPJ informado para a consulta');
       return res.status(400).json({
         success: false,
-        message: 'Informe um CPF, um CNPJ ou implemente a leitura automática do documento a partir do certificado.'
+        message: 'Informe um CPF ou CNPJ para a consulta. Se quiser aceitar vazio, implemente a extração automática do documento a partir do certificado.'
       });
     }
 
-    console.log('[DFE] Instanciando DistribuicaoDFe...');
     const distribuicao = new DistribuicaoDFe(configDistribuicao);
 
-    console.log('[DFE] Executando consultaUltNSU...', { ultNSU });
     const consulta = await distribuicao.consultaUltNSU(ultNSU);
 
-    console.log('[DFE] Retorno bruto da consulta recebido:', {
-      possuiError: !!consulta?.error,
-      possuiData: !!consulta?.data,
-      cStat: consulta?.data?.cStat || null,
-      xMotivo: consulta?.data?.xMotivo || null,
-      ultNSU: consulta?.data?.ultNSU || null,
-      maxNSU: consulta?.data?.maxNSU || null,
-      quantidadeDocZip: Array.isArray(consulta?.data?.docZip) ? consulta.data.docZip.length : 0
-    });
+
 
     if (consulta?.error) {
-      console.log('[DFE] Consulta retornou erro de negócio:', consulta.error);
       return res.status(400).json({
         success: false,
         message: `Falha no retorno da distribuição DF-e: ${consulta.error}`
@@ -15834,30 +15790,56 @@ app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async
     }
 
     const data = consulta?.data || {};
+    const cStat = String(data?.cStat || '');
+    const xMotivo = String(data?.xMotivo || '');
+    const ultNSURetorno = String(data?.ultNSU || ultNSU);
+    const maxNSURetorno = String(data?.maxNSU || ultNSU);
+    const documentoUsado = cnpj || cpf || '';
+    const tipoDocumentoUsado = cnpj ? 'CNPJ' : cpf ? 'CPF' : '';
+
+    if (cStat === '656') {
+      return res.status(400).json({
+        success: false,
+        message: montarMensagemCStat(cStat, xMotivo, ultNSURetorno, maxNSURetorno),
+        meta: {
+          tpAmb: data?.tpAmb || tpAmb,
+          ultNSU: ultNSURetorno,
+          maxNSU: maxNSURetorno,
+          cStat,
+          xMotivo,
+          documentoUsado,
+          tipoDocumentoUsado,
+          origemDocumento: documento ? 'informado' : 'certificado',
+          consultaSemDocumento,
+          limiteAplicado: limiteFinal
+        }
+      });
+    }
+
+    if (['472', '593'].includes(cStat)) {
+      return res.status(mapearStatusHttpPorCStat(cStat)).json({
+        success: false,
+        message: montarMensagemCStat(cStat, xMotivo, ultNSURetorno, maxNSURetorno),
+        meta: {
+          tpAmb: data?.tpAmb || tpAmb,
+          ultNSU: ultNSURetorno,
+          maxNSU: maxNSURetorno,
+          cStat,
+          xMotivo,
+          documentoUsado,
+          tipoDocumentoUsado,
+          origemDocumento: documento ? 'informado' : 'certificado',
+          consultaSemDocumento,
+          limiteAplicado: limiteFinal
+        }
+      });
+    }
+
     let docs = normalizarDocsConsulta(data?.docZip || []);
 
-    console.log('[DFE] Documentos normalizados:', {
-      quantidadeAntesDoSlice: docs.length
-    });
+
 
     docs = docs.slice(0, limiteFinal);
-
-    console.log('[DFE] Documentos após aplicar limite:', {
-      quantidadeFinal: docs.length,
-      limiteFinal
-    });
-
-    if (docs.length) {
-      console.log('[DFE] Primeiro documento retornado:', {
-        nsu: docs[0]?.nsu || null,
-        chave: docs[0]?.chave || null,
-        emitente: docs[0]?.emitente || null,
-        tipo: docs[0]?.tipo || null,
-        dataEmissao: docs[0]?.dataEmissao || null
-      });
-    } else {
-      console.log('[DFE] Nenhum documento retornado após normalização/filtro');
-    }
 
     const sessionId = gerarSessionIdDfe();
 
@@ -15866,34 +15848,31 @@ app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async
       lastAccessAt: Date.now(),
       cnpj,
       cpf,
+      documentoUsado,
       documentoInformado: documento || '',
       consultaSemDocumento,
       tpAmb,
       cUFAutor,
-      ultNSU: data?.ultNSU || ultNSU,
-      maxNSU: data?.maxNSU || ultNSU,
+      ultNSU: ultNSURetorno,
+      maxNSU: maxNSURetorno,
       items: docs
     });
 
-    console.log('[DFE] Sessão criada com sucesso:', {
-      sessionId,
-      quantidadeItens: docs.length,
-      ultNSU: data?.ultNSU || ultNSU,
-      maxNSU: data?.maxNSU || ultNSU
-    });
 
-    const qtd = docs.length;
-    const documentoUsado = cnpj || cpf || '';
-    const tipoDocumentoUsado = cnpj ? 'CNPJ' : cpf ? 'CPF' : '';
 
-    const msgConsulta = consultaSemDocumento
-      ? `Consulta concluída com sucesso. ${qtd} documento(s) retornado(s).`
-      : `Consulta concluída com sucesso. ${qtd} documento(s) retornado(s) para o ${tipoDocumentoUsado} informado.`;
+    let msgConsulta = 'Consulta concluída com sucesso.';
 
-    console.log('[DFE] Finalizando rota com sucesso:', {
-      sessionId,
-      mensagem: msgConsulta
-    });
+    if (cStat === '138') {
+      msgConsulta = consultaSemDocumento
+        ? `Consulta concluída com sucesso. ${docs.length} documento(s) retornado(s) para o certificado.`
+        : `Consulta concluída com sucesso. ${docs.length} documento(s) retornado(s) para o ${tipoDocumentoUsado} informado.`;
+    } else if (cStat === '137') {
+      msgConsulta = montarMensagemCStat(cStat, xMotivo, ultNSURetorno, maxNSURetorno);
+    } else if (xMotivo) {
+      msgConsulta = xMotivo;
+    }
+
+
 
     return res.json({
       success: true,
@@ -15902,10 +15881,10 @@ app.post('/api/dfe/consultar', uploadCertificadoDfe.single('certificado'), async
       items: docs.map(({ xml, json, ...rest }) => rest),
       meta: {
         tpAmb: data?.tpAmb || tpAmb,
-        ultNSU: data?.ultNSU || ultNSU,
-        maxNSU: data?.maxNSU || ultNSU,
-        cStat: data?.cStat || '',
-        xMotivo: data?.xMotivo || '',
+        ultNSU: ultNSURetorno,
+        maxNSU: maxNSURetorno,
+        cStat,
+        xMotivo,
         documentoUsado,
         tipoDocumentoUsado,
         origemDocumento: documento ? 'informado' : 'certificado',
@@ -16029,6 +16008,2071 @@ app.post('/api/dfe/xml-lote', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Erro ao gerar o arquivo ZIP das notas selecionadas.',
+      error: err.message
+    });
+  }
+});
+
+// Equipamentos Relogio POnto
+
+function textoLivreEquip(v, max = 255) {
+  return String(v ?? '').trim().slice(0, max);
+}
+
+function validarIPv4(ip) {
+  const partes = String(ip || '').trim().split('.');
+  if (partes.length !== 4) return false;
+
+  return partes.every(parte => {
+    if (!/^\d+$/.test(parte)) return false;
+    const n = Number(parte);
+    return n >= 0 && n <= 255;
+  });
+}
+
+function normalizarProtocoloEquipamento(v) {
+  return String(v || '').trim().toLowerCase() === 'https' ? 'https' : 'http';
+}
+
+function normalizarTipoAfd(v) {
+  return String(v || '').trim() === '1510' ? '1510' : '671';
+}
+
+function obterPortaPadraoEquipamento(protocolo) {
+  return normalizarProtocoloEquipamento(protocolo) === 'https' ? 443 : 80;
+}
+
+function montarBaseUrlEquipamento({ protocolo, ip, porta }) {
+  const protocoloFinal = normalizarProtocoloEquipamento(protocolo);
+  const portaFinal = Number(porta) || obterPortaPadraoEquipamento(protocoloFinal);
+  return `${protocoloFinal}://${ip}:${portaFinal}`;
+}
+
+function getAgentByProtocol(protocolo) {
+  if (normalizarProtocoloEquipamento(protocolo) === 'https') {
+    return new https.Agent({
+      rejectUnauthorized: false
+    });
+  }
+
+  return new http.Agent();
+}
+
+async function fetchControlIdJson(url, options = {}, protocolo = 'http') {
+  const agent = getAgentByProtocol(protocolo);
+
+  const response = await fetch(url, {
+    ...options,
+    agent
+  });
+
+  const contentType = response.headers.get('content-type') || '';
+  let data = null;
+
+  if (contentType.includes('application/json')) {
+    data = await response.json();
+  } else {
+    const text = await response.text();
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
+  }
+
+  return { response, data };
+}
+
+async function fazerLoginControlId(equipamento) {
+  const baseUrl = montarBaseUrlEquipamento(equipamento);
+
+  const { response, data } = await fetchControlIdJson(
+    `${baseUrl}/login.fcgi`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        login: equipamento.usuario,
+        password: equipamento.senha
+      })
+    },
+    equipamento.protocolo
+  );
+
+  if (!response.ok) {
+    throw new Error(`Falha no login do equipamento. HTTP ${response.status}`);
+  }
+
+  if (!data?.session) {
+    throw new Error('Sessão não retornada pelo equipamento.');
+  }
+
+  return {
+    session: data.session,
+    loginResponse: data,
+    baseUrl
+  };
+}
+
+async function obterAboutControlId(equipamento, session) {
+  const baseUrl = montarBaseUrlEquipamento(equipamento);
+
+  const { response, data } = await fetchControlIdJson(
+    `${baseUrl}/get_about.fcgi?session=${encodeURIComponent(session)}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({})
+    },
+    equipamento.protocolo
+  );
+
+  if (!response.ok) {
+    throw new Error(`Falha ao consultar get_about.fcgi. HTTP ${response.status}`);
+  }
+
+  return data;
+}
+
+async function obterAfdControlId(equipamento, session) {
+  const baseUrl = montarBaseUrlEquipamento(equipamento);
+  const mode = String(equipamento.tipoAfd) === '671' ? '&mode=671' : '';
+  const url = `${baseUrl}/get_afd.fcgi?session=${encodeURIComponent(session)}${mode}`;
+
+  const agent = getAgentByProtocol(equipamento.protocolo);
+
+  const response = await fetch(url, {
+    method: 'GET',
+    agent
+  });
+
+  if (!response.ok) {
+    throw new Error(`Falha ao obter AFD. HTTP ${response.status}`);
+  }
+
+  const afd = await response.text();
+  return afd;
+}
+
+function mapearEquipamentoDb(row) {
+  return {
+    id: String(row.ID),
+    codigo: row.CODIGO ?? '',
+    descricao: row.DESCRICAO ?? '',
+    numeroSerie: row.NUMEROSERIE ?? '',
+    status: row.STATUS ?? '',
+    local: row.LOCALSETOR ?? '',
+    ip: row.IP ?? '',
+    protocolo: normalizarProtocoloEquipamento(row.PROTOCOLO),
+    porta: Number(row.PORTA) || obterPortaPadraoEquipamento(row.PROTOCOLO),
+    usuario: row.USUARIO ?? '',
+    senha: row.SENHA ?? '',
+    tipoAfd: normalizarTipoAfd(row.TIPOAFD)
+  };
+}
+
+function validarPayloadEquipamento(body = {}) {
+  const payload = {
+    id: String(body.id || Date.now()),
+    codigo: textoLivreEquip(body.codigo, 50),
+    descricao: textoLivreEquip(body.descricao, 150),
+    numeroSerie: textoLivreEquip(body.numeroSerie, 100),
+    status: textoLivreEquip(body.status, 30),
+    local: textoLivreEquip(body.local, 150),
+    ip: textoLivreEquip(body.ip, 50),
+    protocolo: normalizarProtocoloEquipamento(body.protocolo),
+    porta: Number(body.porta) || obterPortaPadraoEquipamento(body.protocolo),
+    usuario: textoLivreEquip(body.usuario, 100),
+    senha: textoLivreEquip(body.senha, 255),
+    tipoAfd: normalizarTipoAfd(body.tipoAfd)
+  };
+
+  if (!payload.codigo) throw new Error('Informe o código do equipamento.');
+  if (!payload.descricao) throw new Error('Informe a descrição do equipamento.');
+  if (!payload.status) throw new Error('Selecione o status do equipamento.');
+  if (!payload.ip) throw new Error('Informe o IP do equipamento.');
+  if (!validarIPv4(payload.ip)) throw new Error('Informe um IP válido.');
+  if (!payload.usuario) throw new Error('Informe o usuário do equipamento.');
+  if (!payload.senha) throw new Error('Informe a senha do equipamento.');
+
+  return payload;
+}
+
+app.get('/api/equipamentos', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        CODIGO,
+        DESCRICAO,
+        NUMEROSERIE,
+        STATUS,
+        LOCALSETOR,
+        IP,
+        PROTOCOLO,
+        PORTA,
+        USUARIO,
+        SENHA,
+        TIPOAFD
+      FROM SF_EQUIPAMENTO
+      ORDER BY CREATEDAT DESC, ID DESC
+    `);
+
+    return res.json({
+      success: true,
+      items: rows.map(mapearEquipamentoDb)
+    });
+  } catch (err) {
+    console.error('Erro GET /api/equipamentos', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar equipamentos.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/equipamentos/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do equipamento inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        CODIGO,
+        DESCRICAO,
+        NUMEROSERIE,
+        STATUS,
+        LOCALSETOR,
+        IP,
+        PROTOCOLO,
+        PORTA,
+        USUARIO,
+        SENHA,
+        TIPOAFD
+      FROM SF_EQUIPAMENTO
+      WHERE ID = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Equipamento não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: mapearEquipamentoDb(rows[0])
+    });
+  } catch (err) {
+    console.error('Erro GET /api/equipamentos/:id', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar equipamento.',
+      error: err.message
+    });
+  }
+});
+
+
+app.post('/api/equipamentos', async (req, res) => {
+
+  try {
+    const payload = validarPayloadEquipamento(req.body);
+
+    const [existente] = await pool.query(
+      'SELECT ID FROM SF_EQUIPAMENTO WHERE ID = ? LIMIT 1',
+      [payload.id]
+    );
+
+    if (existente.length) {
+      return res.status(409).json({
+        success: false,
+        message: 'Já existe um equipamento com esse ID.'
+      });
+    }
+
+    await pool.query(`
+      INSERT INTO SF_EQUIPAMENTO (
+        ID,
+        CODIGO,
+        DESCRICAO,
+        NUMEROSERIE,
+        STATUS,
+        LOCALSETOR,
+        IP,
+        PROTOCOLO,
+        PORTA,
+        USUARIO,
+        SENHA,
+        TIPOAFD,
+        CREATEDAT
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+    `, [
+      payload.id,
+      payload.codigo,
+      payload.descricao,
+      payload.numeroSerie,
+      payload.status,
+      payload.local,
+      payload.ip,
+      payload.protocolo,
+      payload.porta,
+      payload.usuario,
+      payload.senha,
+      payload.tipoAfd
+    ]);
+
+
+    return res.status(201).json({
+      success: true,
+      message: 'Equipamento cadastrado com sucesso.',
+      item: payload
+    });
+  } catch (err) {
+    console.error('Erro POST /api/equipamentos', err);
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'Erro ao cadastrar equipamento.'
+    });
+  }
+});
+
+app.put('/api/equipamentos/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do equipamento inválido.'
+      });
+    }
+
+    const payload = validarPayloadEquipamento({
+      ...req.body,
+      id
+    });
+
+    const [rows] = await pool.query(
+      'SELECT ID FROM SF_EQUIPAMENTO WHERE ID = ? LIMIT 1',
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Equipamento não encontrado.'
+      });
+    }
+
+    await pool.query(`
+      UPDATE SF_EQUIPAMENTO
+      SET
+        CODIGO = ?,
+        DESCRICAO = ?,
+        NUMEROSERIE = ?,
+        STATUS = ?,
+        LOCALSETOR = ?,
+        IP = ?,
+        PROTOCOLO = ?,
+        PORTA = ?,
+        USUARIO = ?,
+        SENHA = ?,
+        TIPOAFD = ?,
+        UPDATEDAT = NOW()
+      WHERE ID = ?
+    `, [
+      payload.codigo,
+      payload.descricao,
+      payload.numeroSerie,
+      payload.status,
+      payload.local,
+      payload.ip,
+      payload.protocolo,
+      payload.porta,
+      payload.usuario,
+      payload.senha,
+      payload.tipoAfd,
+      id
+    ]);
+
+    return res.json({
+      success: true,
+      message: 'Equipamento atualizado com sucesso.',
+      item: payload
+    });
+  } catch (err) {
+    console.error('Erro PUT /api/equipamentos/:id', err);
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'Erro ao atualizar equipamento.'
+    });
+  }
+});
+
+app.delete('/api/equipamentos/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do equipamento inválido.'
+      });
+    }
+
+    const result = await pool.query(
+      'DELETE FROM SF_EQUIPAMENTO WHERE ID = ?',
+      [id]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Equipamento não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Equipamento removido com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro DELETE /api/equipamentos/:id', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao remover equipamento.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/equipamentos/testar-comunicacao', async (req, res) => {
+  try {
+
+
+    const payload = validarPayloadEquipamento(req.body);
+
+
+    const { session, baseUrl } = await fazerLoginControlId(payload);
+
+    let about = null;
+
+    try {
+      about = await obterAboutControlId(payload, session);
+    } catch (errAbout) {
+      about = null;
+    }
+
+    const resposta = {
+      success: true,
+      message: `Comunicação realizada com sucesso via ${payload.protocolo.toUpperCase()}.`,
+      session,
+      baseUrl,
+      equipamento: {
+        ip: payload.ip,
+        protocolo: payload.protocolo,
+        porta: payload.porta,
+        usuario: payload.usuario,
+        tipoAfd: payload.tipoAfd
+      },
+      about
+    };
+
+
+
+    return res.json(resposta);
+  } catch (err) {
+    console.error('Erro POST /api/equipamentos/testar-comunicacao', err);
+    console.error('[STACK]', err.stack);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Falha na comunicação com o equipamento.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/equipamentos/:id/testar-comunicacao', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        CODIGO,
+        DESCRICAO,
+        NUMEROSERIE,
+        STATUS,
+        LOCALSETOR,
+        IP,
+        PROTOCOLO,
+        PORTA,
+        USUARIO,
+        SENHA,
+        TIPOAFD
+      FROM SF_EQUIPAMENTO
+      WHERE ID = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Equipamento não encontrado.'
+      });
+    }
+
+    const equipamento = mapearEquipamentoDb(rows[0]);
+    const { session, baseUrl } = await fazerLoginControlId(equipamento);
+
+    let about = null;
+    try {
+      about = await obterAboutControlId(equipamento, session);
+    } catch (errAbout) {
+      about = null;
+    }
+
+    return res.json({
+      success: true,
+      message: `Comunicação realizada com sucesso via ${equipamento.protocolo.toUpperCase()}.`,
+      session,
+      baseUrl,
+      equipamento,
+      about
+    });
+  } catch (err) {
+    console.error('Erro POST /api/equipamentos/:id/testar-comunicacao', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Falha na comunicação com o equipamento.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/equipamentos/:id/about', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        CODIGO,
+        DESCRICAO,
+        NUMEROSERIE,
+        STATUS,
+        LOCALSETOR,
+        IP,
+        PROTOCOLO,
+        PORTA,
+        USUARIO,
+        SENHA,
+        TIPOAFD
+      FROM SF_EQUIPAMENTO
+      WHERE ID = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Equipamento não encontrado.'
+      });
+    }
+
+    const equipamento = mapearEquipamentoDb(rows[0]);
+    const { session } = await fazerLoginControlId(equipamento);
+    const about = await obterAboutControlId(equipamento, session);
+
+    return res.json({
+      success: true,
+      about
+    });
+  } catch (err) {
+    console.error('Erro GET /api/equipamentos/:id/about', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao consultar informações do equipamento.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/equipamentos/:id/afd', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        CODIGO,
+        DESCRICAO,
+        NUMEROSERIE,
+        STATUS,
+        LOCALSETOR,
+        IP,
+        PROTOCOLO,
+        PORTA,
+        USUARIO,
+        SENHA,
+        TIPOAFD
+      FROM SF_EQUIPAMENTO
+      WHERE ID = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Equipamento não encontrado.'
+      });
+    }
+
+    const equipamento = mapearEquipamentoDb(rows[0]);
+    const { session } = await fazerLoginControlId(equipamento);
+    const afd = await obterAfdControlId(equipamento, session);
+
+    const nomeArquivo = `afd-${equipamento.codigo || equipamento.id}-${equipamento.tipoAfd}.txt`;
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${nomeArquivo}"`);
+
+    return res.send(afd);
+  } catch (err) {
+    console.error('Erro GET /api/equipamentos/:id/afd', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao exportar AFD do equipamento.',
+      error: err.message
+    });
+  }
+});
+
+// ===============================
+// CADASTRO DE CALENDÁRIOS
+// ===============================
+
+app.get('/api/calendarios', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        UNIDADETRABALHO,
+        PERIODO,
+        TIPOPERIODO,
+        TIPORECORRENCIA,
+        DATE_FORMAT(DATAINICIAL, '%Y-%m-%d') AS DATAINICIAL,
+        DATE_FORMAT(DATAFINAL, '%Y-%m-%d') AS DATAFINAL,
+        REPETETODOANO,
+        DATE_FORMAT(DATAINICIALTROCA, '%Y-%m-%d') AS DATAINICIALTROCA,
+        DATE_FORMAT(DATAFINALTROCA, '%Y-%m-%d') AS DATAFINALTROCA,
+        DATE_FORMAT(NOVADATAINICIAL, '%Y-%m-%d') AS NOVADATAINICIAL,
+        DATE_FORMAT(NOVADATAFINAL, '%Y-%m-%d') AS NOVADATAFINAL,
+        TIME_FORMAT(HORAINICIO, '%H:%i') AS HORAINICIO,
+        TIME_FORMAT(HORAFIM, '%H:%i') AS HORAFIM,
+        STATUS,
+        USUARIOCADASTRO,
+        USUARIOALTERACAO,
+        OBSERVACAO,
+        DATACADASTRO,
+        DATAALTERACAO
+      FROM SF_CALENDARIO
+      ORDER BY ID DESC
+    `);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro ao listar calendários:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar calendários.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/calendarios/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        UNIDADETRABALHO,
+        PERIODO,
+        TIPOPERIODO,
+        TIPORECORRENCIA,
+        DATE_FORMAT(DATAINICIAL, '%Y-%m-%d') AS DATAINICIAL,
+        DATE_FORMAT(DATAFINAL, '%Y-%m-%d') AS DATAFINAL,
+        REPETETODOANO,
+        DATE_FORMAT(DATAINICIALTROCA, '%Y-%m-%d') AS DATAINICIALTROCA,
+        DATE_FORMAT(DATAFINALTROCA, '%Y-%m-%d') AS DATAFINALTROCA,
+        DATE_FORMAT(NOVADATAINICIAL, '%Y-%m-%d') AS NOVADATAINICIAL,
+        DATE_FORMAT(NOVADATAFINAL, '%Y-%m-%d') AS NOVADATAFINAL,
+        TIME_FORMAT(HORAINICIO, '%H:%i') AS HORAINICIO,
+        TIME_FORMAT(HORAFIM, '%H:%i') AS HORAFIM,
+        STATUS,
+        USUARIOCADASTRO,
+        USUARIOALTERACAO,
+        OBSERVACAO,
+        DATACADASTRO,
+        DATAALTERACAO
+      FROM SF_CALENDARIO
+      WHERE ID = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Calendário não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: rows[0]
+    });
+  } catch (err) {
+    console.error('Erro ao buscar calendário:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar calendário.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/calendarios', async (req, res) => {
+  try {
+    const unidadeTrabalho = String(req.body?.unidadeTrabalho ?? '').trim();
+    const periodo = String(req.body?.periodo ?? '').trim();
+    const tipoPeriodo = String(req.body?.tipoPeriodo ?? '').trim().toLowerCase();
+    const tipoRecorrencia = String(req.body?.tipoRecorrencia ?? 'UNICO').trim().toUpperCase();
+    const dataInicial = String(req.body?.dataInicial ?? '').trim();
+    const dataFinalRaw = String(req.body?.dataFinal ?? '').trim();
+    const repeteTodoAno = String(req.body?.repeteTodoAno ?? 'N').trim().toUpperCase();
+    const dataInicialTroca = String(req.body?.dataInicialTroca ?? '').trim();
+    const dataFinalTroca = String(req.body?.dataFinalTroca ?? '').trim();
+    const novaDataInicial = String(req.body?.novaDataInicial ?? '').trim();
+    const novaDataFinal = String(req.body?.novaDataFinal ?? '').trim();
+    const horaInicio = String(req.body?.horaInicio ?? '').trim();
+    const horaFim = String(req.body?.horaFim ?? '').trim();
+    const status = String(req.body?.status ?? 'Ativo').trim() || 'Ativo';
+    const usuario = String(req.body?.usuario ?? '').trim() || 'SISTEMA';
+    const observacao = String(req.body?.observacao ?? '').trim();
+
+    const dataFinal = tipoPeriodo === 'intervalo' ? dataFinalRaw : null;
+
+    if (!unidadeTrabalho) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a unidade de trabalho.'
+      });
+    }
+
+    if (!tipoPeriodo || !['data', 'intervalo'].includes(tipoPeriodo)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um tipo de período válido.'
+      });
+    }
+
+    if (!['UNICO', 'ANUAL', 'TROCA_FERIADO'].includes(tipoRecorrencia)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um tipo de recorrência válido.'
+      });
+    }
+
+    if (!periodo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o período.'
+      });
+    }
+
+    if (!horaInicio) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a hora de início.'
+      });
+    }
+
+    if (!horaFim) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a hora de fim.'
+      });
+    }
+
+    if (tipoRecorrencia === 'TROCA_FERIADO') {
+      if (!dataInicialTroca || !dataFinalTroca) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe o período original do feriado.'
+        });
+      }
+
+      if (!novaDataInicial || !novaDataFinal) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe o novo período da troca.'
+        });
+      }
+
+      if (dataFinalTroca < dataInicialTroca) {
+        return res.status(400).json({
+          success: false,
+          message: 'A data final do feriado não pode ser menor que a inicial.'
+        });
+      }
+
+      if (novaDataFinal < novaDataInicial) {
+        return res.status(400).json({
+          success: false,
+          message: 'A nova data final não pode ser menor que a nova data inicial.'
+        });
+      }
+    } else {
+      if (!dataInicial) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe a data inicial.'
+        });
+      }
+
+      if (tipoPeriodo === 'intervalo' && !dataFinal) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe a data final.'
+        });
+      }
+
+      if (tipoPeriodo === 'intervalo' && dataFinal < dataInicial) {
+        return res.status(400).json({
+          success: false,
+          message: 'A data final não pode ser menor que a data inicial.'
+        });
+      }
+    }
+
+    const [result] = await pool.query(`
+      INSERT INTO SF_CALENDARIO (
+        UNIDADETRABALHO,
+        PERIODO,
+        TIPOPERIODO,
+        TIPORECORRENCIA,
+        DATAINICIAL,
+        DATAFINAL,
+        REPETETODOANO,
+        DATAINICIALTROCA,
+        DATAFINALTROCA,
+        NOVADATAINICIAL,
+        NOVADATAFINAL,
+        HORAINICIO,
+        HORAFIM,
+        STATUS,
+        USUARIOCADASTRO,
+        OBSERVACAO,
+        DATACADASTRO
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+    `, [
+      unidadeTrabalho,
+      periodo,
+      tipoPeriodo,
+      tipoRecorrencia,
+      dataInicial || null,
+      dataFinal,
+      tipoRecorrencia === 'ANUAL' ? 'S' : 'N',
+      dataInicialTroca || null,
+      dataFinalTroca || null,
+      novaDataInicial || null,
+      novaDataFinal || null,
+      horaInicio,
+      horaFim,
+      status,
+      usuario,
+      observacao || null
+    ]);
+
+    return res.status(201).json({
+      success: true,
+      id: result.insertId,
+      message: 'Calendário cadastrado com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao cadastrar calendário:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao cadastrar calendário.',
+      error: err.message
+    });
+  }
+});
+
+app.put('/api/calendarios/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const unidadeTrabalho = String(req.body?.unidadeTrabalho ?? '').trim();
+    const periodo = String(req.body?.periodo ?? '').trim();
+    const tipoPeriodo = String(req.body?.tipoPeriodo ?? '').trim().toLowerCase();
+    const tipoRecorrencia = String(req.body?.tipoRecorrencia ?? 'UNICO').trim().toUpperCase();
+    const dataInicial = String(req.body?.dataInicial ?? '').trim();
+    const dataFinalRaw = String(req.body?.dataFinal ?? '').trim();
+    const repeteTodoAno = String(req.body?.repeteTodoAno ?? 'N').trim().toUpperCase();
+    const dataInicialTroca = String(req.body?.dataInicialTroca ?? '').trim();
+    const dataFinalTroca = String(req.body?.dataFinalTroca ?? '').trim();
+    const novaDataInicial = String(req.body?.novaDataInicial ?? '').trim();
+    const novaDataFinal = String(req.body?.novaDataFinal ?? '').trim();
+    const horaInicio = String(req.body?.horaInicio ?? '').trim();
+    const horaFim = String(req.body?.horaFim ?? '').trim();
+    const status = String(req.body?.status ?? '').trim() || 'Ativo';
+    const usuario = String(req.body?.usuario ?? '').trim() || 'SISTEMA';
+    const observacao = String(req.body?.observacao ?? '').trim();
+
+    const dataFinal = tipoPeriodo === 'intervalo' ? dataFinalRaw : null;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    if (!unidadeTrabalho) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a unidade de trabalho.'
+      });
+    }
+
+    if (!tipoPeriodo || !['data', 'intervalo'].includes(tipoPeriodo)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um tipo de período válido.'
+      });
+    }
+
+    if (!['UNICO', 'ANUAL', 'TROCA_FERIADO'].includes(tipoRecorrencia)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um tipo de recorrência válido.'
+      });
+    }
+
+    if (!periodo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o período.'
+      });
+    }
+
+    if (!horaInicio) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a hora de início.'
+      });
+    }
+
+    if (!horaFim) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a hora de fim.'
+      });
+    }
+
+    if (tipoRecorrencia === 'TROCA_FERIADO') {
+      if (!dataInicialTroca || !dataFinalTroca) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe o período original do feriado.'
+        });
+      }
+
+      if (!novaDataInicial || !novaDataFinal) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe o novo período da troca.'
+        });
+      }
+
+      if (dataFinalTroca < dataInicialTroca) {
+        return res.status(400).json({
+          success: false,
+          message: 'A data final do feriado não pode ser menor que a inicial.'
+        });
+      }
+
+      if (novaDataFinal < novaDataInicial) {
+        return res.status(400).json({
+          success: false,
+          message: 'A nova data final não pode ser menor que a nova data inicial.'
+        });
+      }
+    } else {
+      if (!dataInicial) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe a data inicial.'
+        });
+      }
+
+      if (tipoPeriodo === 'intervalo' && !dataFinal) {
+        return res.status(400).json({
+          success: false,
+          message: 'Informe a data final.'
+        });
+      }
+
+      if (tipoPeriodo === 'intervalo' && dataFinal < dataInicial) {
+        return res.status(400).json({
+          success: false,
+          message: 'A data final não pode ser menor que a data inicial.'
+        });
+      }
+    }
+
+    const [result] = await pool.query(`
+      UPDATE SF_CALENDARIO
+      SET
+        UNIDADETRABALHO = ?,
+        PERIODO = ?,
+        TIPOPERIODO = ?,
+        TIPORECORRENCIA = ?,
+        DATAINICIAL = ?,
+        DATAFINAL = ?,
+        REPETETODOANO = ?,
+        DATAINICIALTROCA = ?,
+        DATAFINALTROCA = ?,
+        NOVADATAINICIAL = ?,
+        NOVADATAFINAL = ?,
+        HORAINICIO = ?,
+        HORAFIM = ?,
+        STATUS = ?,
+        USUARIOALTERACAO = ?,
+        OBSERVACAO = ?,
+        DATAALTERACAO = NOW()
+      WHERE ID = ?
+    `, [
+      unidadeTrabalho,
+      periodo,
+      tipoPeriodo,
+      tipoRecorrencia,
+      dataInicial || null,
+      dataFinal,
+      tipoRecorrencia === 'ANUAL' ? 'S' : 'N',
+      dataInicialTroca || null,
+      dataFinalTroca || null,
+      novaDataInicial || null,
+      novaDataFinal || null,
+      horaInicio,
+      horaFim,
+      status,
+      usuario,
+      observacao || null,
+      id
+    ]);
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Calendário não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Calendário atualizado com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao atualizar calendário:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar calendário.',
+      error: err.message
+    });
+  }
+});
+
+app.delete('/api/calendarios/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    const [result] = await pool.query(`
+      DELETE FROM SF_CALENDARIO
+      WHERE ID = ?
+    `, [id]);
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Calendário não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Calendário excluído com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao excluir calendário:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir calendário.',
+      error: err.message
+    });
+  }
+});
+
+
+// ======================================================
+// JORNADA DE TRABALHO + VÍNCULO USUÁRIO/JORNADA
+// ======================================================
+
+// Requer:
+// const express = require('express');
+// const app = express();
+// const mysql = require('mysql2/promise');
+// const pool = mysql.createPool({...});
+// app.use(express.json());
+
+
+// =========================
+// HELPERS
+// =========================
+function texto(v) {
+  if (v === undefined || v === null) return '';
+  return String(v).trim();
+}
+
+function numero(v, padrao = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : padrao;
+}
+
+function dataOuNull(v) {
+  const s = texto(v);
+  return s || null;
+}
+
+function horaOuNull(v) {
+  const s = texto(v);
+  return s || null;
+}
+
+function horaParaMinutos(hora) {
+  const valor = texto(hora);
+  if (!valor) return null;
+
+  const partes = valor.split(':');
+  const hh = Number(partes[0]);
+  const mm = Number(partes[1]);
+
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  return (hh * 60) + mm;
+}
+
+function validarSequenciaJornada({
+  horaEntrada1,
+  horaSaida1,
+  horaEntrada2,
+  horaSaida2
+}) {
+  const inicio = horaParaMinutos(horaEntrada1);
+  const saidaIntervalo = horaParaMinutos(horaSaida1);
+  const retornoIntervalo = horaParaMinutos(horaEntrada2);
+  const fim = horaParaMinutos(horaSaida2);
+
+  if (
+    inicio === null ||
+    saidaIntervalo === null ||
+    retornoIntervalo === null ||
+    fim === null
+  ) {
+    return 'Informe os 4 horários da jornada.';
+  }
+
+  if (!(inicio < saidaIntervalo && saidaIntervalo < retornoIntervalo && retornoIntervalo < fim)) {
+    return 'A sequência dos horários deve ser: início expediente < saída intervalo < retorno intervalo < fim expediente.';
+  }
+
+  return null;
+}
+
+
+// =========================
+// JORNADAS
+// =========================
+
+function flagSN(valor, padrao = 'N') {
+  const v = String(valor ?? padrao).trim().toUpperCase();
+  return v === 'S' ? 'S' : 'N';
+}
+
+// GET /api/jornadas
+app.get('/api/jornadas', async (req, res) => {
+  try {
+    const busca = texto(req.query?.q);
+
+    let sql = `
+      SELECT
+        ID,
+        DESCRICAO,
+        HORA_INICIO_EXPEDIENTE,
+        HORA_SAIDA_INTERVALO,
+        HORA_RETORNO_INTERVALO,
+        HORA_FIM_EXPEDIENTE,
+        CARGA_HORARIA,
+        TOLERANCIA_ATRASO_MIN,
+        TOLERANCIA_EXTRA_MIN,
+        TRABALHA_DOMINGO,
+        TRABALHA_SEGUNDA,
+        TRABALHA_TERCA,
+        TRABALHA_QUARTA,
+        TRABALHA_QUINTA,
+        TRABALHA_SEXTA,
+        TRABALHA_SABADO,
+        STATUS,
+        OBSERVACAO,
+        CRIADO_EM,
+        ATUALIZADO_EM
+      FROM SF_JORNADA_TRABALHO
+    `;
+
+    const params = [];
+
+    if (busca) {
+      const like = `%${busca}%`;
+      sql += `
+        WHERE
+          DESCRICAO LIKE ?
+          OR HORA_INICIO_EXPEDIENTE LIKE ?
+          OR HORA_SAIDA_INTERVALO LIKE ?
+          OR HORA_RETORNO_INTERVALO LIKE ?
+          OR HORA_FIM_EXPEDIENTE LIKE ?
+          OR STATUS LIKE ?
+          OR CARGA_HORARIA LIKE ?
+      `;
+      params.push(like, like, like, like, like, like, like);
+    }
+
+    sql += ` ORDER BY DESCRICAO ASC, ID DESC`;
+
+    const [rows] = await pool.query(sql, params);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar jornadas.',
+      error: err.message
+    });
+  }
+});
+
+
+// GET /api/jornadas/:id
+app.get('/api/jornadas/:id', async (req, res) => {
+  try {
+    const id = numero(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID da jornada inválido.'
+      });
+    }
+
+    const sql = `
+      SELECT
+        ID,
+        DESCRICAO,
+        HORA_INICIO_EXPEDIENTE,
+        HORA_SAIDA_INTERVALO,
+        HORA_RETORNO_INTERVALO,
+        HORA_FIM_EXPEDIENTE,
+        CARGA_HORARIA,
+        TOLERANCIA_ATRASO_MIN,
+        TOLERANCIA_EXTRA_MIN,
+        TRABALHA_DOMINGO,
+        TRABALHA_SEGUNDA,
+        TRABALHA_TERCA,
+        TRABALHA_QUARTA,
+        TRABALHA_QUINTA,
+        TRABALHA_SEXTA,
+        TRABALHA_SABADO,
+        STATUS,
+        OBSERVACAO,
+        CRIADO_EM,
+        ATUALIZADO_EM
+      FROM SF_JORNADA_TRABALHO
+      WHERE ID = ?
+      LIMIT 1
+    `;
+
+    const [rows] = await pool.query(sql, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Jornada não encontrada.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: rows[0]
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar jornada.',
+      error: err.message
+    });
+  }
+});
+
+
+// POST /api/jornadas
+app.post('/api/jornadas', async (req, res) => {
+
+  try {
+    const descricao = texto(req.body?.descricao);
+    const horaEntrada1 = horaOuNull(req.body?.horaEntrada1);
+    const horaSaida1 = horaOuNull(req.body?.horaSaida1);
+    const horaEntrada2 = horaOuNull(req.body?.horaEntrada2);
+    const horaSaida2 = horaOuNull(req.body?.horaSaida2);
+    const cargaHoraria = texto(req.body?.cargaHoraria);
+    const toleranciaAtrasoMin = numero(req.body?.toleranciaAtrasoMin, 0);
+    const toleranciaExtraMin = numero(req.body?.toleranciaExtraMin, 0);
+    const status = texto(req.body?.status || 'ATIVO');
+    const observacao = texto(req.body?.observacao);
+
+    const trabalhaDomingo = flagSN(req.body?.trabalhaDomingo, 'N');
+    const trabalhaSegunda = flagSN(req.body?.trabalhaSegunda, 'S');
+    const trabalhaTerca = flagSN(req.body?.trabalhaTerca, 'S');
+    const trabalhaQuarta = flagSN(req.body?.trabalhaQuarta, 'S');
+    const trabalhaQuinta = flagSN(req.body?.trabalhaQuinta, 'S');
+    const trabalhaSexta = flagSN(req.body?.trabalhaSexta, 'S');
+    const trabalhaSabado = flagSN(req.body?.trabalhaSabado, 'N');
+
+    if (!descricao) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a descrição da jornada.'
+      });
+    }
+
+    const erroSequencia = validarSequenciaJornada({
+      horaEntrada1,
+      horaSaida1,
+      horaEntrada2,
+      horaSaida2
+    });
+
+    if (erroSequencia) {
+      return res.status(400).json({
+        success: false,
+        message: erroSequencia
+      });
+    }
+
+    const diasSelecionados = [
+      trabalhaDomingo,
+      trabalhaSegunda,
+      trabalhaTerca,
+      trabalhaQuarta,
+      trabalhaQuinta,
+      trabalhaSexta,
+      trabalhaSabado
+    ];
+
+    if (!diasSelecionados.includes('S')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selecione ao menos um dia da semana para a jornada.'
+      });
+    }
+
+    const sql = `
+      INSERT INTO SF_JORNADA_TRABALHO (
+        DESCRICAO,
+        HORA_INICIO_EXPEDIENTE,
+        HORA_SAIDA_INTERVALO,
+        HORA_RETORNO_INTERVALO,
+        HORA_FIM_EXPEDIENTE,
+        CARGA_HORARIA,
+        TOLERANCIA_ATRASO_MIN,
+        TOLERANCIA_EXTRA_MIN,
+        TRABALHA_DOMINGO,
+        TRABALHA_SEGUNDA,
+        TRABALHA_TERCA,
+        TRABALHA_QUARTA,
+        TRABALHA_QUINTA,
+        TRABALHA_SEXTA,
+        TRABALHA_SABADO,
+        STATUS,
+        OBSERVACAO
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const params = [
+      descricao,
+      horaEntrada1,
+      horaSaida1,
+      horaEntrada2,
+      horaSaida2,
+      cargaHoraria || null,
+      toleranciaAtrasoMin,
+      toleranciaExtraMin,
+      trabalhaDomingo,
+      trabalhaSegunda,
+      trabalhaTerca,
+      trabalhaQuarta,
+      trabalhaQuinta,
+      trabalhaSexta,
+      trabalhaSabado,
+      status || 'ATIVO',
+      observacao || null
+    ];
+
+    const [result] = await pool.query(sql, params);
+
+    return res.json({
+      success: true,
+      message: 'Jornada cadastrada com sucesso.',
+      id: result.insertId
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao cadastrar jornada.',
+      error: err.message
+    });
+  }
+});
+
+
+// PUT /api/jornadas/:id
+app.put('/api/jornadas/:id', async (req, res) => {
+  try {
+    const id = numero(req.params.id);
+
+    const descricao = texto(req.body?.descricao);
+    const horaEntrada1 = horaOuNull(req.body?.horaEntrada1);
+    const horaSaida1 = horaOuNull(req.body?.horaSaida1);
+    const horaEntrada2 = horaOuNull(req.body?.horaEntrada2);
+    const horaSaida2 = horaOuNull(req.body?.horaSaida2);
+    const cargaHoraria = texto(req.body?.cargaHoraria);
+    const toleranciaAtrasoMin = numero(req.body?.toleranciaAtrasoMin, 0);
+    const toleranciaExtraMin = numero(req.body?.toleranciaExtraMin, 0);
+    const status = texto(req.body?.status || 'ATIVO');
+    const observacao = texto(req.body?.observacao);
+
+    const trabalhaDomingo = flagSN(req.body?.trabalhaDomingo, 'N');
+    const trabalhaSegunda = flagSN(req.body?.trabalhaSegunda, 'S');
+    const trabalhaTerca = flagSN(req.body?.trabalhaTerca, 'S');
+    const trabalhaQuarta = flagSN(req.body?.trabalhaQuarta, 'S');
+    const trabalhaQuinta = flagSN(req.body?.trabalhaQuinta, 'S');
+    const trabalhaSexta = flagSN(req.body?.trabalhaSexta, 'S');
+    const trabalhaSabado = flagSN(req.body?.trabalhaSabado, 'N');
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID da jornada inválido.'
+      });
+    }
+
+    if (!descricao) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe a descrição da jornada.'
+      });
+    }
+
+    const erroSequencia = validarSequenciaJornada({
+      horaEntrada1,
+      horaSaida1,
+      horaEntrada2,
+      horaSaida2
+    });
+
+    if (erroSequencia) {
+      return res.status(400).json({
+        success: false,
+        message: erroSequencia
+      });
+    }
+
+    const diasSelecionados = [
+      trabalhaDomingo,
+      trabalhaSegunda,
+      trabalhaTerca,
+      trabalhaQuarta,
+      trabalhaQuinta,
+      trabalhaSexta,
+      trabalhaSabado
+    ];
+
+    if (!diasSelecionados.includes('S')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Selecione ao menos um dia da semana para a jornada.'
+      });
+    }
+
+    const [exists] = await pool.query(
+      `SELECT ID FROM SF_JORNADA_TRABALHO WHERE ID = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!exists.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Jornada não encontrada.'
+      });
+    }
+
+    const sql = `
+      UPDATE SF_JORNADA_TRABALHO
+      SET
+        DESCRICAO = ?,
+        HORA_INICIO_EXPEDIENTE = ?,
+        HORA_SAIDA_INTERVALO = ?,
+        HORA_RETORNO_INTERVALO = ?,
+        HORA_FIM_EXPEDIENTE = ?,
+        CARGA_HORARIA = ?,
+        TOLERANCIA_ATRASO_MIN = ?,
+        TOLERANCIA_EXTRA_MIN = ?,
+        TRABALHA_DOMINGO = ?,
+        TRABALHA_SEGUNDA = ?,
+        TRABALHA_TERCA = ?,
+        TRABALHA_QUARTA = ?,
+        TRABALHA_QUINTA = ?,
+        TRABALHA_SEXTA = ?,
+        TRABALHA_SABADO = ?,
+        STATUS = ?,
+        OBSERVACAO = ?
+      WHERE ID = ?
+    `;
+
+    const params = [
+      descricao,
+      horaEntrada1,
+      horaSaida1,
+      horaEntrada2,
+      horaSaida2,
+      cargaHoraria || null,
+      toleranciaAtrasoMin,
+      toleranciaExtraMin,
+      trabalhaDomingo,
+      trabalhaSegunda,
+      trabalhaTerca,
+      trabalhaQuarta,
+      trabalhaQuinta,
+      trabalhaSexta,
+      trabalhaSabado,
+      status || 'ATIVO',
+      observacao || null,
+      id
+    ];
+
+    await pool.query(sql, params);
+
+    return res.json({
+      success: true,
+      message: 'Jornada atualizada com sucesso.'
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar jornada.',
+      error: err.message
+    });
+  }
+});
+
+
+// DELETE /api/jornadas/:id
+app.delete('/api/jornadas/:id', async (req, res) => {
+  try {
+    const id = numero(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID da jornada inválido.'
+      });
+    }
+
+    const [vinculos] = await pool.query(
+      `SELECT ID FROM SF_USUARIO_JORNADA WHERE JORNADA_ID = ? AND STATUS = 'ATIVO' LIMIT 1`,
+      [id]
+    );
+
+    if (vinculos.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Não é possível excluir a jornada porque existem usuários vinculados.'
+      });
+    }
+
+    const [result] = await pool.query(
+      `DELETE FROM SF_JORNADA_TRABALHO WHERE ID = ?`,
+      [id]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Jornada não encontrada.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Jornada removida com sucesso.'
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir jornada.',
+      error: err.message
+    });
+  }
+});
+
+
+// =========================
+// VÍNCULOS USUÁRIO/JORNADA
+// =========================
+
+// GET /api/jornadas/:id/vinculos
+app.get('/api/jornadas/:id/vinculos', async (req, res) => {
+  try {
+    const jornadaId = numero(req.params.id);
+
+    if (!jornadaId) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID da jornada inválido.'
+      });
+    }
+
+    const sql = `
+      SELECT
+        J.ID,
+        J.USUARIO_ID,
+        J.JORNADA_ID,
+        J.DATA_INICIO,
+        J.DATA_FIM,
+        J.STATUS,
+        J.CRIADO_EM,
+        J.ATUALIZADO_EM,
+        U.nome AS USUARIO_NOME,
+        U.EMAIL AS USUARIO_EMAIL,
+        U.perfil AS USUARIO_PERFIL,
+        U.setor AS USUARIO_SETOR,
+        JT.DESCRICAO AS JORNADA_DESCRICAO,
+        JT.HORA_INICIO_EXPEDIENTE,
+        JT.HORA_SAIDA_INTERVALO,
+        JT.HORA_RETORNO_INTERVALO,
+        JT.HORA_FIM_EXPEDIENTE
+      FROM SF_USUARIO_JORNADA J
+      INNER JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
+      INNER JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
+      WHERE J.JORNADA_ID = ?
+      ORDER BY U.nome ASC, J.DATA_INICIO DESC
+    `;
+
+    const [rows] = await pool.query(sql, [jornadaId]);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar vínculos da jornada.',
+      error: err.message
+    });
+  }
+});
+
+
+// GET /api/jornadas-vinculos
+app.get('/api/jornadas-vinculos', async (req, res) => {
+  try {
+    const busca = texto(req.query?.q);
+
+    let sql = `
+      SELECT
+        J.ID,
+        J.USUARIO_ID,
+        J.JORNADA_ID,
+        J.DATA_INICIO,
+        J.DATA_FIM,
+        J.STATUS,
+        U.nome AS USUARIO_NOME,
+        U.EMAIL AS USUARIO_EMAIL,
+        U.perfil AS USUARIO_PERFIL,
+        U.setor AS USUARIO_SETOR,
+        JT.DESCRICAO AS JORNADA_DESCRICAO,
+        JT.HORA_INICIO_EXPEDIENTE,
+        JT.HORA_SAIDA_INTERVALO,
+        JT.HORA_RETORNO_INTERVALO,
+        JT.HORA_FIM_EXPEDIENTE
+      FROM SF_USUARIO_JORNADA J
+      INNER JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
+      INNER JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
+    `;
+
+    const params = [];
+
+    if (busca) {
+      const like = `%${busca}%`;
+      sql += `
+        WHERE
+          U.nome LIKE ?
+          OR U.EMAIL LIKE ?
+          OR U.perfil LIKE ?
+          OR U.setor LIKE ?
+          OR JT.DESCRICAO LIKE ?
+          OR J.STATUS LIKE ?
+      `;
+      params.push(like, like, like, like, like, like);
+    }
+
+    sql += ` ORDER BY U.nome ASC, J.DATA_INICIO DESC`;
+
+    const [rows] = await pool.query(sql, params);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar vínculos de jornadas.',
+      error: err.message
+    });
+  }
+});
+
+
+// GET /api/jornadas/vinculos/:id
+app.get('/api/jornadas/vinculos/:id', async (req, res) => {
+  try {
+    const id = numero(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do vínculo inválido.'
+      });
+    }
+
+    const sql = `
+      SELECT
+        J.ID,
+        J.USUARIO_ID,
+        J.JORNADA_ID,
+        J.DATA_INICIO,
+        J.DATA_FIM,
+        J.STATUS,
+        U.nome AS USUARIO_NOME,
+        U.EMAIL AS USUARIO_EMAIL,
+        U.perfil AS USUARIO_PERFIL,
+        U.setor AS USUARIO_SETOR,
+        JT.DESCRICAO AS JORNADA_DESCRICAO,
+        JT.HORA_INICIO_EXPEDIENTE,
+        JT.HORA_SAIDA_INTERVALO,
+        JT.HORA_RETORNO_INTERVALO,
+        JT.HORA_FIM_EXPEDIENTE
+      FROM SF_USUARIO_JORNADA J
+      INNER JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
+      INNER JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
+      WHERE J.ID = ?
+      LIMIT 1
+    `;
+
+    const [rows] = await pool.query(sql, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vínculo não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: rows[0]
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar vínculo.',
+      error: err.message
+    });
+  }
+});
+
+
+// POST /api/jornadas/vincular-usuario
+app.post('/api/jornadas/vincular-usuario', async (req, res) => {
+  try {
+    const usuarioId = Number(req.body?.usuarioId);
+    const jornadaId = Number(req.body?.jornadaId);
+    const dataInicio = dataOuNull(req.body?.dataInicio);
+    const dataFim = dataOuNull(req.body?.dataFim);
+    const status = texto(req.body?.status || 'ATIVO');
+
+    if (!usuarioId || !jornadaId || !dataInicio) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário, jornada e data de início são obrigatórios.'
+      });
+    }
+
+    const [usuarioRows] = await pool.query(
+      `SELECT id, nome FROM SF_USUARIO WHERE id = ? LIMIT 1`,
+      [usuarioId]
+    );
+
+    if (!usuarioRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado.'
+      });
+    }
+
+    const [jornadaRows] = await pool.query(
+      `SELECT ID, DESCRICAO FROM SF_JORNADA_TRABALHO WHERE ID = ? LIMIT 1`,
+      [jornadaId]
+    );
+
+    if (!jornadaRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Jornada não encontrada.'
+      });
+    }
+
+    const [duplicado] = await pool.query(
+      `
+        SELECT ID
+        FROM SF_USUARIO_JORNADA
+        WHERE USUARIO_ID = ?
+          AND JORNADA_ID = ?
+          AND DATA_INICIO = ?
+        LIMIT 1
+      `,
+      [usuarioId, jornadaId, dataInicio]
+    );
+
+    if (duplicado.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Já existe vínculo deste usuário com esta jornada nesta data.'
+      });
+    }
+
+    const sql = `
+      INSERT INTO SF_USUARIO_JORNADA (
+        USUARIO_ID,
+        JORNADA_ID,
+        DATA_INICIO,
+        DATA_FIM,
+        STATUS
+      ) VALUES (?, ?, ?, ?, ?)
+    `;
+
+    const params = [
+      usuarioId,
+      jornadaId,
+      dataInicio,
+      dataFim || null,
+      status || 'ATIVO'
+    ];
+
+    const [result] = await pool.query(sql, params);
+
+    return res.json({
+      success: true,
+      message: 'Usuário vinculado à jornada com sucesso.',
+      id: result.insertId
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao vincular usuário à jornada.',
+      error: err.message
+    });
+  }
+});
+
+
+// PUT /api/jornadas/vinculos/:id
+app.put('/api/jornadas/vinculos/:id', async (req, res) => {
+  try {
+    const id = numero(req.params.id);
+    const usuarioId = Number(req.body?.usuarioId);
+    const jornadaId = Number(req.body?.jornadaId);
+    const dataInicio = dataOuNull(req.body?.dataInicio);
+    const dataFim = dataOuNull(req.body?.dataFim);
+    const status = texto(req.body?.status || 'ATIVO');
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do vínculo inválido.'
+      });
+    }
+
+    if (!usuarioId || !jornadaId || !dataInicio) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário, jornada e data de início são obrigatórios.'
+      });
+    }
+
+    const [exists] = await pool.query(
+      `SELECT ID FROM SF_USUARIO_JORNADA WHERE ID = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!exists.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vínculo não encontrado.'
+      });
+    }
+
+    const [duplicado] = await pool.query(
+      `
+        SELECT ID
+        FROM SF_USUARIO_JORNADA
+        WHERE USUARIO_ID = ?
+          AND JORNADA_ID = ?
+          AND DATA_INICIO = ?
+          AND ID <> ?
+        LIMIT 1
+      `,
+      [usuarioId, jornadaId, dataInicio, id]
+    );
+
+    if (duplicado.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Já existe outro vínculo igual para este usuário.'
+      });
+    }
+
+    const sql = `
+      UPDATE SF_USUARIO_JORNADA
+      SET
+        USUARIO_ID = ?,
+        JORNADA_ID = ?,
+        DATA_INICIO = ?,
+        DATA_FIM = ?,
+        STATUS = ?
+      WHERE ID = ?
+    `;
+
+    const params = [
+      usuarioId,
+      jornadaId,
+      dataInicio,
+      dataFim || null,
+      status || 'ATIVO',
+      id
+    ];
+
+    await pool.query(sql, params);
+
+    return res.json({
+      success: true,
+      message: 'Vínculo atualizado com sucesso.'
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar vínculo.',
+      error: err.message
+    });
+  }
+});
+
+
+// DELETE /api/jornadas/vinculos/:id
+app.delete('/api/jornadas/vinculos/:id', async (req, res) => {
+  try {
+    const id = numero(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do vínculo inválido.'
+      });
+    }
+
+    const [result] = await pool.query(
+      `DELETE FROM SF_USUARIO_JORNADA WHERE ID = ?`,
+      [id]
+    );
+
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vínculo não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Vínculo removido com sucesso.'
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir vínculo.',
       error: err.message
     });
   }
