@@ -1367,16 +1367,54 @@ app.post('/api/gestao-usuarios-centro-custo', async (req, res) => {
 
 app.get('/api/usuarios', async (req, res) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT id, nome, email, setor, telefone, local_trabalho
-         FROM SF_USUARIO
-        WHERE email IS NOT NULL AND email <> ''
+    const [rows] = await pool.query(`
+      SELECT
+        id,
+        nome,
+        EMAIL AS email,
+        telefone,
+        senha,
+        perfil,
+        status,
+        setor,
+        FUNCAO AS funcao,
+        DATA_ADMISSAO AS data_admissao,
+        LOCAL_TRABALHO AS local_trabalho,
+        MUST_CHANGE_PASSWORD AS must_change_password,
+        FOTO AS foto,
+        CPF AS cpf,
+        RG AS rg,
+        CNH AS cnh,
+        CNH_CATEGORIA AS cnh_categoria,
+        DATA_NASCIMENTO AS data_nascimento,
+        ESTADO_CIVIL AS estado_civil,
+        TELEFONE_PESSOAL AS telefone_pessoal,
+        EMAIL_PESSOAL AS email_pessoal,
+        APELIDO AS apelido,
+        NUMERO_CALCADO AS numero_calcado,
+        TAMANHO_CAMISA AS tamanho_camisa,
+        TAMANHO_CALCA AS tamanho_calca,
+        SEXO AS sexo,
+        TEM_FILHOS AS tem_filhos,
+        QUANTIDADE_FILHOS AS quantidade_filhos,
+        FILHOS AS filhos,
+        CENTRO_CUSTO AS centro_custo,
+        CNH_VALIDADE AS cnh_validade,
+        CNH_ARQUIVO AS cnh_arquivo
+      FROM SF_USUARIO
+      WHERE EMAIL IS NOT NULL
+        AND EMAIL <> ''
         AND status <> 'Desativado'
-        ORDER BY nome ASC`
-    );
+      ORDER BY nome ASC
+    `);
+
     res.json({ success: true, items: rows });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Erro ao listar usuários.', error: err.message });
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao listar usuários.',
+      error: err.message
+    });
   }
 });
 
@@ -16783,20 +16821,24 @@ app.post('/api/calendarios', async (req, res) => {
     const periodo = String(req.body?.periodo ?? '').trim();
     const tipoPeriodo = String(req.body?.tipoPeriodo ?? '').trim().toLowerCase();
     const tipoRecorrencia = String(req.body?.tipoRecorrencia ?? 'UNICO').trim().toUpperCase();
+
     const dataInicial = String(req.body?.dataInicial ?? '').trim();
     const dataFinalRaw = String(req.body?.dataFinal ?? '').trim();
+
     const repeteTodoAno = String(req.body?.repeteTodoAno ?? 'N').trim().toUpperCase();
-    const dataInicialTroca = String(req.body?.dataInicialTroca ?? '').trim();
-    const dataFinalTroca = String(req.body?.dataFinalTroca ?? '').trim();
-    const novaDataInicial = String(req.body?.novaDataInicial ?? '').trim();
-    const novaDataFinal = String(req.body?.novaDataFinal ?? '').trim();
+
+    let dataInicialTroca = String(req.body?.dataInicialTroca ?? '').trim();
+    let dataFinalTroca = String(req.body?.dataFinalTroca ?? '').trim();
+    let novaDataInicial = String(req.body?.novaDataInicial ?? '').trim();
+    let novaDataFinal = String(req.body?.novaDataFinal ?? '').trim();
+
     const horaInicio = String(req.body?.horaInicio ?? '').trim();
     const horaFim = String(req.body?.horaFim ?? '').trim();
     const status = String(req.body?.status ?? 'Ativo').trim() || 'Ativo';
     const usuario = String(req.body?.usuario ?? '').trim() || 'SISTEMA';
     const observacao = String(req.body?.observacao ?? '').trim();
 
-    const dataFinal = tipoPeriodo === 'intervalo' ? dataFinalRaw : null;
+    let dataFinal = tipoPeriodo === 'intervalo' ? dataFinalRaw : null;
 
     if (!unidadeTrabalho) {
       return res.status(400).json({
@@ -16841,32 +16883,51 @@ app.post('/api/calendarios', async (req, res) => {
     }
 
     if (tipoRecorrencia === 'TROCA_FERIADO') {
-      if (!dataInicialTroca || !dataFinalTroca) {
+      if (!dataInicialTroca) {
         return res.status(400).json({
           success: false,
-          message: 'Informe o período original do feriado.'
+          message: 'Informe a data original do feriado.'
         });
       }
 
-      if (!novaDataInicial || !novaDataFinal) {
+      if (!novaDataInicial) {
         return res.status(400).json({
           success: false,
-          message: 'Informe o novo período da troca.'
+          message: 'Informe a nova data da troca.'
         });
       }
 
-      if (dataFinalTroca < dataInicialTroca) {
-        return res.status(400).json({
-          success: false,
-          message: 'A data final do feriado não pode ser menor que a inicial.'
-        });
-      }
+      if (tipoPeriodo === 'intervalo') {
+        if (!dataFinalTroca) {
+          return res.status(400).json({
+            success: false,
+            message: 'Informe a data final do período original do feriado.'
+          });
+        }
 
-      if (novaDataFinal < novaDataInicial) {
-        return res.status(400).json({
-          success: false,
-          message: 'A nova data final não pode ser menor que a nova data inicial.'
-        });
+        if (!novaDataFinal) {
+          return res.status(400).json({
+            success: false,
+            message: 'Informe a nova data final da troca.'
+          });
+        }
+
+        if (dataFinalTroca < dataInicialTroca) {
+          return res.status(400).json({
+            success: false,
+            message: 'A data final do feriado não pode ser menor que a inicial.'
+          });
+        }
+
+        if (novaDataFinal < novaDataInicial) {
+          return res.status(400).json({
+            success: false,
+            message: 'A nova data final não pode ser menor que a nova data inicial.'
+          });
+        }
+      } else {
+        dataFinalTroca = dataInicialTroca;
+        novaDataFinal = novaDataInicial;
       }
     } else {
       if (!dataInicial) {
@@ -16889,6 +16950,15 @@ app.post('/api/calendarios', async (req, res) => {
           message: 'A data final não pode ser menor que a data inicial.'
         });
       }
+
+      if (tipoPeriodo !== 'intervalo') {
+        dataFinal = dataInicial;
+      }
+
+      dataInicialTroca = '';
+      dataFinalTroca = '';
+      novaDataInicial = '';
+      novaDataFinal = '';
     }
 
     const [result] = await pool.query(`
@@ -16916,9 +16986,9 @@ app.post('/api/calendarios', async (req, res) => {
       periodo,
       tipoPeriodo,
       tipoRecorrencia,
-      dataInicial || null,
-      dataFinal,
-      tipoRecorrencia === 'ANUAL' ? 'S' : 'N',
+      tipoRecorrencia === 'TROCA_FERIADO' ? null : (dataInicial || null),
+      tipoRecorrencia === 'TROCA_FERIADO' ? null : (dataFinal || null),
+      tipoRecorrencia === 'ANUAL' || repeteTodoAno === 'S' ? 'S' : 'N',
       dataInicialTroca || null,
       dataFinalTroca || null,
       novaDataInicial || null,
@@ -16945,6 +17015,7 @@ app.post('/api/calendarios', async (req, res) => {
   }
 });
 
+
 app.put('/api/calendarios/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -16952,20 +17023,24 @@ app.put('/api/calendarios/:id', async (req, res) => {
     const periodo = String(req.body?.periodo ?? '').trim();
     const tipoPeriodo = String(req.body?.tipoPeriodo ?? '').trim().toLowerCase();
     const tipoRecorrencia = String(req.body?.tipoRecorrencia ?? 'UNICO').trim().toUpperCase();
+
     const dataInicial = String(req.body?.dataInicial ?? '').trim();
     const dataFinalRaw = String(req.body?.dataFinal ?? '').trim();
+
     const repeteTodoAno = String(req.body?.repeteTodoAno ?? 'N').trim().toUpperCase();
-    const dataInicialTroca = String(req.body?.dataInicialTroca ?? '').trim();
-    const dataFinalTroca = String(req.body?.dataFinalTroca ?? '').trim();
-    const novaDataInicial = String(req.body?.novaDataInicial ?? '').trim();
-    const novaDataFinal = String(req.body?.novaDataFinal ?? '').trim();
+
+    let dataInicialTroca = String(req.body?.dataInicialTroca ?? '').trim();
+    let dataFinalTroca = String(req.body?.dataFinalTroca ?? '').trim();
+    let novaDataInicial = String(req.body?.novaDataInicial ?? '').trim();
+    let novaDataFinal = String(req.body?.novaDataFinal ?? '').trim();
+
     const horaInicio = String(req.body?.horaInicio ?? '').trim();
     const horaFim = String(req.body?.horaFim ?? '').trim();
     const status = String(req.body?.status ?? '').trim() || 'Ativo';
     const usuario = String(req.body?.usuario ?? '').trim() || 'SISTEMA';
     const observacao = String(req.body?.observacao ?? '').trim();
 
-    const dataFinal = tipoPeriodo === 'intervalo' ? dataFinalRaw : null;
+    let dataFinal = tipoPeriodo === 'intervalo' ? dataFinalRaw : null;
 
     if (!id) {
       return res.status(400).json({
@@ -17017,32 +17092,51 @@ app.put('/api/calendarios/:id', async (req, res) => {
     }
 
     if (tipoRecorrencia === 'TROCA_FERIADO') {
-      if (!dataInicialTroca || !dataFinalTroca) {
+      if (!dataInicialTroca) {
         return res.status(400).json({
           success: false,
-          message: 'Informe o período original do feriado.'
+          message: 'Informe a data original do feriado.'
         });
       }
 
-      if (!novaDataInicial || !novaDataFinal) {
+      if (!novaDataInicial) {
         return res.status(400).json({
           success: false,
-          message: 'Informe o novo período da troca.'
+          message: 'Informe a nova data da troca.'
         });
       }
 
-      if (dataFinalTroca < dataInicialTroca) {
-        return res.status(400).json({
-          success: false,
-          message: 'A data final do feriado não pode ser menor que a inicial.'
-        });
-      }
+      if (tipoPeriodo === 'intervalo') {
+        if (!dataFinalTroca) {
+          return res.status(400).json({
+            success: false,
+            message: 'Informe a data final do período original do feriado.'
+          });
+        }
 
-      if (novaDataFinal < novaDataInicial) {
-        return res.status(400).json({
-          success: false,
-          message: 'A nova data final não pode ser menor que a nova data inicial.'
-        });
+        if (!novaDataFinal) {
+          return res.status(400).json({
+            success: false,
+            message: 'Informe a nova data final da troca.'
+          });
+        }
+
+        if (dataFinalTroca < dataInicialTroca) {
+          return res.status(400).json({
+            success: false,
+            message: 'A data final do feriado não pode ser menor que a inicial.'
+          });
+        }
+
+        if (novaDataFinal < novaDataInicial) {
+          return res.status(400).json({
+            success: false,
+            message: 'A nova data final não pode ser menor que a nova data inicial.'
+          });
+        }
+      } else {
+        dataFinalTroca = dataInicialTroca;
+        novaDataFinal = novaDataInicial;
       }
     } else {
       if (!dataInicial) {
@@ -17065,6 +17159,15 @@ app.put('/api/calendarios/:id', async (req, res) => {
           message: 'A data final não pode ser menor que a data inicial.'
         });
       }
+
+      if (tipoPeriodo !== 'intervalo') {
+        dataFinal = dataInicial;
+      }
+
+      dataInicialTroca = '';
+      dataFinalTroca = '';
+      novaDataInicial = '';
+      novaDataFinal = '';
     }
 
     const [result] = await pool.query(`
@@ -17093,9 +17196,9 @@ app.put('/api/calendarios/:id', async (req, res) => {
       periodo,
       tipoPeriodo,
       tipoRecorrencia,
-      dataInicial || null,
-      dataFinal,
-      tipoRecorrencia === 'ANUAL' ? 'S' : 'N',
+      tipoRecorrencia === 'TROCA_FERIADO' ? null : (dataInicial || null),
+      tipoRecorrencia === 'TROCA_FERIADO' ? null : (dataFinal || null),
+      tipoRecorrencia === 'ANUAL' || repeteTodoAno === 'S' ? 'S' : 'N',
       dataInicialTroca || null,
       dataFinalTroca || null,
       novaDataInicial || null,
@@ -17251,7 +17354,6 @@ function flagSN(valor, padrao = 'N') {
   return v === 'S' ? 'S' : 'N';
 }
 
-// GET /api/jornadas
 app.get('/api/jornadas', async (req, res) => {
   try {
     const busca = texto(req.query?.q);
@@ -17315,8 +17417,6 @@ app.get('/api/jornadas', async (req, res) => {
   }
 });
 
-
-// GET /api/jornadas/:id
 app.get('/api/jornadas/:id', async (req, res) => {
   try {
     const id = numero(req.params.id);
@@ -17377,8 +17477,6 @@ app.get('/api/jornadas/:id', async (req, res) => {
   }
 });
 
-
-// POST /api/jornadas
 app.post('/api/jornadas', async (req, res) => {
 
   try {
@@ -17497,8 +17595,6 @@ app.post('/api/jornadas', async (req, res) => {
   }
 });
 
-
-// PUT /api/jornadas/:id
 app.put('/api/jornadas/:id', async (req, res) => {
   try {
     const id = numero(req.params.id);
@@ -17638,8 +17734,6 @@ app.put('/api/jornadas/:id', async (req, res) => {
   }
 });
 
-
-// DELETE /api/jornadas/:id
 app.delete('/api/jornadas/:id', async (req, res) => {
   try {
     const id = numero(req.params.id);
@@ -17693,7 +17787,6 @@ app.delete('/api/jornadas/:id', async (req, res) => {
 // VÍNCULOS USUÁRIO/JORNADA
 // =========================
 
-// GET /api/jornadas/:id/vinculos
 app.get('/api/jornadas/:id/vinculos', async (req, res) => {
   try {
     const jornadaId = numero(req.params.id);
@@ -17746,8 +17839,6 @@ app.get('/api/jornadas/:id/vinculos', async (req, res) => {
   }
 });
 
-
-// GET /api/jornadas-vinculos
 app.get('/api/jornadas-vinculos', async (req, res) => {
   try {
     const busca = texto(req.query?.q);
@@ -17807,8 +17898,6 @@ app.get('/api/jornadas-vinculos', async (req, res) => {
   }
 });
 
-
-// GET /api/jornadas/vinculos/:id
 app.get('/api/jornadas/vinculos/:id', async (req, res) => {
   try {
     const id = numero(req.params.id);
@@ -17866,8 +17955,6 @@ app.get('/api/jornadas/vinculos/:id', async (req, res) => {
   }
 });
 
-
-// POST /api/jornadas/vincular-usuario
 app.post('/api/jornadas/vincular-usuario', async (req, res) => {
   try {
     const usuarioId = Number(req.body?.usuarioId);
@@ -17960,8 +18047,6 @@ app.post('/api/jornadas/vincular-usuario', async (req, res) => {
   }
 });
 
-
-// PUT /api/jornadas/vinculos/:id
 app.put('/api/jornadas/vinculos/:id', async (req, res) => {
   try {
     const id = numero(req.params.id);
@@ -18052,8 +18137,6 @@ app.put('/api/jornadas/vinculos/:id', async (req, res) => {
   }
 });
 
-
-// DELETE /api/jornadas/vinculos/:id
 app.delete('/api/jornadas/vinculos/:id', async (req, res) => {
   try {
     const id = numero(req.params.id);
