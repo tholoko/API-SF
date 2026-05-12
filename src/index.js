@@ -19,11 +19,17 @@ import AdmZip from 'adm-zip';
 import zlib from 'node:zlib';
 import https from 'node:https';
 import http from 'node:http';
+import { fileURLToPath } from 'node:url';
 
 
 
 import { titleCaseNome, normalizarEmail, somenteNumeros } from './utils.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const pastaUploadsJustificativas = path.join(__dirname, 'uploads', 'justificativas-ponto');
+fs.mkdirSync(pastaUploadsJustificativas, { recursive: true });
 
 
 function getEnv(name, required = true) {
@@ -1304,6 +1310,66 @@ function nullableDate(v) {
   return s.slice(0, 10);
 }
 
+app.get('/api/gestao-usuarios/cpf/:cpf', async (req, res) => {
+  try {
+    const cpf = String(req.params.cpf || '').replace(/\D/g, '').trim();
+
+    if (!cpf || cpf.length !== 11) {
+      return res.status(400).json({
+        success: false,
+        message: 'CPF inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        ID AS id,
+        NOME AS nome,
+        EMAIL AS email,
+        TELEFONE AS telefone,
+        PERFIL AS perfil,
+        SETOR AS setor,
+        FUNCAO AS funcao,
+        DATAADMISSAO AS dataadmissao,
+        LOCALTRABALHO AS localtrabalho,
+        UNIDADETRABALHO AS unidadetrabalho,
+        STATUS AS status,
+        CPF AS cpf,
+        RG AS rg,
+        CNH AS cnh,
+        CNHCATEGORIA AS cnhcategoria,
+        CNHVALIDADE AS cnhvalidade,
+        DATANASCIMENTO AS datanascimento,
+        ESTADOCIVIL AS estadocivil,
+        TELEFONEPESSOAL AS telefonepessoal,
+        EMAILPESSOAL AS emailpessoal,
+        APELIDO AS apelido,
+        NUMEROCALCADO AS numerocalcado,
+        TAMANHOCAMISA AS tamanhocamisa,
+        TAMANHOCALCA AS tamanhocalca,
+        SEXO AS sexo,
+        TEMFILHOS AS temfilhos,
+        QUANTIDADEFILHOS AS quantidadefilhos,
+        FILHOS AS filhos
+      FROM SF_USUARIOS
+      WHERE REPLACE(REPLACE(REPLACE(CPF, '.', ''), '-', ''), ' ', '') = ?
+      LIMIT 1
+    `, [cpf]);
+
+    return res.json({
+      success: true,
+      exists: Array.isArray(rows) && rows.length > 0,
+      item: Array.isArray(rows) && rows.length ? rows[0] : null
+    });
+  } catch (err) {
+    console.error('Erro ao consultar usuário por CPF:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao consultar usuário por CPF.',
+      error: err.message
+    });
+  }
+});
 
 app.get('/api/gestao-usuarios-centro-custo', async (req, res) => {
   try {
@@ -1379,6 +1445,8 @@ app.get('/api/usuarios', async (req, res) => {
         setor,
         FUNCAO AS funcao,
         DATA_ADMISSAO AS data_admissao,
+        BATE_PONTO AS bate_ponto,
+        DATA_INICIO_BATE_PONTO AS data_inicio_bate_ponto,
         LOCAL_TRABALHO AS local_trabalho,
         MUST_CHANGE_PASSWORD AS must_change_password,
         FOTO AS foto,
@@ -1504,6 +1572,11 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const funcao = texto(req.body?.funcao);
     const data_admissao = nullableDate(req.body?.dataadmissao || req.body?.data_admissao);
 
+    const bate_ponto = Number(req.body?.bateponto ?? req.body?.bate_ponto ?? 0) ? 1 : 0;
+    let data_inicio_bate_ponto = nullableDate(
+      req.body?.datainiciobateponto || req.body?.data_inicio_bate_ponto
+    );
+
     const centro_custo = titleCaseNome(
       req.body?.localtrabalho || req.body?.local_trabalho || req.body?.centro_custo
     );
@@ -1555,6 +1628,54 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
       ? JSON.stringify(Array.isArray(req.body?.filhos) ? req.body.filhos : [])
       : null;
 
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome é obrigatório.'
+      });
+    }
+
+    if (!perfil) {
+      return res.status(400).json({
+        success: false,
+        message: 'Perfil é obrigatório.'
+      });
+    }
+
+    if (!setor) {
+      return res.status(400).json({
+        success: false,
+        message: 'Setor é obrigatório.'
+      });
+    }
+
+    if (!senha || senha.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Senha inválida. Informe no mínimo 6 caracteres.'
+      });
+    }
+
+    if (bate_ponto && !data_inicio_bate_ponto) {
+      data_inicio_bate_ponto = data_admissao || null;
+    }
+
+    if (
+      bate_ponto &&
+      data_admissao &&
+      data_inicio_bate_ponto &&
+      data_inicio_bate_ponto < data_admissao
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'A data de início para bater ponto não pode ser anterior à data de admissão.'
+      });
+    }
+
+    if (!bate_ponto) {
+      data_inicio_bate_ponto = null;
+    }
+
     const [cpfExistente] = await pool.query(
       `SELECT ID FROM SF_USUARIO WHERE CPF = ? LIMIT 1`,
       [cpf]
@@ -1593,6 +1714,8 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         SETOR,
         FUNCAO,
         DATA_ADMISSAO,
+        BATE_PONTO,
+        DATA_INICIO_BATE_PONTO,
         CENTRO_CUSTO,
         LOCAL_TRABALHO,
         STATUS,
@@ -1616,7 +1739,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         QUANTIDADE_FILHOS,
         FILHOS,
         MUST_CHANGE_PASSWORD
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `, [
       nome,
       email,
@@ -1626,6 +1749,8 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
       setor,
       funcao || null,
       data_admissao,
+      bate_ponto,
+      data_inicio_bate_ponto,
       centro_custo || null,
       local_trabalho || null,
       status,
@@ -1691,8 +1816,17 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     const funcao = texto(req.body?.funcao);
     const data_admissao = nullableDate(req.body?.dataadmissao || req.body?.data_admissao);
 
-    const centro_custo = titleCaseNome(req.body?.localtrabalho || req.body?.local_trabalho || req.body?.centro_custo);
-    const local_trabalho = titleCaseNome(req.body?.unidadetrabalho || req.body?.unidade_trabalho || req.body?.local_trabalho);
+    const bate_ponto = Number(req.body?.bateponto ?? req.body?.bate_ponto ?? 0) ? 1 : 0;
+    let data_inicio_bate_ponto = nullableDate(
+      req.body?.datainiciobateponto || req.body?.data_inicio_bate_ponto
+    );
+
+    const centro_custo = titleCaseNome(
+      req.body?.localtrabalho || req.body?.local_trabalho || req.body?.centro_custo
+    );
+    const local_trabalho = titleCaseNome(
+      req.body?.unidadetrabalho || req.body?.unidade_trabalho || req.body?.local_trabalho
+    );
 
     const status = texto(req.body?.status) || 'Ativo';
 
@@ -1715,8 +1849,8 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     const foto = req.body?.foto;
     const apelido = texto(req.body?.apelido);
 
-    const numero_calcado = String(req.body?.numero_calcado ?? '').trim() !== ''
-      ? Number(req.body?.numero_calcado)
+    const numero_calcado = String(req.body?.numerocalcado ?? req.body?.numero_calcado ?? '').trim() !== ''
+      ? Number(req.body?.numerocalcado ?? req.body?.numero_calcado)
       : null;
 
     const tamanhoCamisaBruto = texto(req.body?.tamanhocamisa || req.body?.tamanho_camisa);
@@ -1737,6 +1871,27 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
       ? JSON.stringify(Array.isArray(req.body?.filhos) ? req.body.filhos : [])
       : null;
 
+    if (!nome) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nome é obrigatório.'
+      });
+    }
+
+    if (!perfil) {
+      return res.status(400).json({
+        success: false,
+        message: 'Perfil é obrigatório.'
+      });
+    }
+
+    if (!setor) {
+      return res.status(400).json({
+        success: false,
+        message: 'Setor é obrigatório.'
+      });
+    }
+
     const [rows] = await pool.query(
       `SELECT ID, FOTO, CNH_ARQUIVO FROM SF_USUARIO WHERE ID = ? LIMIT 1`,
       [id]
@@ -1747,6 +1902,26 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     }
 
     const atual = rows[0];
+
+    if (bate_ponto && !data_inicio_bate_ponto) {
+      data_inicio_bate_ponto = data_admissao || null;
+    }
+
+    if (
+      bate_ponto &&
+      data_admissao &&
+      data_inicio_bate_ponto &&
+      data_inicio_bate_ponto < data_admissao
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: 'A data de início para bater ponto não pode ser anterior à data de admissão.'
+      });
+    }
+
+    if (!bate_ponto) {
+      data_inicio_bate_ponto = null;
+    }
 
     if (cpf) {
       const [cpfExistente] = await pool.query(
@@ -1793,6 +1968,8 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
              SETOR = ?,
              FUNCAO = ?,
              DATA_ADMISSAO = ?,
+             BATE_PONTO = ?,
+             DATA_INICIO_BATE_PONTO = ?,
              CENTRO_CUSTO = ?,
              LOCAL_TRABALHO = ?,
              STATUS = ?,
@@ -1824,6 +2001,8 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
       setor,
       funcao || null,
       data_admissao,
+      bate_ponto,
+      data_inicio_bate_ponto,
       centro_custo || null,
       local_trabalho || null,
       status,
@@ -1909,6 +2088,8 @@ app.get('/api/gestao-usuarios', async (req, res) => {
         SETOR,
         FUNCAO,
         DATA_ADMISSAO AS DATAADMISSAO,
+        BATE_PONTO AS BATEPONTO,
+        DATA_INICIO_BATE_PONTO AS DATAINICIOBATEPONTO,
         CENTRO_CUSTO AS LOCALTRABALHO,
         LOCAL_TRABALHO AS UNIDADETRABALHO,
         STATUS,
@@ -1975,6 +2156,8 @@ app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
          SETOR,
          FUNCAO,
          DATA_ADMISSAO AS DATAADMISSAO,
+         BATE_PONTO AS BATEPONTO,
+         DATA_INICIO_BATE_PONTO AS DATAINICIOBATEPONTO,
          CENTRO_CUSTO AS LOCALTRABALHO,
          LOCAL_TRABALHO AS UNIDADETRABALHO,
          STATUS,
@@ -8332,13 +8515,20 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         COALESCE(p.estoque, 0) AS estoque,
         COALESCE(p.perfil_acesso, 0) AS perfil_acesso,
         COALESCE(p.reservar_carro, 0) AS reservar_carro,
-        COALESCE(p.monitor_ping, 0) AS monitor_ping
+        COALESCE(p.monitor_ping, 0) AS monitor_ping,
+
+        COALESCE(p.fiscal, 0) AS fiscal,
+        COALESCE(p.cadastro_calendario, 0) AS cadastro_calendario,
+        COALESCE(p.jornada, 0) AS jornada,
+        COALESCE(p.vinculo_jornada, 0) AS vinculo_jornada,
+        COALESCE(p.solicitacoes, 0) AS solicitacoes,
+        COALESCE(p.cadastro_equipamento, 0) AS cadastro_equipamento
+
       FROM SF_USUARIO u
       LEFT JOIN SF_PERFIL p ON p.nome = u.perfil
       WHERE u.ID = ?
       LIMIT 1
     `, [usuarioId]);
-
 
     if (!rows || !rows.length) {
       return res.status(404).json({
@@ -8349,13 +8539,13 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
 
     const item = rows[0][0];
 
-
     const payload = {
       success: true,
       item: {
         usuario_id: Number(item.usuario_id) || 0,
         usuario_nome: item.usuario_nome || '',
         perfil: item.perfil || '',
+
         pedidos: Number(item.pedidos ?? 0),
         clientes: Number(item.clientes ?? 0),
         marketing: Number(item.marketing ?? 0),
@@ -8364,10 +8554,16 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         estoque: Number(item.estoque ?? 0),
         perfilacesso: Number(item.perfil_acesso ?? 0),
         reservarcarro: Number(item.reservar_carro ?? 0),
-        monitorping: Number(item.monitor_ping ?? 0)
+        monitorping: Number(item.monitor_ping ?? 0),
+
+        fiscal: Number(item.fiscal ?? 0),
+        cadastrocalendario: Number(item.cadastro_calendario ?? 0),
+        jornada: Number(item.jornada ?? 0),
+        vinculojornada: Number(item.vinculo_jornada ?? 0),
+        solicitacoes: Number(item.solicitacoes ?? 0),
+        cadastroequipamento: Number(item.cadastro_equipamento ?? 0)
       }
     };
-
 
     return res.json(payload);
   } catch (err) {
@@ -10442,11 +10638,13 @@ app.post('/api/reservas-carro/:id/recusar', async (req, res) => {
       });
     }
 
-    if (normalizarStatusReserva(reserva.status_solicitacao) !== 'PENDENTE') {
+    const statusReserva = normalizarStatusReserva(reserva.status_solicitacao);
+
+    if (statusReserva !== 'PENDENTE FROTA' && statusReserva !== 'PENDENTE GESTOR') {
       await conn.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Somente reservas pendentes podem ser recusadas.'
+        message: 'Somente reservas pendentes de frota ou gestor podem ser recusadas.'
       });
     }
 
@@ -17346,13 +17544,88 @@ function validarSequenciaJornada({
 
 
 // =========================
-// JORNADAS
+// JORNADAS / VÍNCULOS
 // =========================
 
 function flagSN(valor, padrao = 'N') {
   const v = String(valor ?? padrao).trim().toUpperCase();
   return v === 'S' ? 'S' : 'N';
 }
+
+function horaParaMinutosJornada(hora) {
+  if (!hora) return null;
+  const [h, m] = String(hora).split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return (h * 60) + m;
+}
+
+function validarSequenciaJornadaNova({ horaEntrada1, horaSaida1, horaEntrada2, horaSaida2 }) {
+  if (!horaEntrada1 || !horaSaida1 || !horaEntrada2 || !horaSaida2) {
+    return 'Informe os 4 horários da jornada: entrada 1, saída 1, entrada 2 e saída 2.';
+  }
+
+  const e1 = horaParaMinutosJornada(horaEntrada1);
+  const s1 = horaParaMinutosJornada(horaSaida1);
+  const e2 = horaParaMinutosJornada(horaEntrada2);
+  const s2 = horaParaMinutosJornada(horaSaida2);
+
+  if ([e1, s1, e2, s2].some(v => v === null)) {
+    return 'Um ou mais horários informados são inválidos.';
+  }
+
+  if (!(e1 < s1)) return 'A saída 1 deve ser maior que a entrada 1.';
+  if (!(s1 < e2)) return 'A entrada 2 deve ser maior que a saída 1.';
+  if (!(e2 < s2)) return 'A saída 2 deve ser maior que a entrada 2.';
+
+  return null;
+}
+
+function validarPeriodo(dataInicio, dataFim) {
+  if (!dataInicio) return 'A data de início é obrigatória.';
+  if (dataFim && dataFim < dataInicio) return 'A data fim não pode ser menor que a data início.';
+  return null;
+}
+
+async function existeUsuario(usuarioId) {
+  const [rows] = await pool.query(
+    `SELECT id, nome, EMAIL, setor FROM SF_USUARIO WHERE id = ? LIMIT 1`,
+    [usuarioId]
+  );
+  return rows[0] || null;
+}
+
+async function existeJornada(jornadaId) {
+  const [rows] = await pool.query(
+    `SELECT ID, DESCRICAO FROM SF_JORNADA_TRABALHO WHERE ID = ? LIMIT 1`,
+    [jornadaId]
+  );
+  return rows[0] || null;
+}
+
+async function existeVinculoDuplicado(usuarioId, jornadaId, dataInicio, ignorarId = null, conn = pool) {
+  let sql = `
+    SELECT ID
+    FROM SF_USUARIO_JORNADA
+    WHERE USUARIO_ID = ?
+      AND JORNADA_ID = ?
+      AND DATA_INICIO = ?
+  `;
+  const params = [usuarioId, jornadaId, dataInicio];
+
+  if (ignorarId) {
+    sql += ` AND ID <> ?`;
+    params.push(ignorarId);
+  }
+
+  sql += ` LIMIT 1`;
+
+  const [rows] = await conn.query(sql, params);
+  return rows.length > 0;
+}
+
+// =========================
+// JORNADAS
+// =========================
 
 app.get('/api/jornadas', async (req, res) => {
   try {
@@ -17404,10 +17677,7 @@ app.get('/api/jornadas', async (req, res) => {
 
     const [rows] = await pool.query(sql, params);
 
-    return res.json({
-      success: true,
-      items: rows
-    });
+    return res.json({ success: true, items: rows });
   } catch (err) {
     return res.status(500).json({
       success: false,
@@ -17422,13 +17692,10 @@ app.get('/api/jornadas/:id', async (req, res) => {
     const id = numero(req.params.id);
 
     if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID da jornada inválido.'
-      });
+      return res.status(400).json({ success: false, message: 'ID da jornada inválido.' });
     }
 
-    const sql = `
+    const [rows] = await pool.query(`
       SELECT
         ID,
         DESCRICAO,
@@ -17453,21 +17720,13 @@ app.get('/api/jornadas/:id', async (req, res) => {
       FROM SF_JORNADA_TRABALHO
       WHERE ID = ?
       LIMIT 1
-    `;
-
-    const [rows] = await pool.query(sql, [id]);
+    `, [id]);
 
     if (!rows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'Jornada não encontrada.'
-      });
+      return res.status(404).json({ success: false, message: 'Jornada não encontrada.' });
     }
 
-    return res.json({
-      success: true,
-      item: rows[0]
-    });
+    return res.json({ success: true, item: rows[0] });
   } catch (err) {
     return res.status(500).json({
       success: false,
@@ -17478,7 +17737,6 @@ app.get('/api/jornadas/:id', async (req, res) => {
 });
 
 app.post('/api/jornadas', async (req, res) => {
-
   try {
     const descricao = texto(req.body?.descricao);
     const horaEntrada1 = horaOuNull(req.body?.horaEntrada1);
@@ -17500,13 +17758,10 @@ app.post('/api/jornadas', async (req, res) => {
     const trabalhaSabado = flagSN(req.body?.trabalhaSabado, 'N');
 
     if (!descricao) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe a descrição da jornada.'
-      });
+      return res.status(400).json({ success: false, message: 'Informe a descrição da jornada.' });
     }
 
-    const erroSequencia = validarSequenciaJornada({
+    const erroSequencia = validarSequenciaJornadaNova({
       horaEntrada1,
       horaSaida1,
       horaEntrada2,
@@ -17514,10 +17769,7 @@ app.post('/api/jornadas', async (req, res) => {
     });
 
     if (erroSequencia) {
-      return res.status(400).json({
-        success: false,
-        message: erroSequencia
-      });
+      return res.status(400).json({ success: false, message: erroSequencia });
     }
 
     const diasSelecionados = [
@@ -17537,7 +17789,7 @@ app.post('/api/jornadas', async (req, res) => {
       });
     }
 
-    const sql = `
+    const [result] = await pool.query(`
       INSERT INTO SF_JORNADA_TRABALHO (
         DESCRICAO,
         HORA_INICIO_EXPEDIENTE,
@@ -17557,9 +17809,7 @@ app.post('/api/jornadas', async (req, res) => {
         STATUS,
         OBSERVACAO
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const params = [
+    `, [
       descricao,
       horaEntrada1,
       horaSaida1,
@@ -17577,9 +17827,7 @@ app.post('/api/jornadas', async (req, res) => {
       trabalhaSabado,
       status || 'ATIVO',
       observacao || null
-    ];
-
-    const [result] = await pool.query(sql, params);
+    ]);
 
     return res.json({
       success: true,
@@ -17619,20 +17867,14 @@ app.put('/api/jornadas/:id', async (req, res) => {
     const trabalhaSabado = flagSN(req.body?.trabalhaSabado, 'N');
 
     if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID da jornada inválido.'
-      });
+      return res.status(400).json({ success: false, message: 'ID da jornada inválido.' });
     }
 
     if (!descricao) {
-      return res.status(400).json({
-        success: false,
-        message: 'Informe a descrição da jornada.'
-      });
+      return res.status(400).json({ success: false, message: 'Informe a descrição da jornada.' });
     }
 
-    const erroSequencia = validarSequenciaJornada({
+    const erroSequencia = validarSequenciaJornadaNova({
       horaEntrada1,
       horaSaida1,
       horaEntrada2,
@@ -17640,10 +17882,7 @@ app.put('/api/jornadas/:id', async (req, res) => {
     });
 
     if (erroSequencia) {
-      return res.status(400).json({
-        success: false,
-        message: erroSequencia
-      });
+      return res.status(400).json({ success: false, message: erroSequencia });
     }
 
     const diasSelecionados = [
@@ -17669,13 +17908,10 @@ app.put('/api/jornadas/:id', async (req, res) => {
     );
 
     if (!exists.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'Jornada não encontrada.'
-      });
+      return res.status(404).json({ success: false, message: 'Jornada não encontrada.' });
     }
 
-    const sql = `
+    await pool.query(`
       UPDATE SF_JORNADA_TRABALHO
       SET
         DESCRICAO = ?,
@@ -17696,9 +17932,7 @@ app.put('/api/jornadas/:id', async (req, res) => {
         STATUS = ?,
         OBSERVACAO = ?
       WHERE ID = ?
-    `;
-
-    const params = [
+    `, [
       descricao,
       horaEntrada1,
       horaSaida1,
@@ -17717,9 +17951,7 @@ app.put('/api/jornadas/:id', async (req, res) => {
       status || 'ATIVO',
       observacao || null,
       id
-    ];
-
-    await pool.query(sql, params);
+    ]);
 
     return res.json({
       success: true,
@@ -17739,10 +17971,7 @@ app.delete('/api/jornadas/:id', async (req, res) => {
     const id = numero(req.params.id);
 
     if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID da jornada inválido.'
-      });
+      return res.status(400).json({ success: false, message: 'ID da jornada inválido.' });
     }
 
     const [vinculos] = await pool.query(
@@ -17763,10 +17992,7 @@ app.delete('/api/jornadas/:id', async (req, res) => {
     );
 
     if (!result.affectedRows) {
-      return res.status(404).json({
-        success: false,
-        message: 'Jornada não encontrada.'
-      });
+      return res.status(404).json({ success: false, message: 'Jornada não encontrada.' });
     }
 
     return res.json({
@@ -17782,7 +18008,6 @@ app.delete('/api/jornadas/:id', async (req, res) => {
   }
 });
 
-
 // =========================
 // VÍNCULOS USUÁRIO/JORNADA
 // =========================
@@ -17792,13 +18017,10 @@ app.get('/api/jornadas/:id/vinculos', async (req, res) => {
     const jornadaId = numero(req.params.id);
 
     if (!jornadaId) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID da jornada inválido.'
-      });
+      return res.status(400).json({ success: false, message: 'ID da jornada inválido.' });
     }
 
-    const sql = `
+    const [rows] = await pool.query(`
       SELECT
         J.ID,
         J.USUARIO_ID,
@@ -17818,18 +18040,13 @@ app.get('/api/jornadas/:id/vinculos', async (req, res) => {
         JT.HORA_RETORNO_INTERVALO,
         JT.HORA_FIM_EXPEDIENTE
       FROM SF_USUARIO_JORNADA J
-      INNER JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
-      INNER JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
+      LEFT JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
+      LEFT JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
       WHERE J.JORNADA_ID = ?
-      ORDER BY U.nome ASC, J.DATA_INICIO DESC
-    `;
+      ORDER BY U.nome ASC, J.DATA_INICIO DESC, J.ID DESC
+    `, [jornadaId]);
 
-    const [rows] = await pool.query(sql, [jornadaId]);
-
-    return res.json({
-      success: true,
-      items: rows
-    });
+    return res.json({ success: true, items: rows });
   } catch (err) {
     return res.status(500).json({
       success: false,
@@ -17851,6 +18068,8 @@ app.get('/api/jornadas-vinculos', async (req, res) => {
         J.DATA_INICIO,
         J.DATA_FIM,
         J.STATUS,
+        J.CRIADO_EM,
+        J.ATUALIZADO_EM,
         U.nome AS USUARIO_NOME,
         U.EMAIL AS USUARIO_EMAIL,
         U.perfil AS USUARIO_PERFIL,
@@ -17861,8 +18080,8 @@ app.get('/api/jornadas-vinculos', async (req, res) => {
         JT.HORA_RETORNO_INTERVALO,
         JT.HORA_FIM_EXPEDIENTE
       FROM SF_USUARIO_JORNADA J
-      INNER JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
-      INNER JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
+      LEFT JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
+      LEFT JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
     `;
 
     const params = [];
@@ -17881,14 +18100,11 @@ app.get('/api/jornadas-vinculos', async (req, res) => {
       params.push(like, like, like, like, like, like);
     }
 
-    sql += ` ORDER BY U.nome ASC, J.DATA_INICIO DESC`;
+    sql += ` ORDER BY JT.DESCRICAO ASC, J.DATA_INICIO DESC, U.nome ASC, J.ID DESC`;
 
     const [rows] = await pool.query(sql, params);
 
-    return res.json({
-      success: true,
-      items: rows
-    });
+    return res.json({ success: true, items: rows });
   } catch (err) {
     return res.status(500).json({
       success: false,
@@ -17903,13 +18119,10 @@ app.get('/api/jornadas/vinculos/:id', async (req, res) => {
     const id = numero(req.params.id);
 
     if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID do vínculo inválido.'
-      });
+      return res.status(400).json({ success: false, message: 'ID do vínculo inválido.' });
     }
 
-    const sql = `
+    const [rows] = await pool.query(`
       SELECT
         J.ID,
         J.USUARIO_ID,
@@ -17917,6 +18130,8 @@ app.get('/api/jornadas/vinculos/:id', async (req, res) => {
         J.DATA_INICIO,
         J.DATA_FIM,
         J.STATUS,
+        J.CRIADO_EM,
+        J.ATUALIZADO_EM,
         U.nome AS USUARIO_NOME,
         U.EMAIL AS USUARIO_EMAIL,
         U.perfil AS USUARIO_PERFIL,
@@ -17927,25 +18142,17 @@ app.get('/api/jornadas/vinculos/:id', async (req, res) => {
         JT.HORA_RETORNO_INTERVALO,
         JT.HORA_FIM_EXPEDIENTE
       FROM SF_USUARIO_JORNADA J
-      INNER JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
-      INNER JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
+      LEFT JOIN SF_USUARIO U ON U.id = J.USUARIO_ID
+      LEFT JOIN SF_JORNADA_TRABALHO JT ON JT.ID = J.JORNADA_ID
       WHERE J.ID = ?
       LIMIT 1
-    `;
-
-    const [rows] = await pool.query(sql, [id]);
+    `, [id]);
 
     if (!rows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'Vínculo não encontrado.'
-      });
+      return res.status(404).json({ success: false, message: 'Vínculo não encontrado.' });
     }
 
-    return res.json({
-      success: true,
-      item: rows[0]
-    });
+    return res.json({ success: true, item: rows[0] });
   } catch (err) {
     return res.status(500).json({
       success: false,
@@ -17970,50 +18177,30 @@ app.post('/api/jornadas/vincular-usuario', async (req, res) => {
       });
     }
 
-    const [usuarioRows] = await pool.query(
-      `SELECT id, nome FROM SF_USUARIO WHERE id = ? LIMIT 1`,
-      [usuarioId]
-    );
-
-    if (!usuarioRows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'Usuário não encontrado.'
-      });
+    const erroPeriodo = validarPeriodo(dataInicio, dataFim);
+    if (erroPeriodo) {
+      return res.status(400).json({ success: false, message: erroPeriodo });
     }
 
-    const [jornadaRows] = await pool.query(
-      `SELECT ID, DESCRICAO FROM SF_JORNADA_TRABALHO WHERE ID = ? LIMIT 1`,
-      [jornadaId]
-    );
-
-    if (!jornadaRows.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'Jornada não encontrada.'
-      });
+    const usuario = await existeUsuario(usuarioId);
+    if (!usuario) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
     }
 
-    const [duplicado] = await pool.query(
-      `
-        SELECT ID
-        FROM SF_USUARIO_JORNADA
-        WHERE USUARIO_ID = ?
-          AND JORNADA_ID = ?
-          AND DATA_INICIO = ?
-        LIMIT 1
-      `,
-      [usuarioId, jornadaId, dataInicio]
-    );
+    const jornada = await existeJornada(jornadaId);
+    if (!jornada) {
+      return res.status(404).json({ success: false, message: 'Jornada não encontrada.' });
+    }
 
-    if (duplicado.length) {
+    const duplicado = await existeVinculoDuplicado(usuarioId, jornadaId, dataInicio);
+    if (duplicado) {
       return res.status(400).json({
         success: false,
         message: 'Já existe vínculo deste usuário com esta jornada nesta data.'
       });
     }
 
-    const sql = `
+    const [result] = await pool.query(`
       INSERT INTO SF_USUARIO_JORNADA (
         USUARIO_ID,
         JORNADA_ID,
@@ -18021,17 +18208,13 @@ app.post('/api/jornadas/vincular-usuario', async (req, res) => {
         DATA_FIM,
         STATUS
       ) VALUES (?, ?, ?, ?, ?)
-    `;
-
-    const params = [
+    `, [
       usuarioId,
       jornadaId,
       dataInicio,
       dataFim || null,
       status || 'ATIVO'
-    ];
-
-    const [result] = await pool.query(sql, params);
+    ]);
 
     return res.json({
       success: true,
@@ -18047,6 +18230,116 @@ app.post('/api/jornadas/vincular-usuario', async (req, res) => {
   }
 });
 
+app.post('/api/jornadas/vincular-usuarios', async (req, res) => {
+  let conn;
+
+  try {
+    const jornadaId = Number(req.body?.jornadaId);
+    const dataInicio = dataOuNull(req.body?.dataInicio);
+    const dataFim = dataOuNull(req.body?.dataFim);
+    const status = texto(req.body?.status || 'ATIVO');
+    const usuarios = Array.isArray(req.body?.usuarios) ? req.body.usuarios : [];
+
+    const usuarioIds = [...new Set(
+      usuarios
+        .map(v => Number(v))
+        .filter(v => Number.isInteger(v) && v > 0)
+    )];
+
+    if (!jornadaId || !dataInicio || !usuarioIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Jornada, data de início e lista de usuários são obrigatórios.'
+      });
+    }
+
+    const erroPeriodo = validarPeriodo(dataInicio, dataFim);
+    if (erroPeriodo) {
+      return res.status(400).json({ success: false, message: erroPeriodo });
+    }
+
+    const jornada = await existeJornada(jornadaId);
+    if (!jornada) {
+      return res.status(404).json({ success: false, message: 'Jornada não encontrada.' });
+    }
+
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+
+    const inseridos = [];
+    const ignorados = [];
+
+    for (const usuarioId of usuarioIds) {
+      const [usuarioRows] = await conn.query(
+        `SELECT id, nome FROM SF_USUARIO WHERE id = ? LIMIT 1`,
+        [usuarioId]
+      );
+
+      if (!usuarioRows.length) {
+        ignorados.push({ usuarioId, motivo: 'Usuário não encontrado.' });
+        continue;
+      }
+
+      const duplicado = await existeVinculoDuplicado(usuarioId, jornadaId, dataInicio, null, conn);
+      if (duplicado) {
+        ignorados.push({
+          usuarioId,
+          nome: usuarioRows[0].nome,
+          motivo: 'Já existe vínculo para este usuário nesta jornada e data.'
+        });
+        continue;
+      }
+
+      const [result] = await conn.query(`
+        INSERT INTO SF_USUARIO_JORNADA (
+          USUARIO_ID,
+          JORNADA_ID,
+          DATA_INICIO,
+          DATA_FIM,
+          STATUS
+        ) VALUES (?, ?, ?, ?, ?)
+      `, [
+        usuarioId,
+        jornadaId,
+        dataInicio,
+        dataFim || null,
+        status || 'ATIVO'
+      ]);
+
+      inseridos.push({
+        id: result.insertId,
+        usuarioId,
+        nome: usuarioRows[0].nome
+      });
+    }
+
+    await conn.commit();
+    conn.release();
+
+    return res.json({
+      success: true,
+      message: inseridos.length
+        ? 'Processamento dos vínculos concluído com sucesso.'
+        : 'Nenhum vínculo foi inserido.',
+      inseridos,
+      ignorados
+    });
+  } catch (err) {
+    if (conn) {
+      try {
+        await conn.rollback();
+        conn.release();
+      } catch (_) {}
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao vincular usuários à jornada.',
+      error: err.message
+    });
+  }
+});
+
 app.put('/api/jornadas/vinculos/:id', async (req, res) => {
   try {
     const id = numero(req.params.id);
@@ -18057,10 +18350,7 @@ app.put('/api/jornadas/vinculos/:id', async (req, res) => {
     const status = texto(req.body?.status || 'ATIVO');
 
     if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID do vínculo inválido.'
-      });
+      return res.status(400).json({ success: false, message: 'ID do vínculo inválido.' });
     }
 
     if (!usuarioId || !jornadaId || !dataInicio) {
@@ -18070,39 +18360,39 @@ app.put('/api/jornadas/vinculos/:id', async (req, res) => {
       });
     }
 
+    const erroPeriodo = validarPeriodo(dataInicio, dataFim);
+    if (erroPeriodo) {
+      return res.status(400).json({ success: false, message: erroPeriodo });
+    }
+
     const [exists] = await pool.query(
       `SELECT ID FROM SF_USUARIO_JORNADA WHERE ID = ? LIMIT 1`,
       [id]
     );
 
     if (!exists.length) {
-      return res.status(404).json({
-        success: false,
-        message: 'Vínculo não encontrado.'
-      });
+      return res.status(404).json({ success: false, message: 'Vínculo não encontrado.' });
     }
 
-    const [duplicado] = await pool.query(
-      `
-        SELECT ID
-        FROM SF_USUARIO_JORNADA
-        WHERE USUARIO_ID = ?
-          AND JORNADA_ID = ?
-          AND DATA_INICIO = ?
-          AND ID <> ?
-        LIMIT 1
-      `,
-      [usuarioId, jornadaId, dataInicio, id]
-    );
+    const usuario = await existeUsuario(usuarioId);
+    if (!usuario) {
+      return res.status(404).json({ success: false, message: 'Usuário não encontrado.' });
+    }
 
-    if (duplicado.length) {
+    const jornada = await existeJornada(jornadaId);
+    if (!jornada) {
+      return res.status(404).json({ success: false, message: 'Jornada não encontrada.' });
+    }
+
+    const duplicado = await existeVinculoDuplicado(usuarioId, jornadaId, dataInicio, id);
+    if (duplicado) {
       return res.status(400).json({
         success: false,
         message: 'Já existe outro vínculo igual para este usuário.'
       });
     }
 
-    const sql = `
+    await pool.query(`
       UPDATE SF_USUARIO_JORNADA
       SET
         USUARIO_ID = ?,
@@ -18111,18 +18401,14 @@ app.put('/api/jornadas/vinculos/:id', async (req, res) => {
         DATA_FIM = ?,
         STATUS = ?
       WHERE ID = ?
-    `;
-
-    const params = [
+    `, [
       usuarioId,
       jornadaId,
       dataInicio,
       dataFim || null,
       status || 'ATIVO',
       id
-    ];
-
-    await pool.query(sql, params);
+    ]);
 
     return res.json({
       success: true,
@@ -18142,10 +18428,7 @@ app.delete('/api/jornadas/vinculos/:id', async (req, res) => {
     const id = numero(req.params.id);
 
     if (!id) {
-      return res.status(400).json({
-        success: false,
-        message: 'ID do vínculo inválido.'
-      });
+      return res.status(400).json({ success: false, message: 'ID do vínculo inválido.' });
     }
 
     const [result] = await pool.query(
@@ -18154,10 +18437,7 @@ app.delete('/api/jornadas/vinculos/:id', async (req, res) => {
     );
 
     if (!result.affectedRows) {
-      return res.status(404).json({
-        success: false,
-        message: 'Vínculo não encontrado.'
-      });
+      return res.status(404).json({ success: false, message: 'Vínculo não encontrado.' });
     }
 
     return res.json({
@@ -18173,6 +18453,1235 @@ app.delete('/api/jornadas/vinculos/:id', async (req, res) => {
   }
 });
 
+// Solicitações RH
+
+app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
+  try {
+    const data = String(req.query.data || '').trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Parâmetro data inválido. Use o formato YYYY-MM-DD.'
+      });
+    }
+
+    const inicioDia = `${data} 00:00:00`;
+    const proximoDia = `${obterProximoDiaIso(data)} 00:00:00`;
+
+    const normalizarCpf = (valor) =>
+      String(valor || '').replace(/\D/g, '').trim();
+
+    const [usuarios] = await pool.query(`
+      SELECT
+        id,
+        nome,
+        EMAIL AS email,
+        telefone,
+        senha,
+        perfil,
+        status,
+        setor,
+        FUNCAO AS funcao,
+        DATA_ADMISSAO AS data_admissao,
+        LOCAL_TRABALHO AS local_trabalho,
+        MUST_CHANGE_PASSWORD AS must_change_password,
+        FOTO AS foto,
+        CPF AS cpf,
+        RG AS rg,
+        CNH AS cnh,
+        CNH_CATEGORIA AS cnh_categoria,
+        DATA_NASCIMENTO AS data_nascimento,
+        ESTADO_CIVIL AS estado_civil,
+        TELEFONE_PESSOAL AS telefone_pessoal,
+        EMAIL_PESSOAL AS email_pessoal,
+        APELIDO AS apelido,
+        NUMERO_CALCADO AS numero_calcado,
+        TAMANHO_CAMISA AS tamanho_camisa,
+        TAMANHO_CALCA AS tamanho_calca,
+        SEXO AS sexo,
+        TEM_FILHOS AS tem_filhos,
+        QUANTIDADE_FILHOS AS quantidade_filhos,
+        FILHOS AS filhos,
+        CENTRO_CUSTO AS centro_custo,
+        CNH_VALIDADE AS cnh_validade,
+        CNH_ARQUIVO AS cnh_arquivo,
+        BATE_PONTO AS bate_ponto,
+        DATA_INICIO_BATE_PONTO AS data_inicio_bate_ponto
+      FROM SF_USUARIO
+      WHERE EMAIL IS NOT NULL
+        AND EMAIL <> ''
+        AND status <> 'Desativado'
+        AND BATE_PONTO = 1
+      ORDER BY nome ASC
+    `);
+
+    const [jornadas] = await pool.query(`
+      SELECT
+        uj.USUARIO_ID,
+        uj.JORNADA_ID,
+        jt.DESCRICAO,
+        jt.HORA_INICIO_EXPEDIENTE,
+        jt.HORA_SAIDA_INTERVALO,
+        jt.HORA_RETORNO_INTERVALO,
+        jt.HORA_FIM_EXPEDIENTE,
+        jt.CARGA_HORARIA,
+        jt.TOLERANCIA_ATRASO_MIN,
+        jt.TOLERANCIA_EXTRA_MIN,
+        jt.TRABALHA_DOMINGO,
+        jt.TRABALHA_SEGUNDA,
+        jt.TRABALHA_TERCA,
+        jt.TRABALHA_QUARTA,
+        jt.TRABALHA_QUINTA,
+        jt.TRABALHA_SEXTA,
+        jt.TRABALHA_SABADO
+      FROM SF_USUARIO_JORNADA uj
+      INNER JOIN SF_JORNADA_TRABALHO jt
+        ON jt.ID = uj.JORNADA_ID
+      WHERE COALESCE(uj.STATUS, 'ATIVO') = 'ATIVO'
+        AND COALESCE(jt.STATUS, 'ATIVO') = 'ATIVO'
+        AND uj.DATA_INICIO <= ?
+        AND (uj.DATA_FIM IS NULL OR uj.DATA_FIM >= ?)
+    `, [data, data]);
+
+    const [batidas] = await pool.query(`
+      SELECT
+        USUARIO_CODIGO,
+        NOME_USUARIO,
+        MATRICULA,
+        CPF,
+        DATA_HORA,
+        TIPO_BATIDA
+      FROM SF_PONTO_COLETADO
+      WHERE DATA_HORA >= ?
+        AND DATA_HORA < ?
+      ORDER BY NOME_USUARIO ASC, DATA_HORA ASC
+    `, [inicioDia, proximoDia]);
+
+    const [calendarios] = await pool.query(`
+      SELECT
+        ID,
+        PERIODO,
+        OBSERVACAO,
+        HORAINICIO,
+        HORAFIM,
+        TIPOPERIODO,
+        TIPORECORRENCIA,
+        REPETETODOANO,
+        STATUS,
+        DATAINICIAL,
+        DATAFINAL,
+        DATAINICIALTROCA,
+        DATAFINALTROCA,
+        NOVADATAINICIAL,
+        NOVADATAFINAL
+      FROM SF_CALENDARIO
+      WHERE COALESCE(STATUS, 'ATIVO') = 'ATIVO'
+    `);
+
+    const feriadoInfo = verificarSeDataEhFeriadoBackend(data, calendarios);
+
+    const mapaJornadas = new Map();
+    jornadas.forEach(item => {
+      mapaJornadas.set(Number(item.USUARIO_ID), item);
+    });
+
+    const mapaBatidas = new Map();
+    batidas.forEach(item => {
+      const cpf = normalizarCpf(item.CPF);
+
+      if (cpf) {
+        const chaveCpf = `CPF:${cpf}`;
+        if (!mapaBatidas.has(chaveCpf)) mapaBatidas.set(chaveCpf, []);
+        mapaBatidas.get(chaveCpf).push(item);
+      }
+    });
+
+    const diaSemana = new Date(`${data}T00:00:00`).getDay();
+
+    const items = usuarios.map(usuario => {
+      const jornada = mapaJornadas.get(Number(usuario.id)) || null;
+      const cpfUsuario = normalizarCpf(usuario.cpf);
+
+      const batidasUsuario = cpfUsuario
+        ? (mapaBatidas.get(`CPF:${cpfUsuario}`) || [])
+        : [];
+
+      const batidasOrdenadas = [...batidasUsuario].sort(
+        (a, b) => new Date(a.DATA_HORA) - new Date(b.DATA_HORA)
+      );
+
+      const batePonto = Number(
+        usuario.bate_ponto ??
+        usuario.BATE_PONTO ??
+        0
+      ) === 1;
+
+      const dataInicioBatePonto = String(
+        usuario.data_inicio_bate_ponto ??
+        usuario.DATA_INICIO_BATE_PONTO ??
+        ''
+      ).trim().slice(0, 10);
+
+      const deveValidarPonto =
+        batePonto &&
+        !!dataInicioBatePonto &&
+        data >= dataInicioBatePonto;
+
+      const avaliacao = deveValidarPonto
+        ? avaliarInconsistenciaUsuario({
+            ehFeriado: feriadoInfo.ehFeriado,
+            jornada,
+            batidas: batidasOrdenadas,
+            diaSemana
+          })
+        : {
+            inconsistente: false,
+            motivo: ''
+          };
+
+      const diasSemanaJornada = jornada
+        ? {
+            domingo: String(jornada.TRABALHA_DOMINGO || '').toUpperCase() === 'S',
+            segunda: String(jornada.TRABALHA_SEGUNDA || '').toUpperCase() === 'S',
+            terca: String(jornada.TRABALHA_TERCA || '').toUpperCase() === 'S',
+            quarta: String(jornada.TRABALHA_QUARTA || '').toUpperCase() === 'S',
+            quinta: String(jornada.TRABALHA_QUINTA || '').toUpperCase() === 'S',
+            sexta: String(jornada.TRABALHA_SEXTA || '').toUpperCase() === 'S',
+            sabado: String(jornada.TRABALHA_SABADO || '').toUpperCase() === 'S'
+          }
+        : {
+            domingo: false,
+            segunda: false,
+            terca: false,
+            quarta: false,
+            quinta: false,
+            sexta: false,
+            sabado: false
+          };
+
+      const trabalhaNoDia = jornada
+        ? verificaSeJornadaTrabalhaNoDia(jornada, diaSemana)
+        : false;
+
+      return {
+        ...usuario,
+        batePonto,
+        dataInicioBatePonto,
+        validaPontoHoje: deveValidarPonto,
+        jornadaId: jornada?.JORNADA_ID || null,
+        jornadaDescricao: jornada?.DESCRICAO || '',
+        quantidadeBatidas: batidasOrdenadas.length,
+        inconsistente: avaliacao.inconsistente,
+        motivo: avaliacao.motivo,
+        feriado: feriadoInfo.ehFeriado,
+
+        jornada: jornada
+          ? {
+              usuarioId: jornada.USUARIO_ID,
+              jornadaId: jornada.JORNADA_ID,
+              descricao: jornada.DESCRICAO || '',
+              horaInicioExpediente: jornada.HORA_INICIO_EXPEDIENTE || '',
+              horaSaidaIntervalo: jornada.HORA_SAIDA_INTERVALO || '',
+              horaRetornoIntervalo: jornada.HORA_RETORNO_INTERVALO || '',
+              horaFimExpediente: jornada.HORA_FIM_EXPEDIENTE || '',
+              cargaHoraria: jornada.CARGA_HORARIA || '',
+              toleranciaAtrasoMin: Number(jornada.TOLERANCIA_ATRASO_MIN || 0),
+              toleranciaExtraMin: Number(jornada.TOLERANCIA_EXTRA_MIN || 0),
+              trabalhaDomingo: diasSemanaJornada.domingo,
+              trabalhaSegunda: diasSemanaJornada.segunda,
+              trabalhaTerca: diasSemanaJornada.terca,
+              trabalhaQuarta: diasSemanaJornada.quarta,
+              trabalhaQuinta: diasSemanaJornada.quinta,
+              trabalhaSexta: diasSemanaJornada.sexta,
+              trabalhaSabado: diasSemanaJornada.sabado,
+              diasSemana: diasSemanaJornada
+            }
+          : null,
+
+        resumoJornada: jornada
+          ? {
+              trabalhaNoDia,
+              horarioPrevisto: {
+                entrada: jornada.HORA_INICIO_EXPEDIENTE || '',
+                saidaIntervalo: jornada.HORA_SAIDA_INTERVALO || '',
+                retornoIntervalo: jornada.HORA_RETORNO_INTERVALO || '',
+                saida: jornada.HORA_FIM_EXPEDIENTE || ''
+              },
+              diasSemana: diasSemanaJornada,
+              trabalhaDomingo: diasSemanaJornada.domingo,
+              trabalhaSegunda: diasSemanaJornada.segunda,
+              trabalhaTerca: diasSemanaJornada.terca,
+              trabalhaQuarta: diasSemanaJornada.quarta,
+              trabalhaQuinta: diasSemanaJornada.quinta,
+              trabalhaSexta: diasSemanaJornada.sexta,
+              trabalhaSabado: diasSemanaJornada.sabado
+            }
+          : {
+              trabalhaNoDia: false,
+              horarioPrevisto: null,
+              diasSemana: {
+                domingo: false,
+                segunda: false,
+                terca: false,
+                quarta: false,
+                quinta: false,
+                sexta: false,
+                sabado: false
+              },
+              trabalhaDomingo: false,
+              trabalhaSegunda: false,
+              trabalhaTerca: false,
+              trabalhaQuarta: false,
+              trabalhaQuinta: false,
+              trabalhaSexta: false,
+              trabalhaSabado: false
+            },
+
+        batidas: batidasOrdenadas.map(item => ({
+          usuarioCodigo: item.USUARIO_CODIGO || '',
+          nomeUsuario: item.NOME_USUARIO || '',
+          matricula: item.MATRICULA || '',
+          cpf: normalizarCpf(item.CPF),
+          dataHora: item.DATA_HORA,
+          tipoBatida: item.TIPO_BATIDA || '',
+          hora: formatarHoraBatida(item.DATA_HORA)
+        }))
+      };
+    });
+
+    res.json({
+      success: true,
+      data,
+      feriado: feriadoInfo.ehFeriado,
+      observacoesFeriado: feriadoInfo.observacoes,
+      items
+    });
+  } catch (err) {
+    console.error('Erro ao carregar usuários por data das solicitações:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao carregar usuários das solicitações.',
+      error: err.message
+    });
+  }
+});
+
+function obterProximoDiaIso(dataIso) {
+  const data = new Date(`${dataIso}T00:00:00`);
+  data.setDate(data.getDate() + 1);
+
+  const ano = data.getFullYear();
+  const mes = String(data.getMonth() + 1).padStart(2, '0');
+  const dia = String(data.getDate()).padStart(2, '0');
+
+  return `${ano}-${mes}-${dia}`;
+}
+
+function normalizarTextoBackend(valor) {
+  return String(valor || '').trim();
+}
+
+function obterTipoRecorrenciaBackend(item) {
+  const tipo = normalizarTextoBackend(item?.TIPORECORRENCIA)
+    .toUpperCase()
+    .replaceAll('_', '');
+
+  if (tipo) return tipo;
+
+  return normalizarTextoBackend(item?.REPETETODOANO).toUpperCase() === 'S'
+    ? 'ANUAL'
+    : 'UNICO';
+}
+
+function verificarSeDataEhFeriadoBackend(dataIso, itensCalendario) {
+  const mmdd = dataIso.slice(5);
+  const observacoes = [];
+  const datasRemovidasPorTroca = new Set();
+
+  for (const item of itensCalendario) {
+    const status = normalizarTextoBackend(item?.STATUS).toUpperCase();
+    if (status && status !== 'ATIVO') continue;
+
+    const tipo = obterTipoRecorrenciaBackend(item);
+    if (tipo !== 'TROCAFERIADO') continue;
+
+    const originalInicial = normalizarTextoBackend(item?.DATAINICIALTROCA || item?.DATAINICIAL);
+    const originalFinal = normalizarTextoBackend(item?.DATAFINALTROCA || item?.DATAFINAL || originalInicial);
+
+    if (originalInicial && dataIso >= originalInicial && dataIso <= originalFinal) {
+      datasRemovidasPorTroca.add(dataIso);
+    }
+  }
+
+  for (const item of itensCalendario) {
+    const status = normalizarTextoBackend(item?.STATUS).toUpperCase();
+    if (status && status !== 'ATIVO') continue;
+
+    const tipo = obterTipoRecorrenciaBackend(item);
+
+    if (tipo === 'TROCAFERIADO') {
+      const novaInicial = normalizarTextoBackend(item?.NOVADATAINICIAL);
+      const novaFinal = normalizarTextoBackend(item?.NOVADATAFINAL || item?.NOVADATAINICIAL);
+
+      if (novaInicial && dataIso >= novaInicial && dataIso <= novaFinal) {
+        observacoes.push(item?.OBSERVACAO || item?.PERIODO || 'Feriado');
+      }
+
+      continue;
+    }
+
+    if (datasRemovidasPorTroca.has(dataIso)) {
+      continue;
+    }
+
+    const dataInicial = normalizarTextoBackend(item?.DATAINICIAL);
+    const dataFinal = normalizarTextoBackend(item?.DATAFINAL || item?.DATAINICIAL);
+    const tipoPeriodo = normalizarTextoBackend(item?.TIPOPERIODO).toLowerCase();
+
+    if (!dataInicial) continue;
+
+    let ehFeriado = false;
+
+    if (tipo === 'ANUAL') {
+      const inicialMmdd = dataInicial.slice(5);
+      const finalMmdd = dataFinal.slice(5);
+
+      if (tipoPeriodo === 'intervalo') {
+        ehFeriado = mmdd >= inicialMmdd && mmdd <= finalMmdd;
+      } else {
+        ehFeriado = mmdd === inicialMmdd;
+      }
+    } else {
+      if (tipoPeriodo === 'intervalo') {
+        ehFeriado = dataIso >= dataInicial && dataIso <= dataFinal;
+      } else {
+        ehFeriado = dataIso === dataInicial;
+      }
+    }
+
+    if (ehFeriado) {
+      observacoes.push(item?.OBSERVACAO || item?.PERIODO || 'Feriado');
+    }
+  }
+
+  return {
+    ehFeriado: observacoes.length > 0,
+    observacoes
+  };
+}
+
+function verificaSeJornadaTrabalhaNoDia(jornada, diaSemana) {
+  if (!jornada) return false;
+
+  const mapa = {
+    0: jornada.TRABALHA_DOMINGO,
+    1: jornada.TRABALHA_SEGUNDA,
+    2: jornada.TRABALHA_TERCA,
+    3: jornada.TRABALHA_QUARTA,
+    4: jornada.TRABALHA_QUINTA,
+    5: jornada.TRABALHA_SEXTA,
+    6: jornada.TRABALHA_SABADO
+  };
+
+  return String(mapa[diaSemana] || '').toUpperCase() === 'S';
+}
+
+function timeParaMinutos(timeStr) {
+  if (!timeStr) return null;
+  const [h, m] = String(timeStr).split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function dataHoraParaMinutos(dataHora) {
+  const d = new Date(dataHora);
+  return d.getHours() * 60 + d.getMinutes();
+}
+
+function formatarHoraBatida(dataHora) {
+  if (!dataHora) return '';
+  const d = new Date(dataHora);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function avaliarInconsistenciaUsuario({ ehFeriado, jornada, batidas, diaSemana }) {
+  if (ehFeriado && batidas.length > 0) {
+    return {
+      inconsistente: true,
+      motivo: 'Possui batidas registradas em dia de feriado.'
+    };
+  }
+
+  if (!jornada) {
+    return batidas.length > 0
+      ? {
+          inconsistente: true,
+          motivo: 'Usuário sem jornada vinculada e com batidas registradas.'
+        }
+      : {
+          inconsistente: false,
+          motivo: ''
+        };
+  }
+
+  const trabalhaNoDia = verificaSeJornadaTrabalhaNoDia(jornada, diaSemana);
+
+  if (!trabalhaNoDia && batidas.length > 0) {
+    return {
+      inconsistente: true,
+      motivo: diaSemana === 6
+        ? 'Possui batidas em sábado não previsto na jornada.'
+        : 'Possui batidas em dia não previsto na jornada.'
+    };
+  }
+
+  if (trabalhaNoDia && batidas.length === 0) {
+    return {
+      inconsistente: true,
+      motivo: 'Dia previsto na jornada sem nenhuma batida.'
+    };
+  }
+
+  if (!trabalhaNoDia && batidas.length === 0) {
+    return {
+      inconsistente: false,
+      motivo: ''
+    };
+  }
+
+  const toleranciaAtraso = Number(jornada.TOLERANCIA_ATRASO_MIN || 0);
+  const toleranciaExtra = Number(jornada.TOLERANCIA_EXTRA_MIN || 0);
+
+  const inicioEsperado = timeParaMinutos(jornada.HORA_INICIO_EXPEDIENTE);
+  const fimEsperado = timeParaMinutos(jornada.HORA_FIM_EXPEDIENTE);
+
+  const batidasOrdenadas = [...batidas].sort(
+    (a, b) => new Date(a.DATA_HORA) - new Date(b.DATA_HORA)
+  );
+
+  const primeiraBatida = batidasOrdenadas[0]
+    ? dataHoraParaMinutos(batidasOrdenadas[0].DATA_HORA)
+    : null;
+
+  const ultimaBatida = batidasOrdenadas[batidasOrdenadas.length - 1]
+    ? dataHoraParaMinutos(batidasOrdenadas[batidasOrdenadas.length - 1].DATA_HORA)
+    : null;
+
+  if (
+    inicioEsperado != null &&
+    primeiraBatida != null &&
+    primeiraBatida > inicioEsperado + toleranciaAtraso
+  ) {
+    return {
+      inconsistente: true,
+      motivo: 'Primeira batida após a tolerância de atraso da jornada.'
+    };
+  }
+
+  if (
+    fimEsperado != null &&
+    ultimaBatida != null &&
+    ultimaBatida < fimEsperado - toleranciaExtra
+  ) {
+    return {
+      inconsistente: true,
+      motivo: 'Última batida antes do horário esperado de término da jornada.'
+    };
+  }
+
+  if (batidas.length % 2 !== 0) {
+    return {
+      inconsistente: true,
+      motivo: 'Quantidade de batidas ímpar, indicando marcação inconsistente.'
+    };
+  }
+
+  return {
+    inconsistente: false,
+    motivo: ''
+  };
+}
+
+// =====================
+// JUSTIFICATIVA DE PONTO
+// =====================
+
+// Volume montado em /anexos (mesmo modelo do marketing)
+const PASTA_JUSTIFICATIVAS = path.join(DIRETORIO_VOLUME_anexos, 'justificativas-ponto');
+
+fs.mkdirSync(PASTA_JUSTIFICATIVAS, { recursive: true });
+
+// Servir anexos via URL
+app.use('/anexos/justificativas-ponto', express.static(PASTA_JUSTIFICATIVAS));
+
+
+app.get('/api/solicitacoes/justificativas-ponto', async (req, res) => {
+  try {
+    const data = String(req.query.data || '').trim();
+    const funcionarioId = String(req.query.funcionarioId || '').trim();
+
+    const filtros = [];
+    const params = [];
+
+    if (data) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Parâmetro data inválido. Use o formato YYYY-MM-DD.'
+        });
+      }
+
+      filtros.push('data_referencia = ?');
+      params.push(data);
+    }
+
+    if (funcionarioId) {
+      filtros.push('funcionario_id = ?');
+      params.push(funcionarioId);
+    }
+
+    const where = filtros.length ? `WHERE ${filtros.join(' AND ')}` : '';
+
+    const [rows] = await pool.query(`
+      SELECT
+        id,
+        funcionario_id AS funcionarioId,
+        funcionario_nome AS funcionarioNome,
+        DATE_FORMAT(data_referencia, '%Y-%m-%d') AS dataReferencia,
+        tipo_justificativa AS tipoJustificativa,
+        tipo_periodo AS tipoPeriodo,
+        dia_todo AS dia_todo,
+        TIME_FORMAT(hora_inicial, '%H:%i') AS horaInicial,
+        TIME_FORMAT(hora_final, '%H:%i') AS horaFinal,
+        diferenca_minutos AS diferencaMinutos,
+        diferenca_formatada AS diferencaFormatada,
+        descricao,
+        anexo_referencia AS anexoReferencia,
+        nome_arquivo AS nomeArquivo,
+        caminho_arquivo AS caminhoArquivo,
+        mime_arquivo AS mimeArquivo,
+        tamanho_arquivo AS tamanhoArquivo,
+        status_gestor AS statusGestor,
+        observacao_gestor AS observacaoGestor,
+        gestor_usuario AS gestorUsuario,
+        gestor_data AS gestorData,
+        status_rh AS statusRh,
+        observacao_rh AS observacaoRh,
+        rh_usuario AS rhUsuario,
+        rh_data AS rhData,
+        criado_por AS criadoPor,
+        criado_em AS criadoEm,
+        atualizado_em AS atualizadoEm
+      FROM SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+      ${where}
+      ORDER BY criado_em DESC, id DESC
+    `, params);
+
+    return res.json({
+      success: true,
+      items: Array.isArray(rows) ? rows : []
+    });
+  } catch (err) {
+    console.error('Erro ao listar justificativas de ponto:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar justificativas de ponto.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/solicitacoes/justificativas-ponto', async (req, res) => {
+  try {
+    const funcionarioId = String(req.body?.funcionarioId || '').trim();
+    const funcionarioNome = String(req.body?.funcionarioNome || '').trim();
+    const dataReferencia = String(req.body?.dataReferencia || '').trim();
+    const tipoJustificativa = String(req.body?.tipoJustificativa || '').trim().toUpperCase();
+    const tipoPeriodo = String(req.body?.tipoPeriodo || 'DIA_TODO').trim().toUpperCase();
+    const dia_todo = String(req.body?.dia_todo || (tipoPeriodo === 'DIA_TODO' ? 'S' : 'N')).trim().toUpperCase();
+    const horaInicial = String(req.body?.horaInicial || '').trim();
+    const horaFinal = String(req.body?.horaFinal || '').trim();
+    const diferencaMinutos = Number(req.body?.diferencaMinutos || 0);
+    const diferencaFormatada = String(req.body?.diferencaFormatada || '').trim();
+    const descricao = String(req.body?.descricao || '').trim();
+    const anexoReferencia = String(req.body?.anexoReferencia || '').trim();
+    const nomeArquivo = String(req.body?.nomeArquivo || '').trim();
+    const caminhoArquivo = String(req.body?.caminhoArquivo || '').trim();
+    const mimeArquivo = String(req.body?.mimeArquivo || '').trim();
+    const tamanhoArquivo = Number(req.body?.tamanhoArquivo || 0);
+    const criadoPor = String(req.body?.criadoPor || '').trim();
+
+    if (!funcionarioId) {
+      return res.status(400).json({ success: false, message: 'Funcionário não informado.' });
+    }
+
+    if (!funcionarioNome) {
+      return res.status(400).json({ success: false, message: 'Nome do funcionário não informado.' });
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataReferencia)) {
+      return res.status(400).json({ success: false, message: 'Data de referência inválida. Use o formato YYYY-MM-DD.' });
+    }
+
+    if (!tipoJustificativa) {
+      return res.status(400).json({ success: false, message: 'Tipo de justificativa não informado.' });
+    }
+
+    if (!['DIA_TODO', 'PERIODO'].includes(tipoPeriodo)) {
+      return res.status(400).json({ success: false, message: 'Tipo de período inválido.' });
+    }
+
+    if (tipoPeriodo === 'PERIODO') {
+      if (!/^\d{2}:\d{2}$/.test(horaInicial) || !/^\d{2}:\d{2}$/.test(horaFinal)) {
+        return res.status(400).json({ success: false, message: 'Informe hora inicial e final válidas no formato HH:mm.' });
+      }
+    }
+
+    if (!descricao) {
+      return res.status(400).json({ success: false, message: 'Descrição da justificativa não informada.' });
+    }
+
+    const [result] = await pool.query(`
+      INSERT INTO SF_SOLICITACOES_JUSTIFICATIVAS_PONTO (
+        funcionario_id,
+        funcionario_nome,
+        data_referencia,
+        tipo_justificativa,
+        tipo_periodo,
+        dia_todo,
+        hora_inicial,
+        hora_final,
+        diferenca_minutos,
+        diferenca_formatada,
+        descricao,
+        anexo_referencia,
+        nome_arquivo,
+        caminho_arquivo,
+        mime_arquivo,
+        tamanho_arquivo,
+        status_gestor,
+        status_rh,
+        criado_por,
+        criado_em,
+        atualizado_em
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDENTE', 'PENDENTE', ?, NOW(), NOW())
+    `, [
+      funcionarioId,
+      funcionarioNome,
+      dataReferencia,
+      tipoJustificativa,
+      tipoPeriodo,
+      dia_todo === 'S' ? 'S' : 'N',
+      tipoPeriodo === 'PERIODO' ? horaInicial : null,
+      tipoPeriodo === 'PERIODO' ? horaFinal : null,
+      Number.isFinite(diferencaMinutos) ? diferencaMinutos : 0,
+      diferencaFormatada || null,
+      descricao,
+      anexoReferencia || null,
+      nomeArquivo || null,
+      caminhoArquivo || null,
+      mimeArquivo || null,
+      Number.isFinite(tamanhoArquivo) ? tamanhoArquivo : null,
+      criadoPor || null
+    ]);
+
+    return res.json({
+      success: true,
+      id: result?.insertId || null,
+      message: 'Justificativa cadastrada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao cadastrar justificativa de ponto:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao cadastrar justificativa de ponto.',
+      error: err.message
+    });
+  }
+});
+
+app.patch('/api/solicitacoes/justificativas-ponto/:id/status', async (req, res) => {
+  try {
+    const id = Number(req.params.id || 0);
+    const perfil = String(req.body?.perfil || '').trim().toUpperCase();
+    const status = String(req.body?.status || '').trim().toUpperCase();
+    const observacao = String(req.body?.observacao || '').trim();
+    const usuario = String(req.body?.usuario || '').trim();
+
+    if (!id || Number.isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID da justificativa inválido.'
+      });
+    }
+
+    if (!['GESTOR', 'RH'].includes(perfil)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Perfil inválido. Use GESTOR ou RH.'
+      });
+    }
+
+    if (!['PENDENTE', 'EM_ANALISE', 'APROVADO', 'REJEITADO'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status inválido.'
+      });
+    }
+
+    let query = '';
+    let params = [];
+
+    if (perfil === 'GESTOR') {
+      query = `
+        UPDATE SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+        SET
+          status_gestor = ?,
+          observacao_gestor = ?,
+          gestor_usuario = ?,
+          gestor_data = NOW(),
+          atualizado_em = NOW()
+        WHERE id = ?
+      `;
+      params = [status, observacao || null, usuario || null, id];
+    } else {
+      query = `
+        UPDATE SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+        SET
+          status_rh = ?,
+          observacao_rh = ?,
+          rh_usuario = ?,
+          rh_data = NOW(),
+          atualizado_em = NOW()
+        WHERE id = ?
+      `;
+      params = [status, observacao || null, usuario || null, id];
+    }
+
+    const [result] = await pool.query(query, params);
+
+    if (!result?.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Justificativa não encontrada.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Status da justificativa atualizado com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao atualizar status da justificativa:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar status da justificativa.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/solicitacoes/justificativas-ponto/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id || 0);
+
+    if (!id || Number.isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        id,
+        funcionario_id AS funcionarioId,
+        funcionario_nome AS funcionarioNome,
+        DATE_FORMAT(data_referencia, '%Y-%m-%d') AS dataReferencia,
+        tipo_justificativa AS tipoJustificativa,
+        tipo_periodo AS tipoPeriodo,
+        dia_todo AS dia_todo,
+        TIME_FORMAT(hora_inicial, '%H:%i') AS horaInicial,
+        TIME_FORMAT(hora_final, '%H:%i') AS horaFinal,
+        diferenca_minutos AS diferencaMinutos,
+        diferenca_formatada AS diferencaFormatada,
+        descricao,
+        anexo_referencia AS anexoReferencia,
+        nome_arquivo AS nomeArquivo,
+        caminho_arquivo AS caminhoArquivo,
+        mime_arquivo AS mimeArquivo,
+        tamanho_arquivo AS tamanhoArquivo,
+        status_gestor AS statusGestor,
+        observacao_gestor AS observacaoGestor,
+        gestor_usuario AS gestorUsuario,
+        gestor_data AS gestorData,
+        status_rh AS statusRh,
+        observacao_rh AS observacaoRh,
+        rh_usuario AS rhUsuario,
+        rh_data AS rhData,
+        criado_por AS criadoPor,
+        criado_em AS criadoEm,
+        atualizado_em AS atualizadoEm
+      FROM SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+      WHERE id = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Justificativa não encontrada.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: rows[0]
+    });
+  } catch (err) {
+    console.error('Erro ao buscar justificativa por ID:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar justificativa.',
+      error: err.message
+    });
+  }
+});
+
+app.put('/api/solicitacoes/justificativas-ponto/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id || 0);
+
+    const funcionarioId = String(req.body?.funcionarioId || '').trim();
+    const funcionarioNome = String(req.body?.funcionarioNome || '').trim();
+    const dataReferencia = String(req.body?.dataReferencia || '').trim();
+    const tipoJustificativa = String(req.body?.tipoJustificativa || '').trim().toUpperCase();
+    const tipoPeriodo = String(req.body?.tipoPeriodo || 'DIA_TODO').trim().toUpperCase();
+    const dia_todo = String(req.body?.dia_todo || (tipoPeriodo === 'DIA_TODO' ? 'S' : 'N')).trim().toUpperCase();
+    const horaInicial = String(req.body?.horaInicial || '').trim();
+    const horaFinal = String(req.body?.horaFinal || '').trim();
+    const diferencaMinutos = Number(req.body?.diferencaMinutos || 0);
+    const diferencaFormatada = String(req.body?.diferencaFormatada || '').trim();
+    const descricao = String(req.body?.descricao || '').trim();
+    const anexoReferencia = String(req.body?.anexoReferencia || '').trim();
+    const nomeArquivo = String(req.body?.nomeArquivo || '').trim();
+    const caminhoArquivo = String(req.body?.caminhoArquivo || '').trim();
+    const mimeArquivo = String(req.body?.mimeArquivo || '').trim();
+    const tamanhoArquivo = Number(req.body?.tamanhoArquivo || 0);
+    const removerAnexo = String(req.body?.removerAnexo || 'N').trim().toUpperCase() === 'S';
+
+    if (!id || Number.isNaN(id)) {
+      return res.status(400).json({ success: false, message: 'ID da justificativa inválido.' });
+    }
+
+    if (!funcionarioId) {
+      return res.status(400).json({ success: false, message: 'Funcionário não informado.' });
+    }
+
+    if (!funcionarioNome) {
+      return res.status(400).json({ success: false, message: 'Nome do funcionário não informado.' });
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataReferencia)) {
+      return res.status(400).json({ success: false, message: 'Data de referência inválida. Use o formato YYYY-MM-DD.' });
+    }
+
+    if (!tipoJustificativa) {
+      return res.status(400).json({ success: false, message: 'Tipo de justificativa não informado.' });
+    }
+
+    if (!['DIA_TODO', 'PERIODO'].includes(tipoPeriodo)) {
+      return res.status(400).json({ success: false, message: 'Tipo de período inválido.' });
+    }
+
+    if (tipoPeriodo === 'PERIODO') {
+      if (!/^\d{2}:\d{2}$/.test(horaInicial) || !/^\d{2}:\d{2}$/.test(horaFinal)) {
+        return res.status(400).json({ success: false, message: 'Informe hora inicial e final válidas no formato HH:mm.' });
+      }
+    }
+
+    if (!descricao) {
+      return res.status(400).json({ success: false, message: 'Descrição da justificativa não informada.' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT id, caminho_arquivo AS caminhoArquivo
+      FROM SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+      WHERE id = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!Array.isArray(rows) || !rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Justificativa não encontrada.'
+      });
+    }
+
+    const itemAtual = rows[0];
+    const caminhoArquivoAtual = String(itemAtual?.caminhoArquivo || '').trim();
+
+    const anexoReferenciaFinal = removerAnexo ? null : (anexoReferencia || null);
+    const nomeArquivoFinal = removerAnexo ? null : (nomeArquivo || null);
+    const caminhoArquivoFinal = removerAnexo ? null : (caminhoArquivo || null);
+    const mimeArquivoFinal = removerAnexo ? null : (mimeArquivo || null);
+    const tamanhoArquivoFinal = removerAnexo
+      ? null
+      : (Number.isFinite(tamanhoArquivo) && tamanhoArquivo > 0 ? tamanhoArquivo : null);
+
+    const [result] = await pool.query(`
+      UPDATE SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+      SET
+        funcionario_id = ?,
+        funcionario_nome = ?,
+        data_referencia = ?,
+        tipo_justificativa = ?,
+        tipo_periodo = ?,
+        dia_todo = ?,
+        hora_inicial = ?,
+        hora_final = ?,
+        diferenca_minutos = ?,
+        diferenca_formatada = ?,
+        descricao = ?,
+        anexo_referencia = ?,
+        nome_arquivo = ?,
+        caminho_arquivo = ?,
+        mime_arquivo = ?,
+        tamanho_arquivo = ?,
+        atualizado_em = NOW()
+      WHERE id = ?
+    `, [
+      funcionarioId,
+      funcionarioNome,
+      dataReferencia,
+      tipoJustificativa,
+      tipoPeriodo,
+      dia_todo === 'S' ? 'S' : 'N',
+      tipoPeriodo === 'PERIODO' ? horaInicial : null,
+      tipoPeriodo === 'PERIODO' ? horaFinal : null,
+      Number.isFinite(diferencaMinutos) ? diferencaMinutos : 0,
+      diferencaFormatada || null,
+      descricao,
+      anexoReferenciaFinal,
+      nomeArquivoFinal,
+      caminhoArquivoFinal,
+      mimeArquivoFinal,
+      tamanhoArquivoFinal,
+      id
+    ]);
+
+    if (!result?.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Justificativa não encontrada.'
+      });
+    }
+
+    const houveRemocao = removerAnexo && !!caminhoArquivoAtual;
+    const houveSubstituicao =
+      !!caminhoArquivoAtual &&
+      !!caminhoArquivoFinal &&
+      caminhoArquivoAtual !== caminhoArquivoFinal;
+
+    if (houveRemocao || houveSubstituicao) {
+      try {
+        const nomeArquivoFisico = path.basename(String(caminhoArquivoAtual || ''));
+        const caminhoFisico = path.join(PASTA_JUSTIFICATIVAS, nomeArquivoFisico);
+
+        if (fs.existsSync(caminhoFisico)) {
+          fs.unlinkSync(caminhoFisico);
+        }
+      } catch (erroArquivo) {
+        console.error('Erro ao excluir arquivo antigo da justificativa:', erroArquivo);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Justificativa atualizada com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao editar justificativa de ponto:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao editar justificativa de ponto.',
+      error: err.message
+    });
+  }
+});
+
+app.delete('/api/solicitacoes/justificativas-ponto/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id || 0);
+
+    if (!id || Number.isNaN(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID da justificativa inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT id, caminho_arquivo
+      FROM SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+      WHERE id = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!Array.isArray(rows) || !rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Justificativa não encontrada.'
+      });
+    }
+
+    const item = rows[0];
+
+    const [result] = await pool.query(`
+      DELETE FROM SF_SOLICITACOES_JUSTIFICATIVAS_PONTO
+      WHERE id = ?
+    `, [id]);
+
+    if (!result?.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Justificativa não encontrada.'
+      });
+    }
+
+    if (item?.caminho_arquivo) {
+      try {
+        const nomeArquivo = path.basename(String(item.caminho_arquivo || ''));
+        const caminhoFisico = path.join(PASTA_JUSTIFICATIVAS, nomeArquivo);
+
+        if (fs.existsSync(caminhoFisico)) {
+          fs.unlinkSync(caminhoFisico);
+        }
+      } catch (erroArquivo) {
+        console.error('Erro ao excluir arquivo anexo da justificativa:', erroArquivo);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Justificativa excluída com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao excluir justificativa de ponto:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir justificativa de ponto.',
+      error: err.message
+    });
+  }
+});
+
+const storageJustificativas = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, PASTA_JUSTIFICATIVAS),
+  filename: (req, file, cb) => {
+    const original = apenasNomeArquivoSeguro(file.originalname || 'arquivo');
+    const ext = path.extname(original);
+    const nomeBase = path.basename(original, ext).slice(0, 80);
+    const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    cb(null, `${nomeBase}-${unico}${ext}`);
+  }
+});
+
+const uploadJustificativaPonto = multer({
+  storage: storageJustificativas,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+app.post('/api/solicitacoes/justificativas-ponto/upload', uploadJustificativaPonto.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Arquivo não enviado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: {
+        anexoReferencia: req.file.originalname,
+        nomeArquivo: req.file.filename,
+        caminhoArquivo: `/anexos/justificativas-ponto/${encodeURIComponent(req.file.filename)}`,
+        mimeArquivo: req.file.mimetype,
+        tamanhoArquivo: req.file.size
+      }
+    });
+  } catch (err) {
+    console.error('Erro ao enviar anexo da justificativa:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao enviar anexo.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/debug/justificativa-arquivo', (req, res) => {
+  const arquivo = String(req.query.arquivo || '').trim();
+  const caminhoFisico = path.join(PASTA_JUSTIFICATIVAS, path.basename(arquivo));
+
+  return res.json({
+    success: true,
+    pastaUploadsJustificativas: PASTA_JUSTIFICATIVAS,
+    arquivo,
+    caminhoFisico,
+    existe: fs.existsSync(caminhoFisico)
+  });
+});
+
+app.get('/api/debug/justificativas-arquivos', async (req, res) => {
+  try {
+    if (!fs.existsSync(PASTA_JUSTIFICATIVAS)) {
+      return res.json({
+        success: true,
+        pastaUploadsJustificativas: PASTA_JUSTIFICATIVAS,
+        existePasta: false,
+        total: 0,
+        arquivos: []
+      });
+    }
+
+    const nomes = fs.readdirSync(PASTA_JUSTIFICATIVAS);
+
+    const arquivos = nomes.map(nome => {
+      const caminho = path.join(PASTA_JUSTIFICATIVAS, nome);
+      const stat = fs.statSync(caminho);
+
+      return {
+        nome,
+        tamanho: stat.size,
+        criadoEm: stat.birthtime,
+        atualizadoEm: stat.mtime,
+        url: `/anexos/justificativas-ponto/${encodeURIComponent(nome)}`
+      };
+    });
+
+    arquivos.sort((a, b) => new Date(b.atualizadoEm) - new Date(a.atualizadoEm));
+
+    return res.json({
+      success: true,
+      pastaUploadsJustificativas: PASTA_JUSTIFICATIVAS,
+      existePasta: true,
+      total: arquivos.length,
+      arquivos
+    });
+  } catch (err) {
+    console.error('Erro ao listar arquivos de justificativas:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar arquivos.',
+      error: err.message
+    });
+  }
+});
 
 // =====================
 // Inicia servidor (sempre por último)
