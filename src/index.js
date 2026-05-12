@@ -7934,7 +7934,15 @@ app.get('/api/perfis', async (req, res) => {
         estoque_transferir,
         estoque_receber,
         perfil_acesso,
-        monitor_ping
+        monitor_ping,
+        fiscal,
+        dfe_certificado,
+        recursos_humanos,
+        cadastro_calendario,
+        jornada,
+        vinculo_jornada,
+        solicitacoes,
+        cadastro_equipamento
       FROM SF_PERFIL
       ORDER BY nome ASC
     `);
@@ -7997,7 +8005,15 @@ app.get('/api/perfis/:id', async (req, res) => {
         estoque_transferir,
         estoque_receber,
         perfil_acesso,
-        monitor_ping
+        monitor_ping,
+        fiscal,
+        dfe_certificado,
+        recursos_humanos,
+        cadastro_calendario,
+        jornada,
+        vinculo_jornada,
+        solicitacoes,
+        cadastro_equipamento
       FROM SF_PERFIL
       WHERE id = ?
       LIMIT 1
@@ -8075,7 +8091,15 @@ app.post('/api/perfis', async (req, res) => {
       estoque_transferir: bit(req.body?.estoque_transferir),
       estoque_receber: bit(req.body?.estoque_receber),
       perfil_acesso: bit(req.body?.perfil_acesso),
-      monitor_ping: bit(req.body?.monitor_ping)
+      monitor_ping: bit(req.body?.monitor_ping),
+      fiscal: bit(req.body?.fiscal),
+      dfe_certificado: bit(req.body?.dfe_certificado),
+      recursos_humanos: bit(req.body?.recursos_humanos),
+      cadastro_calendario: bit(req.body?.cadastro_calendario),
+      jornada: bit(req.body?.jornada),
+      vinculo_jornada: bit(req.body?.vinculo_jornada),
+      solicitacoes: bit(req.body?.solicitacoes),
+      cadastro_equipamento: bit(req.body?.cadastro_equipamento)
     };
 
     const [result] = await conn.query(`
@@ -8112,8 +8136,16 @@ app.post('/api/perfis', async (req, res) => {
         estoque_transferir,
         estoque_receber,
         perfil_acesso,
-        monitor_ping
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        monitor_ping,
+        fiscal,
+        dfe_certificado,
+        recursos_humanos,
+        cadastro_calendario,
+        jornada,
+        vinculo_jornada,
+        solicitacoes,
+        cadastro_equipamento
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payloadDepois.nome,
       payloadDepois.pedidos,
@@ -8147,7 +8179,15 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.estoque_transferir,
       payloadDepois.estoque_receber,
       payloadDepois.perfil_acesso,
-      payloadDepois.monitor_ping
+      payloadDepois.monitor_ping,
+      payloadDepois.fiscal,
+      payloadDepois.dfe_certificado,
+      payloadDepois.recursos_humanos,
+      payloadDepois.cadastro_calendario,
+      payloadDepois.jornada,
+      payloadDepois.vinculo_jornada,
+      payloadDepois.solicitacoes,
+      payloadDepois.cadastro_equipamento
     ]);
 
     const idPerfil = Number(result?.insertId || 0);
@@ -8169,9 +8209,7 @@ app.post('/api/perfis', async (req, res) => {
       'CRIACAO',
       usuarioId,
       usuarioNome,
-      JSON.stringify({
-        depois: payloadDepois
-      })
+      JSON.stringify({ depois: payloadDepois })
     ]);
 
     await conn.commit();
@@ -8271,7 +8309,15 @@ app.put('/api/perfis/:id', async (req, res) => {
       estoque_transferir: bit(req.body?.estoque_transferir),
       estoque_receber: bit(req.body?.estoque_receber),
       perfil_acesso: bit(req.body?.perfil_acesso),
-      monitor_ping: bit(req.body?.monitor_ping)
+      monitor_ping: bit(req.body?.monitor_ping),
+      fiscal: bit(req.body?.fiscal),
+      dfe_certificado: bit(req.body?.dfe_certificado),
+      recursos_humanos: bit(req.body?.recursos_humanos),
+      cadastro_calendario: bit(req.body?.cadastro_calendario),
+      jornada: bit(req.body?.jornada),
+      vinculo_jornada: bit(req.body?.vinculo_jornada),
+      solicitacoes: bit(req.body?.solicitacoes),
+      cadastro_equipamento: bit(req.body?.cadastro_equipamento)
     };
 
     const [result] = await conn.query(`
@@ -8308,7 +8354,15 @@ app.put('/api/perfis/:id', async (req, res) => {
         estoque_transferir = ?,
         estoque_receber = ?,
         perfil_acesso = ?,
-        monitor_ping = ?
+        monitor_ping = ?,
+        fiscal = ?,
+        dfe_certificado = ?,
+        recursos_humanos = ?,
+        cadastro_calendario = ?,
+        jornada = ?,
+        vinculo_jornada = ?,
+        solicitacoes = ?,
+        cadastro_equipamento = ?
       WHERE id = ?
     `, [
       depois.nome,
@@ -8344,6 +8398,14 @@ app.put('/api/perfis/:id', async (req, res) => {
       depois.estoque_receber,
       depois.perfil_acesso,
       depois.monitor_ping,
+      depois.fiscal,
+      depois.dfe_certificado,
+      depois.recursos_humanos,
+      depois.cadastro_calendario,
+      depois.jornada,
+      depois.vinculo_jornada,
+      depois.solicitacoes,
+      depois.cadastro_equipamento,
       id
     ]);
 
