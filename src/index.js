@@ -1351,7 +1351,7 @@ app.get('/api/gestao-usuarios/cpf/:cpf', async (req, res) => {
         TEMFILHOS AS temfilhos,
         QUANTIDADEFILHOS AS quantidadefilhos,
         FILHOS AS filhos
-      FROM SF_USUARIOS
+      FROM SF_USUARIO
       WHERE REPLACE(REPLACE(REPLACE(CPF, '.', ''), '-', ''), ' ', '') = ?
       LIMIT 1
     `, [cpf]);
