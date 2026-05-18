@@ -2927,6 +2927,28 @@ app.post('/api/marketing/cards', upload.single('file'), async (req, res) => {
     const recorrencia = String(req.body?.recorrencia || 'once').trim();
     const apenasUmaVez = String(req.body?.apenasUmaVez || '0') === '1' ? 1 : 0;
     const ordem = Number(req.body?.ordem || 0) || 0;
+    const diaExibicao = req.body?.diaExibicao ? Number(req.body.diaExibicao) : null;
+    const mesExibicao = req.body?.mesExibicao ? Number(req.body.mesExibicao) : null;
+
+    if (recorrencia === 'once') {
+      if (!dataInicio || !dataFim) {
+        return res.status(400).json({ success: false, message: 'Informe data inicial e data final.' });
+      }
+    }
+
+    if (recorrencia === 'daily' && (!diaExibicao || diaExibicao < 1 || diaExibicao > 31)) {
+      return res.status(400).json({ success: false, message: 'Dia de exibição inválido.' });
+    }
+
+    if (recorrencia === 'monthly' && (!mesExibicao || mesExibicao < 1 || mesExibicao > 12)) {
+      return res.status(400).json({ success: false, message: 'Mês de exibição inválido.' });
+    }
+
+    if (recorrencia === 'yearly') {
+      if (!diaExibicao || diaExibicao < 1 || diaExibicao > 31 || !mesExibicao || mesExibicao < 1 || mesExibicao > 12) {
+        return res.status(400).json({ success: false, message: 'Dia ou mês de exibição inválido.' });
+      }
+    }
 
     const url = `/anexos/marketing/${encodeURIComponent(req.file.filename)}`;
 
@@ -2934,8 +2956,8 @@ app.post('/api/marketing/cards', upload.single('file'), async (req, res) => {
       INSERT INTO SF_MARKETING_IMAGEM (
         NOME_ARQUIVO, URL, TITULO, DESCRICAO, CARD,
         ATIVO, EXIBIR_NO_PAINEL, DATA_INICIO, DATA_FIM,
-        RECORRENCIA, APENAS_UMA_VEZ, ORDEM
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        RECORRENCIA, APENAS_UMA_VEZ, ORDEM, DIA_EXIBICAO, MES_EXIBICAO
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       req.file.filename,
       url,
@@ -2948,7 +2970,9 @@ app.post('/api/marketing/cards', upload.single('file'), async (req, res) => {
       dataFim,
       recorrencia,
       apenasUmaVez,
-      ordem
+      ordem,
+      diaExibicao,
+      mesExibicao
     ]);
 
     return res.status(201).json({
@@ -2985,7 +3009,9 @@ app.get('/api/marketing/painel', async (req, res) => {
         RECORRENCIA,
         APENAS_UMA_VEZ AS APENASUMAVEZ,
         ULTIMA_EXIBICAO_EM AS ULTIMAEXIBICAOEM,
-        ORDEM
+        ORDEM,
+        DIA_EXIBICAO AS DIAEXIBICAO,
+        MES_EXIBICAO AS MESEXIBICAO
       FROM SF_MARKETING_IMAGEM
       WHERE ATIVO = 1
         AND EXIBIR_NO_PAINEL = 1
@@ -2994,51 +3020,47 @@ app.get('/api/marketing/painel', async (req, res) => {
 
     const hoje = new Date();
     const yyyy = hoje.getFullYear();
-    const mm = String(hoje.getMonth() + 1).padStart(2, '0');
-    const dd = String(hoje.getDate()).padStart(2, '0');
-    const hojeStr = `${yyyy}-${mm}-${dd}`;
+    const mm = hoje.getMonth() + 1;
+    const dd = hoje.getDate();
+
+    const hojeStr = `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 
     const ativos = rows.filter(item => {
-    const inicio = toDateOnly(item.DATAINICIO);
-    const fim = toDateOnly(item.DATAFIM);
-    const rec = String(item.RECORRENCIA || 'once').toLowerCase().trim();
-    const apenasUmaVez = Number(item.APENASUMAVEZ || 0) === 1;
-    const jaExibido = !!item.ULTIMAEXIBICAOEM;
+      const inicio = toDateOnly(item.DATAINICIO);
+      const fim = toDateOnly(item.DATAFIM);
+      const rec = String(item.RECORRENCIA || 'once').toLowerCase().trim();
+      const apenasUmaVez = Number(item.APENASUMAVEZ || 0) === 1;
+      const jaExibido = !!item.ULTIMAEXIBICAOEM;
+      const diaExibicao = Number(item.DIAEXIBICAO || 0);
+      const mesExibicao = Number(item.MESEXIBICAO || 0);
 
+      if (rec === 'once') {
+        if (!inicio || !fim) return false;
+        if (hojeStr < inicio) return false;
+        if (hojeStr > fim) return false;
+        return !apenasUmaVez || !jaExibido;
+      }
 
-    if (inicio && hojeStr < inicio) return false;
-    if (fim && hojeStr > fim) return false;
+      if (rec === 'daily') {
+        if (!diaExibicao) return false;
+        if (dd !== diaExibicao) return false;
+        return !apenasUmaVez || !jaExibido;
+      }
 
-    if (rec === 'always') return true;
+      if (rec === 'monthly') {
+        if (!mesExibicao) return false;
+        if (mm !== mesExibicao) return false;
+        return !apenasUmaVez || !jaExibido;
+      }
 
-    if (rec === 'daily') {
-      return !apenasUmaVez || !jaExibido;
-    }
+      if (rec === 'yearly') {
+        if (!diaExibicao || !mesExibicao) return false;
+        if (dd !== diaExibicao || mm !== mesExibicao) return false;
+        return !apenasUmaVez || !jaExibido;
+      }
 
-    if (rec === 'once') {
-      if (!inicio) return true;
-      if (hojeStr !== inicio) return false;
-      return !apenasUmaVez || !jaExibido;
-    }
-
-    if (rec === 'monthly') {
-      if (!inicio) return false;
-      const [, , diaI] = inicio.split('-').map(Number);
-      if (Number(dd) !== diaI) return false;
-      return !apenasUmaVez || !jaExibido;
-    }
-
-    if (rec === 'yearly') {
-      if (!inicio) return false;
-      const [, mesI, diaI] = inicio.split('-').map(Number);
-      if (Number(dd) !== diaI || Number(mm) !== mesI) return false;
-      return !apenasUmaVez || !jaExibido;
-    }
-
-    return false;
-  });
-
-
+      return false;
+    });
 
     return res.json({
       success: true,
@@ -3104,7 +3126,9 @@ app.get('/api/marketing/cards', async (req, res) => {
         RECORRENCIA,
         APENAS_UMA_VEZ AS APENASUMAVEZ,
         ORDEM,
-        ULTIMA_EXIBICAO_EM
+        ULTIMA_EXIBICAO_EM,
+        DIA_EXIBICAO AS DIAEXIBICAO,
+        MES_EXIBICAO AS MESEXIBICAO
       FROM SF_MARKETING_IMAGEM
       ORDER BY ORDEM ASC, ID DESC
     `);
@@ -3159,6 +3183,28 @@ app.put('/api/marketing/cards/:id', upload.single('file'), async (req, res) => {
     const recorrencia = String(req.body?.recorrencia || 'once').trim();
     const apenasUmaVez = String(req.body?.apenasUmaVez || '0') === '1' ? 1 : 0;
     const ordem = Number(req.body?.ordem || 0) || 0;
+    const diaExibicao = req.body?.diaExibicao ? Number(req.body.diaExibicao) : null;
+    const mesExibicao = req.body?.mesExibicao ? Number(req.body.mesExibicao) : null;
+
+    if (recorrencia === 'once') {
+      if (!dataInicio || !dataFim) {
+        return res.status(400).json({ success: false, message: 'Informe data inicial e data final.' });
+      }
+    }
+
+    if (recorrencia === 'daily' && (!diaExibicao || diaExibicao < 1 || diaExibicao > 31)) {
+      return res.status(400).json({ success: false, message: 'Dia de exibição inválido.' });
+    }
+
+    if (recorrencia === 'monthly' && (!mesExibicao || mesExibicao < 1 || mesExibicao > 12)) {
+      return res.status(400).json({ success: false, message: 'Mês de exibição inválido.' });
+    }
+
+    if (recorrencia === 'yearly') {
+      if (!diaExibicao || diaExibicao < 1 || diaExibicao > 31 || !mesExibicao || mesExibicao < 1 || mesExibicao > 12) {
+        return res.status(400).json({ success: false, message: 'Dia ou mês de exibição inválido.' });
+      }
+    }
 
     let nomeArquivo = atual.NOME_ARQUIVO;
     let url = atual.URL;
@@ -3182,7 +3228,9 @@ app.put('/api/marketing/cards/:id', upload.single('file'), async (req, res) => {
         DATA_FIM = ?,
         RECORRENCIA = ?,
         APENAS_UMA_VEZ = ?,
-        ORDEM = ?
+        ORDEM = ?,
+        DIA_EXIBICAO = ?,
+        MES_EXIBICAO = ?
       WHERE ID = ?
     `, [
       nomeArquivo,
@@ -3197,6 +3245,8 @@ app.put('/api/marketing/cards/:id', upload.single('file'), async (req, res) => {
       recorrencia,
       apenasUmaVez,
       ordem,
+      diaExibicao,
+      mesExibicao,
       id
     ]);
 
