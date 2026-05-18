@@ -13641,14 +13641,14 @@ app.delete('/api/organograma-setores/:id', async (req, res) => {
 });
 
 
-// =========================
-// VÍNCULOS DE USUÁRIOS AO SETOR DO ORGANOGRAMA
-// =========================
-
 function normalizarPrecisaAprocavao(value) {
   const v = String(value ?? '').trim().toLowerCase();
   return v === 'sim' ? 'sim' : 'nao';
 }
+
+// =========================
+// VÍNCULOS DE USUÁRIOS AO SETOR DO ORGANOGRAMA
+// =========================
 
 // Listar vínculos de usuários x setores do organograma
 app.get('/api/organograma-usuarios-vinculos', async (req, res) => {
@@ -13662,6 +13662,9 @@ app.get('/api/organograma-usuarios-vinculos', async (req, res) => {
         vus.ID_SETOR_ORGANOGRAMA,
         s.NOME AS NOME_SETOR,
         vus.PRECISA_APROCAVAO,
+        vus.PODE_VER_PONTO_TODOS,
+        vus.PODE_VER_TODOS_PONTOS_UNIDADE,
+        vus.PODE_VER_TODOS_PONTOS_FILHOS,
         vus.STATUS,
         vus.CRIADO_EM,
         vus.ATUALIZADO_EM
@@ -13706,6 +13709,9 @@ app.get('/api/organograma-usuarios-vinculos/:id', async (req, res) => {
         vus.ID_SETOR_ORGANOGRAMA,
         s.NOME AS NOME_SETOR,
         vus.PRECISA_APROCAVAO,
+        vus.PODE_VER_PONTO_TODOS,
+        vus.PODE_VER_TODOS_PONTOS_UNIDADE,
+        vus.PODE_VER_TODOS_PONTOS_FILHOS,
         vus.STATUS,
         vus.CRIADO_EM,
         vus.ATUALIZADO_EM
@@ -13761,6 +13767,24 @@ app.post('/api/organograma-usuarios-vinculos', async (req, res) => {
       req.body?.precisaaprovacao
     );
 
+    const podeverpontotodos = normalizarPrecisaAprocavao(
+      req.body?.pode_ver_ponto_todos ??
+      req.body?.podeVerPontoTodos ??
+      req.body?.podeverpontotodos
+    );
+
+    const podevertodospontosunidade = normalizarPrecisaAprocavao(
+      req.body?.pode_ver_todos_pontos_unidade ??
+      req.body?.podeVerTodosPontosUnidade ??
+      req.body?.podevertodospontosunidade
+    );
+
+    const podevertodospontosfilhos = normalizarPrecisaAprocavao(
+      req.body?.pode_ver_todos_pontos_filhos ??
+      req.body?.podeVerTodosPontosFilhos ??
+      req.body?.podevertodospontosfilhos
+    );
+
     const status = Number(req.body?.status ?? 1) ? 1 : 0;
 
     if (!idUsuario || !idSetorOrganograma) {
@@ -13811,9 +13835,25 @@ app.post('/api/organograma-usuarios-vinculos', async (req, res) => {
 
     const [result] = await pool.query(`
       INSERT INTO SF_ORGANOGRAMA_USUARIO_SETOR
-      (ID_USUARIO, ID_SETOR_ORGANOGRAMA, PRECISA_APROCAVAO, STATUS)
-      VALUES (?, ?, ?, ?)
-    `, [idUsuario, idSetorOrganograma, precisaaprocavao, status]);
+      (
+        ID_USUARIO,
+        ID_SETOR_ORGANOGRAMA,
+        PRECISA_APROCAVAO,
+        PODE_VER_PONTO_TODOS,
+        PODE_VER_TODOS_PONTOS_UNIDADE,
+        PODE_VER_TODOS_PONTOS_FILHOS,
+        STATUS
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      idUsuario,
+      idSetorOrganograma,
+      precisaaprocavao,
+      podeverpontotodos,
+      podevertodospontosunidade,
+      podevertodospontosfilhos,
+      status
+    ]);
 
     const [itemRows] = await pool.query(`
       SELECT
@@ -13824,6 +13864,9 @@ app.post('/api/organograma-usuarios-vinculos', async (req, res) => {
         vus.ID_SETOR_ORGANOGRAMA,
         s.NOME AS NOME_SETOR,
         vus.PRECISA_APROCAVAO,
+        vus.PODE_VER_PONTO_TODOS,
+        vus.PODE_VER_TODOS_PONTOS_UNIDADE,
+        vus.PODE_VER_TODOS_PONTOS_FILHOS,
         vus.STATUS,
         vus.CRIADO_EM,
         vus.ATUALIZADO_EM
@@ -13880,6 +13923,24 @@ app.put('/api/organograma-usuarios-vinculos/:id', async (req, res) => {
       req.body?.precisa_aprovacao ??
       req.body?.precisaAprovacao ??
       req.body?.precisaaprovacao
+    );
+
+    const podeverpontotodos = normalizarPrecisaAprocavao(
+      req.body?.pode_ver_ponto_todos ??
+      req.body?.podeVerPontoTodos ??
+      req.body?.podeverpontotodos
+    );
+
+    const podevertodospontosunidade = normalizarPrecisaAprocavao(
+      req.body?.pode_ver_todos_pontos_unidade ??
+      req.body?.podeVerTodosPontosUnidade ??
+      req.body?.podevertodospontosunidade
+    );
+
+    const podevertodospontosfilhos = normalizarPrecisaAprocavao(
+      req.body?.pode_ver_todos_pontos_filhos ??
+      req.body?.podeVerTodosPontosFilhos ??
+      req.body?.podevertodospontosfilhos
     );
 
     const status = Number(req.body?.status ?? 1) ? 1 : 0;
@@ -13956,9 +14017,21 @@ app.put('/api/organograma-usuarios-vinculos/:id', async (req, res) => {
         ID_USUARIO = ?,
         ID_SETOR_ORGANOGRAMA = ?,
         PRECISA_APROCAVAO = ?,
+        PODE_VER_PONTO_TODOS = ?,
+        PODE_VER_TODOS_PONTOS_UNIDADE = ?,
+        PODE_VER_TODOS_PONTOS_FILHOS = ?,
         STATUS = ?
       WHERE ID = ?
-    `, [idUsuario, idSetorOrganograma, precisaaprocavao, status, id]);
+    `, [
+      idUsuario,
+      idSetorOrganograma,
+      precisaaprocavao,
+      podeverpontotodos,
+      podevertodospontosunidade,
+      podevertodospontosfilhos,
+      status,
+      id
+    ]);
 
     const [itemRows] = await pool.query(`
       SELECT
@@ -13969,6 +14042,9 @@ app.put('/api/organograma-usuarios-vinculos/:id', async (req, res) => {
         vus.ID_SETOR_ORGANOGRAMA,
         s.NOME AS NOME_SETOR,
         vus.PRECISA_APROCAVAO,
+        vus.PODE_VER_PONTO_TODOS,
+        vus.PODE_VER_TODOS_PONTOS_UNIDADE,
+        vus.PODE_VER_TODOS_PONTOS_FILHOS,
         vus.STATUS,
         vus.CRIADO_EM,
         vus.ATUALIZADO_EM
@@ -18568,313 +18644,401 @@ app.delete('/api/jornadas/vinculos/:id', async (req, res) => {
 // Solicitações RH
 
 app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
-  try {
-    const data = String(req.query.data || '').trim();
+  let db;
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+  const somenteNumeros = (valor) => String(valor ?? '').replace(/\D+/g, '').trim();
+  const textoLimpo = (valor) => String(valor ?? '').trim();
+  const paraSqlString = (valor) => `'${String(valor ?? '').replace(/'/g, "''")}'`;
+  const normalizarSimNao = (valor, padrao = 'nao') => {
+    const v = String(valor ?? '').trim().toLowerCase();
+    if (['sim', 's', '1', 'true', 'on'].includes(v)) return 'sim';
+    if (['nao', 'não', 'n', '0', 'false', 'off'].includes(v)) return 'nao';
+    return padrao;
+  };
+  const escapeLike = (valor) =>
+    String(valor ?? '')
+      .replace(/\\/g, '\\\\')
+      .replace(/%/g, '\\%')
+      .replace(/_/g, '\\_')
+      .trim();
+
+  function obterDataIso(valor) {
+    const texto = textoLimpo(valor);
+    if (!texto) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(texto)) return texto;
+    const data = new Date(texto);
+    if (Number.isNaN(data.getTime())) return '';
+    const ano = data.getFullYear();
+    const mes = String(data.getMonth() + 1).padStart(2, '0');
+    const dia = String(data.getDate()).padStart(2, '0');
+    return `${ano}-${mes}-${dia}`;
+  }
+
+  function mapearBatidas(items) {
+    if (!Array.isArray(items)) return [];
+    return items
+      .map((item) => ({
+        id: item?.ID ?? item?.id ?? null,
+        hora: String(item?.HORA ?? item?.hora ?? item?.BATIDA ?? '').trim().slice(0, 5),
+        tipo: String(item?.TIPO ?? item?.tipo ?? '').trim(),
+        origem: String(item?.ORIGEM ?? item?.origem ?? '').trim()
+      }))
+      .filter((item) => item.hora);
+  }
+
+  function montarResumoJornada(vinculo) {
+    if (!vinculo) {
+      return {
+        trabalhaNoDia: false,
+        horarioPrevisto: null,
+        diasSemana: {
+          domingo: false,
+          segunda: false,
+          terca: false,
+          quarta: false,
+          quinta: false,
+          sexta: false,
+          sabado: false
+        }
+      };
+    }
+
+    return {
+      jornadaId: vinculo?.IDJORNADA ?? vinculo?.idjornada ?? null,
+      jornadaDescricao: String(vinculo?.JORNADA ?? vinculo?.jornada ?? 'Não vinculada').trim(),
+      horarioPrevisto: {
+        entrada: String(vinculo?.ENTRADA ?? '').trim().slice(0, 5),
+        saidaIntervalo: String(vinculo?.SAIDAINTERVALO ?? '').trim().slice(0, 5),
+        retornoIntervalo: String(vinculo?.RETORNOINTERVALO ?? '').trim().slice(0, 5),
+        saida: String(vinculo?.SAIDA ?? '').trim().slice(0, 5)
+      },
+      diasSemana: {
+        domingo: String(vinculo?.DOMINGO ?? 'N').trim().toUpperCase() === 'S',
+        segunda: String(vinculo?.SEGUNDA ?? 'N').trim().toUpperCase() === 'S',
+        terca: String(vinculo?.TERCA ?? 'N').trim().toUpperCase() === 'S',
+        quarta: String(vinculo?.QUARTA ?? 'N').trim().toUpperCase() === 'S',
+        quinta: String(vinculo?.QUINTA ?? 'N').trim().toUpperCase() === 'S',
+        sexta: String(vinculo?.SEXTA ?? 'N').trim().toUpperCase() === 'S',
+        sabado: String(vinculo?.SABADO ?? 'N').trim().toUpperCase() === 'S'
+      }
+    };
+  }
+
+  async function consultar(sql) {
+    return new Promise((resolve, reject) => {
+      db.query(sql, (err, result) => {
+        if (err) return reject(err);
+        resolve(Array.isArray(result) ? result : []);
+      });
+    });
+  }
+
+  async function obterUsuarioLogado() {
+    const candidatos = [
+      req.usuario?.id,
+      req.user?.id,
+      req.session?.usuario?.id,
+      req.session?.user?.id,
+      req.headers['x-usuario-id'],
+      req.headers['x-user-id'],
+      req.query?.usuarioLogadoId,
+      req.query?.idusuario
+    ];
+
+    for (const item of candidatos) {
+      const id = somenteNumeros(item);
+      if (id) return id;
+    }
+
+    return '';
+  }
+
+  async function obterVinculoPontoUsuario(usuarioId) {
+    if (!usuarioId) return null;
+
+    const sql = `
+      SELECT FIRST 1
+        OUS.ID,
+        OUS.IDUSUARIO,
+        OUS.IDSETORORGANOGRAMA,
+        OUS.STATUS,
+        OUS.PRECISA_APROCAVAO,
+        OUS.PODE_VER_TODOS_PONTOS_UNIDADE,
+        OUS.PODE_VER_TODOS_PONTOS_FILHOS,
+        SO.DESCRICAO AS SETOR_NOME
+      FROM SF_ORGANOGRAMA_USUARIO_SETOR OUS
+      LEFT JOIN SF_SETOR_ORGANOGRAMA SO
+        ON SO.ID = OUS.IDSETORORGANOGRAMA
+      WHERE OUS.IDUSUARIO = ${usuarioId}
+        AND COALESCE(OUS.STATUS, 1) = 1
+      ORDER BY OUS.ID DESC
+    `;
+
+    const rows = await consultar(sql);
+    return rows[0] || null;
+  }
+
+  async function obterSetoresFilhosRecursivo(setorId, visitados = new Set()) {
+    const id = somenteNumeros(setorId);
+    if (!id || visitados.has(id)) return [];
+
+    visitados.add(id);
+
+    const filhos = await consultar(`
+      SELECT ID
+      FROM SF_SETOR_ORGANOGRAMA
+      WHERE IDSETORPAI = ${id}
+    `);
+
+    let ids = [id];
+
+    for (const filho of filhos) {
+      const filhoId = somenteNumeros(filho?.ID);
+      if (!filhoId) continue;
+      const descendentes = await obterSetoresFilhosRecursivo(filhoId, visitados);
+      ids = ids.concat(descendentes);
+    }
+
+    return [...new Set(ids)];
+  }
+
+  async function obterUsuariosPermitidos(usuarioLogadoId, vinculo) {
+    if (!usuarioLogadoId) return [];
+
+    const podeUnidade =
+      normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_UNIDADE, 'nao') === 'sim';
+    const podeFilhos =
+      normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_FILHOS, 'nao') === 'sim';
+
+    if (!vinculo?.IDSETORORGANOGRAMA || (!podeUnidade && !podeFilhos)) {
+      return [usuarioLogadoId];
+    }
+
+    let setoresIds = [somenteNumeros(vinculo.IDSETORORGANOGRAMA)].filter(Boolean);
+
+    if (podeFilhos) {
+      setoresIds = await obterSetoresFilhosRecursivo(vinculo.IDSETORORGANOGRAMA);
+    }
+
+    if (!setoresIds.length) {
+      return [usuarioLogadoId];
+    }
+
+    const sql = `
+      SELECT DISTINCT OUS.IDUSUARIO
+      FROM SF_ORGANOGRAMA_USUARIO_SETOR OUS
+      WHERE OUS.IDSETORORGANOGRAMA IN (${setoresIds.join(',')})
+        AND COALESCE(OUS.STATUS, 1) = 1
+    `;
+
+    const rows = await consultar(sql);
+    const ids = rows
+      .map((item) => somenteNumeros(item?.IDUSUARIO))
+      .filter(Boolean);
+
+    if (!ids.includes(usuarioLogadoId)) {
+      ids.push(usuarioLogadoId);
+    }
+
+    return [...new Set(ids)];
+  }
+
+  async function obterUsuariosBase(idsUsuarios, filtroBusca) {
+    if (!Array.isArray(idsUsuarios) || !idsUsuarios.length) return [];
+
+    const filtroIds = idsUsuarios.map(somenteNumeros).filter(Boolean);
+    if (!filtroIds.length) return [];
+
+    let whereBusca = '';
+    if (textoLimpo(filtroBusca)) {
+      const busca = escapeLike(textoLimpo(filtroBusca).toUpperCase());
+      whereBusca = `
+        AND (
+          UPPER(COALESCE(U.NOME, '')) LIKE '%${busca}%' ESCAPE '\\'
+          OR UPPER(COALESCE(U.EMAIL, '')) LIKE '%${busca}%' ESCAPE '\\'
+          OR CAST(U.ID AS VARCHAR(20)) LIKE '%${busca}%' ESCAPE '\\'
+        )
+      `;
+    }
+
+    const sql = `
+      SELECT
+        U.ID,
+        U.NOME,
+        U.EMAIL,
+        COALESCE(SO.DESCRICAO, '') AS SETOR,
+        COALESCE(F.DESCRICAO, '') AS FUNCAO,
+        OUS.IDSETORORGANOGRAMA
+      FROM USUARIOS U
+      LEFT JOIN SF_ORGANOGRAMA_USUARIO_SETOR OUS
+        ON OUS.IDUSUARIO = U.ID
+       AND COALESCE(OUS.STATUS, 1) = 1
+      LEFT JOIN SF_SETOR_ORGANOGRAMA SO
+        ON SO.ID = OUS.IDSETORORGANOGRAMA
+      LEFT JOIN FUNCOES F
+        ON F.ID = U.IDFUNCAO
+      WHERE U.ID IN (${filtroIds.join(',')})
+      ${whereBusca}
+      ORDER BY U.NOME
+    `;
+
+    return consultar(sql);
+  }
+
+  async function obterBatidasPorUsuarioNoDia(idsUsuarios, dataIso) {
+    if (!Array.isArray(idsUsuarios) || !idsUsuarios.length || !dataIso) return new Map();
+
+    const sql = `
+      SELECT
+        P.ID,
+        P.IDUSUARIO,
+        P.DATA,
+        P.HORA,
+        P.TIPO,
+        P.ORIGEM
+      FROM PONTO_BATIDAS P
+      WHERE P.IDUSUARIO IN (${idsUsuarios.join(',')})
+        AND CAST(P.DATA AS DATE) = ${paraSqlString(dataIso)}
+      ORDER BY P.IDUSUARIO, P.HORA
+    `;
+
+    const rows = await consultar(sql);
+    const mapa = new Map();
+
+    rows.forEach((item) => {
+      const idUsuario = somenteNumeros(item?.IDUSUARIO);
+      if (!idUsuario) return;
+      if (!mapa.has(idUsuario)) mapa.set(idUsuario, []);
+      mapa.get(idUsuario).push(item);
+    });
+
+    return mapa;
+  }
+
+  async function obterJornadaUsuarios(idsUsuarios, dataIso) {
+    if (!Array.isArray(idsUsuarios) || !idsUsuarios.length) return new Map();
+
+    const sql = `
+      SELECT
+        UJ.IDUSUARIO,
+        UJ.IDJORNADA,
+        J.DESCRICAO AS JORNADA,
+        J.ENTRADA,
+        J.SAIDAINTERVALO,
+        J.RETORNOINTERVALO,
+        J.SAIDA,
+        J.DOMINGO,
+        J.SEGUNDA,
+        J.TERCA,
+        J.QUARTA,
+        J.QUINTA,
+        J.SEXTA,
+        J.SABADO
+      FROM SF_USUARIO_JORNADA UJ
+      LEFT JOIN SF_JORNADAS J
+        ON J.ID = UJ.IDJORNADA
+      WHERE UJ.IDUSUARIO IN (${idsUsuarios.join(',')})
+        AND COALESCE(UJ.STATUS, 1) = 1
+    `;
+
+    const rows = await consultar(sql);
+    const mapa = new Map();
+
+    rows.forEach((item) => {
+      const idUsuario = somenteNumeros(item?.IDUSUARIO);
+      if (!idUsuario || mapa.has(idUsuario)) return;
+      mapa.set(idUsuario, item);
+    });
+
+    return mapa;
+  }
+
+  try {
+    const dataIso = obterDataIso(req.query?.data);
+    if (!dataIso) {
       return res.status(400).json({
         success: false,
-        message: 'Parâmetro data inválido. Use o formato YYYY-MM-DD.'
+        message: 'Informe a data no formato YYYY-MM-DD.'
       });
     }
 
-    const inicioDia = `${data} 00:00:00`;
-    const proximoDia = `${obterProximoDiaIso(data)} 00:00:00`;
+    db = await connectDatabase();
 
-    const normalizarCpf = (valor) =>
-      String(valor || '').replace(/\D/g, '').trim();
+    const usuarioLogadoId = await obterUsuarioLogado();
+    if (!usuarioLogadoId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Usuário logado não identificado.'
+      });
+    }
 
-    const [usuarios] = await pool.query(`
-      SELECT
-        id,
-        nome,
-        EMAIL AS email,
-        telefone,
-        senha,
-        perfil,
-        status,
-        setor,
-        FUNCAO AS funcao,
-        DATA_ADMISSAO AS data_admissao,
-        LOCAL_TRABALHO AS local_trabalho,
-        MUST_CHANGE_PASSWORD AS must_change_password,
-        FOTO AS foto,
-        CPF AS cpf,
-        RG AS rg,
-        CNH AS cnh,
-        CNH_CATEGORIA AS cnh_categoria,
-        DATA_NASCIMENTO AS data_nascimento,
-        ESTADO_CIVIL AS estado_civil,
-        TELEFONE_PESSOAL AS telefone_pessoal,
-        EMAIL_PESSOAL AS email_pessoal,
-        APELIDO AS apelido,
-        NUMERO_CALCADO AS numero_calcado,
-        TAMANHO_CAMISA AS tamanho_camisa,
-        TAMANHO_CALCA AS tamanho_calca,
-        SEXO AS sexo,
-        TEM_FILHOS AS tem_filhos,
-        QUANTIDADE_FILHOS AS quantidade_filhos,
-        FILHOS AS filhos,
-        CENTRO_CUSTO AS centro_custo,
-        CNH_VALIDADE AS cnh_validade,
-        CNH_ARQUIVO AS cnh_arquivo,
-        BATE_PONTO AS bate_ponto,
-        DATA_INICIO_BATE_PONTO AS data_inicio_bate_ponto
-      FROM SF_USUARIO
-      WHERE EMAIL IS NOT NULL
-        AND EMAIL <> ''
-        AND status <> 'Desativado'
-        AND BATE_PONTO = 1
-      ORDER BY nome ASC
-    `);
+    const vinculo = await obterVinculoPontoUsuario(usuarioLogadoId);
+    const idsPermitidos = await obterUsuariosPermitidos(usuarioLogadoId, vinculo);
 
-    const [jornadas] = await pool.query(`
-      SELECT
-        uj.USUARIO_ID,
-        uj.JORNADA_ID,
-        jt.DESCRICAO,
-        jt.HORA_INICIO_EXPEDIENTE,
-        jt.HORA_SAIDA_INTERVALO,
-        jt.HORA_RETORNO_INTERVALO,
-        jt.HORA_FIM_EXPEDIENTE,
-        jt.CARGA_HORARIA,
-        jt.TOLERANCIA_ATRASO_MIN,
-        jt.TOLERANCIA_EXTRA_MIN,
-        jt.TRABALHA_DOMINGO,
-        jt.TRABALHA_SEGUNDA,
-        jt.TRABALHA_TERCA,
-        jt.TRABALHA_QUARTA,
-        jt.TRABALHA_QUINTA,
-        jt.TRABALHA_SEXTA,
-        jt.TRABALHA_SABADO
-      FROM SF_USUARIO_JORNADA uj
-      INNER JOIN SF_JORNADA_TRABALHO jt
-        ON jt.ID = uj.JORNADA_ID
-      WHERE COALESCE(uj.STATUS, 'ATIVO') = 'ATIVO'
-        AND COALESCE(jt.STATUS, 'ATIVO') = 'ATIVO'
-        AND uj.DATA_INICIO <= ?
-        AND (uj.DATA_FIM IS NULL OR uj.DATA_FIM >= ?)
-    `, [data, data]);
+    if (!idsPermitidos.length) {
+      return res.json({
+        success: true,
+        items: []
+      });
+    }
 
-    const [batidas] = await pool.query(`
-      SELECT
-        USUARIO_CODIGO,
-        NOME_USUARIO,
-        MATRICULA,
-        CPF,
-        DATA_HORA,
-        TIPO_BATIDA
-      FROM SF_PONTO_COLETADO
-      WHERE DATA_HORA >= ?
-        AND DATA_HORA < ?
-      ORDER BY NOME_USUARIO ASC, DATA_HORA ASC
-    `, [inicioDia, proximoDia]);
+    const usuariosBase = await obterUsuariosBase(idsPermitidos, req.query?.q);
+    const idsBase = usuariosBase.map((item) => somenteNumeros(item?.ID)).filter(Boolean);
 
-    const [calendarios] = await pool.query(`
-      SELECT
-        ID,
-        PERIODO,
-        OBSERVACAO,
-        HORAINICIO,
-        HORAFIM,
-        TIPOPERIODO,
-        TIPORECORRENCIA,
-        REPETETODOANO,
-        STATUS,
-        DATAINICIAL,
-        DATAFINAL,
-        DATAINICIALTROCA,
-        DATAFINALTROCA,
-        NOVADATAINICIAL,
-        NOVADATAFINAL
-      FROM SF_CALENDARIO
-      WHERE COALESCE(STATUS, 'ATIVO') = 'ATIVO'
-    `);
+    if (!idsBase.length) {
+      return res.json({
+        success: true,
+        items: []
+      });
+    }
 
-    const feriadoInfo = verificarSeDataEhFeriadoBackend(data, calendarios);
+    const [mapaBatidas, mapaJornadas] = await Promise.all([
+      obterBatidasPorUsuarioNoDia(idsBase, dataIso),
+      obterJornadaUsuarios(idsBase, dataIso)
+    ]);
 
-    const mapaJornadas = new Map();
-    jornadas.forEach(item => {
-      mapaJornadas.set(Number(item.USUARIO_ID), item);
-    });
-
-    const mapaBatidas = new Map();
-    batidas.forEach(item => {
-      const cpf = normalizarCpf(item.CPF);
-
-      if (cpf) {
-        const chaveCpf = `CPF:${cpf}`;
-        if (!mapaBatidas.has(chaveCpf)) mapaBatidas.set(chaveCpf, []);
-        mapaBatidas.get(chaveCpf).push(item);
-      }
-    });
-
-    const diaSemana = new Date(`${data}T00:00:00`).getDay();
-
-    const items = usuarios.map(usuario => {
-      const jornada = mapaJornadas.get(Number(usuario.id)) || null;
-      const cpfUsuario = normalizarCpf(usuario.cpf);
-
-      const batidasUsuario = cpfUsuario
-        ? (mapaBatidas.get(`CPF:${cpfUsuario}`) || [])
-        : [];
-
-      const batidasOrdenadas = [...batidasUsuario].sort(
-        (a, b) => new Date(a.DATA_HORA) - new Date(b.DATA_HORA)
-      );
-
-      const batePonto = Number(
-        usuario.bate_ponto ??
-        usuario.BATE_PONTO ??
-        0
-      ) === 1;
-
-      const dataInicioBatePonto = String(
-        usuario.data_inicio_bate_ponto ??
-        usuario.DATA_INICIO_BATE_PONTO ??
-        ''
-      ).trim().slice(0, 10);
-
-      const deveValidarPonto =
-        batePonto &&
-        !!dataInicioBatePonto &&
-        data >= dataInicioBatePonto;
-
-      const avaliacao = deveValidarPonto
-        ? avaliarInconsistenciaUsuario({
-            ehFeriado: feriadoInfo.ehFeriado,
-            jornada,
-            batidas: batidasOrdenadas,
-            diaSemana
-          })
-        : {
-            inconsistente: false,
-            motivo: ''
-          };
-
-      const diasSemanaJornada = jornada
-        ? {
-            domingo: String(jornada.TRABALHA_DOMINGO || '').toUpperCase() === 'S',
-            segunda: String(jornada.TRABALHA_SEGUNDA || '').toUpperCase() === 'S',
-            terca: String(jornada.TRABALHA_TERCA || '').toUpperCase() === 'S',
-            quarta: String(jornada.TRABALHA_QUARTA || '').toUpperCase() === 'S',
-            quinta: String(jornada.TRABALHA_QUINTA || '').toUpperCase() === 'S',
-            sexta: String(jornada.TRABALHA_SEXTA || '').toUpperCase() === 'S',
-            sabado: String(jornada.TRABALHA_SABADO || '').toUpperCase() === 'S'
-          }
-        : {
-            domingo: false,
-            segunda: false,
-            terca: false,
-            quarta: false,
-            quinta: false,
-            sexta: false,
-            sabado: false
-          };
-
-      const trabalhaNoDia = jornada
-        ? verificaSeJornadaTrabalhaNoDia(jornada, diaSemana)
-        : false;
+    const items = usuariosBase.map((usuario) => {
+      const usuarioId = somenteNumeros(usuario?.ID);
+      const batidas = mapearBatidas(mapaBatidas.get(usuarioId) || []);
+      const jornada = mapaJornadas.get(usuarioId) || null;
+      const resumoJornada = montarResumoJornada(jornada);
 
       return {
-        ...usuario,
-        batePonto,
-        dataInicioBatePonto,
-        validaPontoHoje: deveValidarPonto,
-        jornadaId: jornada?.JORNADA_ID || null,
-        jornadaDescricao: jornada?.DESCRICAO || '',
-        quantidadeBatidas: batidasOrdenadas.length,
-        inconsistente: avaliacao.inconsistente,
-        motivo: avaliacao.motivo,
-        feriado: feriadoInfo.ehFeriado,
-
-        jornada: jornada
-          ? {
-              usuarioId: jornada.USUARIO_ID,
-              jornadaId: jornada.JORNADA_ID,
-              descricao: jornada.DESCRICAO || '',
-              horaInicioExpediente: jornada.HORA_INICIO_EXPEDIENTE || '',
-              horaSaidaIntervalo: jornada.HORA_SAIDA_INTERVALO || '',
-              horaRetornoIntervalo: jornada.HORA_RETORNO_INTERVALO || '',
-              horaFimExpediente: jornada.HORA_FIM_EXPEDIENTE || '',
-              cargaHoraria: jornada.CARGA_HORARIA || '',
-              toleranciaAtrasoMin: Number(jornada.TOLERANCIA_ATRASO_MIN || 0),
-              toleranciaExtraMin: Number(jornada.TOLERANCIA_EXTRA_MIN || 0),
-              trabalhaDomingo: diasSemanaJornada.domingo,
-              trabalhaSegunda: diasSemanaJornada.segunda,
-              trabalhaTerca: diasSemanaJornada.terca,
-              trabalhaQuarta: diasSemanaJornada.quarta,
-              trabalhaQuinta: diasSemanaJornada.quinta,
-              trabalhaSexta: diasSemanaJornada.sexta,
-              trabalhaSabado: diasSemanaJornada.sabado,
-              diasSemana: diasSemanaJornada
-            }
-          : null,
-
-        resumoJornada: jornada
-          ? {
-              trabalhaNoDia,
-              horarioPrevisto: {
-                entrada: jornada.HORA_INICIO_EXPEDIENTE || '',
-                saidaIntervalo: jornada.HORA_SAIDA_INTERVALO || '',
-                retornoIntervalo: jornada.HORA_RETORNO_INTERVALO || '',
-                saida: jornada.HORA_FIM_EXPEDIENTE || ''
-              },
-              diasSemana: diasSemanaJornada,
-              trabalhaDomingo: diasSemanaJornada.domingo,
-              trabalhaSegunda: diasSemanaJornada.segunda,
-              trabalhaTerca: diasSemanaJornada.terca,
-              trabalhaQuarta: diasSemanaJornada.quarta,
-              trabalhaQuinta: diasSemanaJornada.quinta,
-              trabalhaSexta: diasSemanaJornada.sexta,
-              trabalhaSabado: diasSemanaJornada.sabado
-            }
-          : {
-              trabalhaNoDia: false,
-              horarioPrevisto: null,
-              diasSemana: {
-                domingo: false,
-                segunda: false,
-                terca: false,
-                quarta: false,
-                quinta: false,
-                sexta: false,
-                sabado: false
-              },
-              trabalhaDomingo: false,
-              trabalhaSegunda: false,
-              trabalhaTerca: false,
-              trabalhaQuarta: false,
-              trabalhaQuinta: false,
-              trabalhaSexta: false,
-              trabalhaSabado: false
-            },
-
-        batidas: batidasOrdenadas.map(item => ({
-          usuarioCodigo: item.USUARIO_CODIGO || '',
-          nomeUsuario: item.NOME_USUARIO || '',
-          matricula: item.MATRICULA || '',
-          cpf: normalizarCpf(item.CPF),
-          dataHora: item.DATA_HORA,
-          tipoBatida: item.TIPO_BATIDA || '',
-          hora: formatarHoraBatida(item.DATA_HORA)
-        }))
+        id: usuarioId,
+        nome: String(usuario?.NOME ?? '').trim(),
+        email: String(usuario?.EMAIL ?? '').trim(),
+        setor: String(usuario?.SETOR ?? '').trim(),
+        funcao: String(usuario?.FUNCAO ?? '').trim(),
+        batidas,
+        quantidadeBatidas: batidas.length,
+        jornadaDescricao: String(
+          jornada?.JORNADA ?? resumoJornada?.jornadaDescricao ?? 'Não vinculada'
+        ).trim(),
+        resumoJornada
       };
     });
 
-    res.json({
+    return res.json({
       success: true,
-      data,
-      feriado: feriadoInfo.ehFeriado,
-      observacoesFeriado: feriadoInfo.observacoes,
+      data: dataIso,
+      usuarioLogadoId,
+      permissoes: {
+        podeVerTodosPontosUnidade:
+          normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_UNIDADE, 'nao') === 'sim',
+        podeVerTodosPontosFilhos:
+          normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_FILHOS, 'nao') === 'sim',
+        fallbackSomenteProprio:
+          normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_UNIDADE, 'nao') !== 'sim' &&
+          normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_FILHOS, 'nao') !== 'sim'
+      },
       items
     });
-  } catch (err) {
-    console.error('Erro ao carregar usuários por data das solicitações:', err);
-    res.status(500).json({
+  } catch (error) {
+    console.error('Erro em /api/solicitacoes/usuarios-dia:', error);
+
+    return res.status(500).json({
       success: false,
-      message: 'Erro ao carregar usuários das solicitações.',
-      error: err.message
+      message: error?.message || 'Erro ao carregar usuários do dia.'
     });
   }
 });
