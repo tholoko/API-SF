@@ -18647,6 +18647,7 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
   try {
     const somenteNumeros = (valor) => String(valor ?? '').replace(/\D+/g, '').trim();
     const textoLimpo = (valor) => String(valor ?? '').trim();
+    const normalizarCpf = (valor) => String(valor ?? '').replace(/\D/g, '').trim();
 
     const normalizarSimNao = (valor, padrao = 'nao') => {
       const v = String(valor ?? '').trim().toLowerCase();
@@ -18669,24 +18670,46 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
       return `${ano}-${mes}-${dia}`;
     };
 
+    const formatarHoraBatidaLocal = (valor) => {
+      if (!valor) return '';
+      const data = new Date(valor);
+
+      if (!Number.isNaN(data.getTime())) {
+        return `${String(data.getHours()).padStart(2, '0')}:${String(data.getMinutes()).padStart(2, '0')}`;
+      }
+
+      const texto = String(valor).trim();
+      const match = texto.match(/(\d{2}):(\d{2})/);
+      return match ? `${match[1]}:${match[2]}` : '';
+    };
+
     const mapearBatidas = (items) => {
       if (!Array.isArray(items)) return [];
       return items
         .map((item) => ({
-          id: item?.ID ?? null,
-          hora: String(item?.HORA ?? item?.BATIDA ?? '').trim().slice(0, 5),
-          tipo: String(item?.TIPO ?? '').trim(),
-          origem: String(item?.ORIGEM ?? '').trim()
+          usuarioCodigo: item?.USUARIO_CODIGO ?? '',
+          nomeUsuario: item?.NOME_USUARIO ?? '',
+          matricula: item?.MATRICULA ?? '',
+          cpf: normalizarCpf(item?.CPF),
+          dataHora: item?.DATA_HORA ?? '',
+          tipoBatida: item?.TIPO_BATIDA ?? '',
+          hora: formatarHoraBatidaLocal(item?.DATA_HORA)
         }))
         .filter((item) => item.hora);
     };
 
-    const montarResumoJornada = (vinculo) => {
-      if (!vinculo) {
-        return {
-          trabalhaNoDia: false,
-          horarioPrevisto: null,
-          diasSemana: {
+    const montarResumoJornada = (jornada, diaSemana) => {
+      const diasSemana = jornada
+        ? {
+            domingo: String(jornada.TRABALHA_DOMINGO ?? '').trim().toUpperCase() === 'S',
+            segunda: String(jornada.TRABALHA_SEGUNDA ?? '').trim().toUpperCase() === 'S',
+            terca: String(jornada.TRABALHA_TERCA ?? '').trim().toUpperCase() === 'S',
+            quarta: String(jornada.TRABALHA_QUARTA ?? '').trim().toUpperCase() === 'S',
+            quinta: String(jornada.TRABALHA_QUINTA ?? '').trim().toUpperCase() === 'S',
+            sexta: String(jornada.TRABALHA_SEXTA ?? '').trim().toUpperCase() === 'S',
+            sabado: String(jornada.TRABALHA_SABADO ?? '').trim().toUpperCase() === 'S'
+          }
+        : {
             domingo: false,
             segunda: false,
             terca: false,
@@ -18694,28 +18717,40 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
             quinta: false,
             sexta: false,
             sabado: false
-          }
-        };
-      }
+          };
+
+      const trabalhaNoDia = jornada
+        ? (
+            (diaSemana === 0 && diasSemana.domingo) ||
+            (diaSemana === 1 && diasSemana.segunda) ||
+            (diaSemana === 2 && diasSemana.terca) ||
+            (diaSemana === 3 && diasSemana.quarta) ||
+            (diaSemana === 4 && diasSemana.quinta) ||
+            (diaSemana === 5 && diasSemana.sexta) ||
+            (diaSemana === 6 && diasSemana.sabado)
+          )
+        : false;
 
       return {
-        jornadaId: vinculo?.JORNADA_ID ?? null,
-        jornadaDescricao: String(vinculo?.JORNADA ?? 'Não vinculada').trim(),
-        horarioPrevisto: {
-          entrada: String(vinculo?.ENTRADA ?? '').trim().slice(0, 5),
-          saidaIntervalo: String(vinculo?.SAIDAINTERVALO ?? '').trim().slice(0, 5),
-          retornoIntervalo: String(vinculo?.RETORNOINTERVALO ?? '').trim().slice(0, 5),
-          saida: String(vinculo?.SAIDA ?? '').trim().slice(0, 5)
-        },
-        diasSemana: {
-          domingo: String(vinculo?.DOMINGO ?? 'N').trim().toUpperCase() === 'S',
-          segunda: String(vinculo?.SEGUNDA ?? 'N').trim().toUpperCase() === 'S',
-          terca: String(vinculo?.TERCA ?? 'N').trim().toUpperCase() === 'S',
-          quarta: String(vinculo?.QUARTA ?? 'N').trim().toUpperCase() === 'S',
-          quinta: String(vinculo?.QUINTA ?? 'N').trim().toUpperCase() === 'S',
-          sexta: String(vinculo?.SEXTA ?? 'N').trim().toUpperCase() === 'S',
-          sabado: String(vinculo?.SABADO ?? 'N').trim().toUpperCase() === 'S'
-        }
+        jornadaId: jornada?.JORNADA_ID ?? null,
+        jornadaDescricao: String(jornada?.DESCRICAO ?? 'Não vinculada').trim(),
+        trabalhaNoDia,
+        horarioPrevisto: jornada
+          ? {
+              entrada: String(jornada?.HORA_INICIO_EXPEDIENTE ?? '').trim().slice(0, 5),
+              saidaIntervalo: String(jornada?.HORA_SAIDA_INTERVALO ?? '').trim().slice(0, 5),
+              retornoIntervalo: String(jornada?.HORA_RETORNO_INTERVALO ?? '').trim().slice(0, 5),
+              saida: String(jornada?.HORA_FIM_EXPEDIENTE ?? '').trim().slice(0, 5)
+            }
+          : null,
+        diasSemana,
+        trabalhaDomingo: diasSemana.domingo,
+        trabalhaSegunda: diasSemana.segunda,
+        trabalhaTerca: diasSemana.terca,
+        trabalhaQuarta: diasSemana.quarta,
+        trabalhaQuinta: diasSemana.quinta,
+        trabalhaSexta: diasSemana.sexta,
+        trabalhaSabado: diasSemana.sabado
       };
     };
 
@@ -18726,6 +18761,11 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
         message: 'Informe a data no formato YYYY-MM-DD.'
       });
     }
+
+    const inicioDia = `${dataIso} 00:00:00`;
+    const dataMaisUm = new Date(`${dataIso}T00:00:00`);
+    dataMaisUm.setDate(dataMaisUm.getDate() + 1);
+    const proximoDia = `${dataMaisUm.getFullYear()}-${String(dataMaisUm.getMonth() + 1).padStart(2, '0')}-${String(dataMaisUm.getDate()).padStart(2, '0')} 00:00:00`;
 
     const usuarioLogadoId = somenteNumeros(
       req.usuario?.id ||
@@ -18748,17 +18788,19 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
     const [vinculos] = await pool.query(`
       SELECT
         OUS.ID,
-        OUS.IDUSUARIO,
-        OUS.IDSETORORGANOGRAMA,
+        OUS.ID_USUARIO,
+        OUS.ID_SETOR_ORGANOGRAMA,
         OUS.STATUS,
         OUS.PRECISA_APROCAVAO,
+        OUS.PODE_VER_PONTO_TODOS,
         OUS.PODE_VER_TODOS_PONTOS_UNIDADE,
         OUS.PODE_VER_TODOS_PONTOS_FILHOS,
+        SO.NOME,
         SO.DESCRICAO AS SETOR_NOME
       FROM SF_ORGANOGRAMA_USUARIO_SETOR OUS
-      LEFT JOIN SF_SETOR_ORGANOGRAMA SO
-        ON SO.ID = OUS.IDSETORORGANOGRAMA
-      WHERE OUS.IDUSUARIO = ?
+      LEFT JOIN SF_ORGANOGRAMA_SETOR SO
+        ON SO.ID = OUS.ID_SETOR_ORGANOGRAMA
+      WHERE OUS.ID_USUARIO = ?
         AND COALESCE(OUS.STATUS, 1) = 1
       ORDER BY OUS.ID DESC
       LIMIT 1
@@ -18773,26 +18815,27 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
 
     let idsPermitidos = [usuarioLogadoId];
 
-    if (vinculo?.IDSETORORGANOGRAMA && (podeUnidade || podeFilhos)) {
-      let setoresIds = [Number(vinculo.IDSETORORGANOGRAMA)].filter(Boolean);
+    if (vinculo?.ID_SETOR_ORGANOGRAMA && (podeUnidade || podeFilhos)) {
+      let setoresIds = [Number(vinculo.ID_SETOR_ORGANOGRAMA)].filter(Boolean);
 
       if (podeFilhos) {
         const visitados = new Set();
         const fila = [...setoresIds];
 
         while (fila.length) {
-          const atual = fila.shift();
+          const atual = Number(fila.shift());
           if (!atual || visitados.has(atual)) continue;
           visitados.add(atual);
 
           const [filhos] = await pool.query(`
-            SELECT ID
-            FROM SF_SETOR_ORGANOGRAMA
-            WHERE IDSETORPAI = ?
+            SELECT id_setor_filho
+            FROM SF_ORGANOGRAMA
+            WHERE id_setor_pai = ?
+              AND COALESCE(status, 1) = 1
           `, [atual]);
 
           filhos.forEach((item) => {
-            const idFilho = Number(item?.ID);
+            const idFilho = Number(item?.id_setor_filho);
             if (idFilho && !visitados.has(idFilho)) {
               setoresIds.push(idFilho);
               fila.push(idFilho);
@@ -18804,16 +18847,16 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
       }
 
       if (setoresIds.length) {
-        const placeholders = setoresIds.map(() => '?').join(', ');
+        const placeholdersSetores = setoresIds.map(() => '?').join(', ');
         const [usuariosPermitidosRows] = await pool.query(`
-          SELECT DISTINCT IDUSUARIO
+          SELECT DISTINCT ID_USUARIO
           FROM SF_ORGANOGRAMA_USUARIO_SETOR
-          WHERE IDSETORORGANOGRAMA IN (${placeholders})
+          WHERE ID_SETOR_ORGANOGRAMA IN (${placeholdersSetores})
             AND COALESCE(STATUS, 1) = 1
         `, setoresIds);
 
         idsPermitidos = usuariosPermitidosRows
-          .map((item) => somenteNumeros(item?.IDUSUARIO))
+          .map((item) => somenteNumeros(item?.ID_USUARIO))
           .filter(Boolean);
 
         if (!idsPermitidos.includes(usuarioLogadoId)) {
@@ -18843,21 +18886,21 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
 
     let sqlUsuarios = `
       SELECT
-        U.ID,
-        U.NOME,
-        U.EMAIL,
-        COALESCE(SO.DESCRICAO, '') AS SETOR,
-        COALESCE(F.DESCRICAO, '') AS FUNCAO,
-        OUS.IDSETORORGANOGRAMA
-      FROM USUARIOS U
-      LEFT JOIN SF_ORGANOGRAMA_USUARIO_SETOR OUS
-        ON OUS.IDUSUARIO = U.ID
-       AND COALESCE(OUS.STATUS, 1) = 1
-      LEFT JOIN SF_SETOR_ORGANOGRAMA SO
-        ON SO.ID = OUS.IDSETORORGANOGRAMA
-      LEFT JOIN FUNCOES F
-        ON F.ID = U.IDFUNCAO
-      WHERE U.ID IN (${placeholdersUsuarios})
+        U.id,
+        U.nome,
+        U.EMAIL AS email,
+        U.status,
+        U.setor,
+        U.FUNCAO AS funcao,
+        U.CPF AS cpf,
+        U.BATE_PONTO AS bate_ponto,
+        U.DATA_INICIO_BATE_PONTO AS data_inicio_bate_ponto
+      FROM SF_USUARIO U
+      WHERE U.id IN (${placeholdersUsuarios})
+        AND U.EMAIL IS NOT NULL
+        AND U.EMAIL <> ''
+        AND U.status <> 'Desativado'
+        AND COALESCE(U.BATE_PONTO, 0) = 1
     `;
 
     const paramsUsuarios = [...idsPermitidos];
@@ -18865,21 +18908,23 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
     if (filtroBusca) {
       sqlUsuarios += `
         AND (
-          UPPER(COALESCE(U.NOME, '')) LIKE ?
+          UPPER(COALESCE(U.nome, '')) LIKE ?
           OR UPPER(COALESCE(U.EMAIL, '')) LIKE ?
-          OR CAST(U.ID AS CHAR) LIKE ?
+          OR CAST(U.id AS CHAR) LIKE ?
+          OR REPLACE(REPLACE(REPLACE(COALESCE(U.CPF, ''), '.', ''), '-', ''), '/', '') LIKE ?
         )
       `;
       const like = `%${filtroBusca.toUpperCase()}%`;
-      paramsUsuarios.push(like, like, like);
+      const likeCpf = `%${somenteNumeros(filtroBusca)}%`;
+      paramsUsuarios.push(like, like, like, likeCpf);
     }
 
-    sqlUsuarios += ` ORDER BY U.NOME`;
+    sqlUsuarios += ` ORDER BY U.nome ASC`;
 
     const [usuariosBase] = await pool.query(sqlUsuarios, paramsUsuarios);
 
     const idsBase = usuariosBase
-      .map((item) => somenteNumeros(item?.ID))
+      .map((item) => Number(item?.id))
       .filter(Boolean);
 
     if (!idsBase.length) {
@@ -18898,76 +18943,149 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
 
     const placeholdersBase = idsBase.map(() => '?').join(', ');
 
-    const [batidasRows] = await pool.query(`
-      SELECT
-        P.ID,
-        P.IDUSUARIO,
-        P.DATA,
-        P.HORA,
-        P.TIPO,
-        P.ORIGEM
-      FROM PONTO_BATIDAS P
-      WHERE P.IDUSUARIO IN (${placeholdersBase})
-        AND DATE(P.DATA) = ?
-      ORDER BY P.IDUSUARIO, P.HORA
-    `, [...idsBase, dataIso]);
-
     const [jornadasRows] = await pool.query(`
       SELECT
         UJ.USUARIO_ID,
         UJ.JORNADA_ID,
-        J.DESCRICAO AS JORNADA,
-        J.ENTRADA,
-        J.SAIDAINTERVALO,
-        J.RETORNOINTERVALO,
-        J.SAIDA,
-        J.DOMINGO,
-        J.SEGUNDA,
-        J.TERCA,
-        J.QUARTA,
-        J.QUINTA,
-        J.SEXTA,
-        J.SABADO
+        JT.DESCRICAO,
+        JT.HORA_INICIO_EXPEDIENTE,
+        JT.HORA_SAIDA_INTERVALO,
+        JT.HORA_RETORNO_INTERVALO,
+        JT.HORA_FIM_EXPEDIENTE,
+        JT.CARGA_HORARIA,
+        JT.TOLERANCIA_ATRASO_MIN,
+        JT.TOLERANCIA_EXTRA_MIN,
+        JT.TRABALHA_DOMINGO,
+        JT.TRABALHA_SEGUNDA,
+        JT.TRABALHA_TERCA,
+        JT.TRABALHA_QUARTA,
+        JT.TRABALHA_QUINTA,
+        JT.TRABALHA_SEXTA,
+        JT.TRABALHA_SABADO
       FROM SF_USUARIO_JORNADA UJ
-      LEFT JOIN SF_JORNADAS J
-        ON J.ID = UJ.JORNADA_ID
+      INNER JOIN SF_JORNADA_TRABALHO JT
+        ON JT.ID = UJ.JORNADA_ID
       WHERE UJ.USUARIO_ID IN (${placeholdersBase})
-        AND (UJ.STATUS = 'ATIVO' OR UJ.STATUS = 1 OR UJ.STATUS IS NULL)
-    `, idsBase);
+        AND COALESCE(UJ.STATUS, 'ATIVO') = 'ATIVO'
+        AND COALESCE(JT.STATUS, 'ATIVO') = 'ATIVO'
+        AND UJ.DATA_INICIO <= ?
+        AND (UJ.DATA_FIM IS NULL OR UJ.DATA_FIM >= ?)
+    `, [...idsBase, dataIso, dataIso]);
 
-    const mapaBatidas = new Map();
-    batidasRows.forEach((item) => {
-      const idUsuario = somenteNumeros(item?.IDUSUARIO);
-      if (!idUsuario) return;
-      if (!mapaBatidas.has(idUsuario)) mapaBatidas.set(idUsuario, []);
-      mapaBatidas.get(idUsuario).push(item);
-    });
+    const [batidasRows] = await pool.query(`
+      SELECT
+        USUARIO_CODIGO,
+        NOME_USUARIO,
+        MATRICULA,
+        CPF,
+        DATA_HORA,
+        TIPO_BATIDA
+      FROM SF_PONTO_COLETADO
+      WHERE DATA_HORA >= ?
+        AND DATA_HORA < ?
+      ORDER BY NOME_USUARIO ASC, DATA_HORA ASC
+    `, [inicioDia, proximoDia]);
+
+    const [calendarios] = await pool.query(`
+      SELECT
+        ID,
+        PERIODO,
+        OBSERVACAO,
+        HORAINICIO,
+        HORAFIM,
+        TIPOPERIODO,
+        TIPORECORRENCIA,
+        REPETETODOANO,
+        STATUS,
+        DATAINICIAL,
+        DATAFINAL,
+        DATAINICIALTROCA,
+        DATAFINALTROCA,
+        NOVADATAINICIAL,
+        NOVADATAFINAL
+      FROM SF_CALENDARIO
+      WHERE COALESCE(STATUS, 'ATIVO') = 'ATIVO'
+    `);
+
+    const feriadoInfo = typeof verificarSeDataEhFeriadoBackend === 'function'
+      ? verificarSeDataEhFeriadoBackend(dataIso, calendarios)
+      : { ehFeriado: false, observacoes: [] };
 
     const mapaJornadas = new Map();
     jornadasRows.forEach((item) => {
-      const idUsuario = somenteNumeros(item?.USUARIO_ID);
-      if (!idUsuario || mapaJornadas.has(idUsuario)) return;
-      mapaJornadas.set(idUsuario, item);
+      const usuarioId = Number(item?.USUARIO_ID);
+      if (!usuarioId || mapaJornadas.has(usuarioId)) return;
+      mapaJornadas.set(usuarioId, item);
     });
 
+    const mapaBatidas = new Map();
+    batidasRows.forEach((item) => {
+      const cpf = normalizarCpf(item?.CPF);
+      if (!cpf) return;
+      const chave = `CPF:${cpf}`;
+      if (!mapaBatidas.has(chave)) mapaBatidas.set(chave, []);
+      mapaBatidas.get(chave).push(item);
+    });
+
+    const diaSemana = new Date(`${dataIso}T00:00:00`).getDay();
+
     const items = usuariosBase.map((usuario) => {
-      const usuarioId = somenteNumeros(usuario?.ID);
-      const batidas = mapearBatidas(mapaBatidas.get(usuarioId) || []);
+      const usuarioId = Number(usuario?.id);
       const jornada = mapaJornadas.get(usuarioId) || null;
-      const resumoJornada = montarResumoJornada(jornada);
+      const resumoJornada = montarResumoJornada(jornada, diaSemana);
+
+      const cpfUsuario = normalizarCpf(usuario?.cpf);
+      const batidasOriginais = cpfUsuario ? (mapaBatidas.get(`CPF:${cpfUsuario}`) || []) : [];
+      const batidas = mapearBatidas(
+        [...batidasOriginais].sort((a, b) => new Date(a.DATA_HORA) - new Date(b.DATA_HORA))
+      );
+
+      const dataInicioBatePonto = String(usuario?.data_inicio_bate_ponto ?? '').trim().slice(0, 10);
+      const batePonto = Number(usuario?.bate_ponto ?? 0) === 1;
+      const validaPontoHoje =
+        batePonto &&
+        !!dataInicioBatePonto &&
+        dataIso >= dataInicioBatePonto;
 
       return {
-        id: usuarioId,
-        nome: String(usuario?.NOME ?? '').trim(),
-        email: String(usuario?.EMAIL ?? '').trim(),
-        setor: String(usuario?.SETOR ?? '').trim(),
-        funcao: String(usuario?.FUNCAO ?? '').trim(),
+        id: String(usuarioId),
+        nome: String(usuario?.nome ?? '').trim(),
+        email: String(usuario?.email ?? '').trim(),
+        setor: String(usuario?.setor ?? '').trim(),
+        funcao: String(usuario?.funcao ?? '').trim(),
+        cpf: cpfUsuario,
+        batePonto,
+        dataInicioBatePonto,
+        validaPontoHoje,
+        feriado: !!feriadoInfo?.ehFeriado,
         batidas,
         quantidadeBatidas: batidas.length,
         jornadaDescricao: String(
-          jornada?.JORNADA ?? resumoJornada?.jornadaDescricao ?? 'Não vinculada'
+          jornada?.DESCRICAO ?? resumoJornada?.jornadaDescricao ?? 'Não vinculada'
         ).trim(),
-        resumoJornada
+        resumoJornada,
+        jornada: jornada
+          ? {
+              usuarioId: jornada.USUARIO_ID,
+              jornadaId: jornada.JORNADA_ID,
+              descricao: jornada.DESCRICAO || '',
+              horaInicioExpediente: jornada.HORA_INICIO_EXPEDIENTE || '',
+              horaSaidaIntervalo: jornada.HORA_SAIDA_INTERVALO || '',
+              horaRetornoIntervalo: jornada.HORA_RETORNO_INTERVALO || '',
+              horaFimExpediente: jornada.HORA_FIM_EXPEDIENTE || '',
+              cargaHoraria: jornada.CARGA_HORARIA || '',
+              toleranciaAtrasoMin: Number(jornada.TOLERANCIA_ATRASO_MIN || 0),
+              toleranciaExtraMin: Number(jornada.TOLERANCIA_EXTRA_MIN || 0),
+              trabalhaDomingo: resumoJornada.diasSemana.domingo,
+              trabalhaSegunda: resumoJornada.diasSemana.segunda,
+              trabalhaTerca: resumoJornada.diasSemana.terca,
+              trabalhaQuarta: resumoJornada.diasSemana.quarta,
+              trabalhaQuinta: resumoJornada.diasSemana.quinta,
+              trabalhaSexta: resumoJornada.diasSemana.sexta,
+              trabalhaSabado: resumoJornada.diasSemana.sabado,
+              diasSemana: resumoJornada.diasSemana
+            }
+          : null
       };
     });
 
@@ -18975,6 +19093,8 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
       success: true,
       data: dataIso,
       usuarioLogadoId,
+      feriado: !!feriadoInfo?.ehFeriado,
+      observacoesFeriado: Array.isArray(feriadoInfo?.observacoes) ? feriadoInfo.observacoes : [],
       permissoes: {
         podeVerTodosPontosUnidade: podeUnidade,
         podeVerTodosPontosFilhos: podeFilhos,
