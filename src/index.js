@@ -7946,7 +7946,11 @@ function bit(v) {
   return Number(v) === 1 ? 1 : 0;
 }
 
-// LISTAR PERFIS
+
+// ============================ //
+// Cadastro de Perfil de Acesso //
+// ============================ //
+
 app.get('/api/perfis', async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -7992,7 +7996,9 @@ app.get('/api/perfis', async (req, res) => {
         jornada,
         vinculo_jornada,
         solicitacoes,
-        cadastro_equipamento
+        cadastro_equipamento,
+        aprovador_ponto_gestor,
+        aprovador_ponto_rh
       FROM SF_PERFIL
       ORDER BY nome ASC
     `);
@@ -8008,7 +8014,6 @@ app.get('/api/perfis', async (req, res) => {
   }
 });
 
-// BUSCAR PERFIL POR ID
 app.get('/api/perfis/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -8063,7 +8068,9 @@ app.get('/api/perfis/:id', async (req, res) => {
         jornada,
         vinculo_jornada,
         solicitacoes,
-        cadastro_equipamento
+        cadastro_equipamento,
+        aprovador_ponto_gestor,
+        aprovador_ponto_rh
       FROM SF_PERFIL
       WHERE id = ?
       LIMIT 1
@@ -8090,7 +8097,6 @@ app.get('/api/perfis/:id', async (req, res) => {
   }
 });
 
-// CRIAR PERFIL
 app.post('/api/perfis', async (req, res) => {
   const conn = await pool.getConnection();
 
@@ -8149,7 +8155,9 @@ app.post('/api/perfis', async (req, res) => {
       jornada: bit(req.body?.jornada),
       vinculo_jornada: bit(req.body?.vinculo_jornada),
       solicitacoes: bit(req.body?.solicitacoes),
-      cadastro_equipamento: bit(req.body?.cadastro_equipamento)
+      cadastro_equipamento: bit(req.body?.cadastro_equipamento),
+      aprovador_ponto_gestor: bit(req.body?.aprovador_ponto_gestor),
+      aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh)
     };
 
     const [result] = await conn.query(`
@@ -8194,8 +8202,10 @@ app.post('/api/perfis', async (req, res) => {
         jornada,
         vinculo_jornada,
         solicitacoes,
-        cadastro_equipamento
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        cadastro_equipamento,
+        aprovador_ponto_gestor,
+        aprovador_ponto_rh
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payloadDepois.nome,
       payloadDepois.pedidos,
@@ -8237,7 +8247,9 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.jornada,
       payloadDepois.vinculo_jornada,
       payloadDepois.solicitacoes,
-      payloadDepois.cadastro_equipamento
+      payloadDepois.cadastro_equipamento,
+      payloadDepois.aprovador_ponto_gestor,
+      payloadDepois.aprovador_ponto_rh
     ]);
 
     const idPerfil = Number(result?.insertId || 0);
@@ -8286,7 +8298,6 @@ app.post('/api/perfis', async (req, res) => {
   }
 });
 
-// EDITAR PERFIL
 app.put('/api/perfis/:id', async (req, res) => {
   const conn = await pool.getConnection();
 
@@ -8367,7 +8378,9 @@ app.put('/api/perfis/:id', async (req, res) => {
       jornada: bit(req.body?.jornada),
       vinculo_jornada: bit(req.body?.vinculo_jornada),
       solicitacoes: bit(req.body?.solicitacoes),
-      cadastro_equipamento: bit(req.body?.cadastro_equipamento)
+      cadastro_equipamento: bit(req.body?.cadastro_equipamento),
+      aprovador_ponto_gestor: bit(req.body?.aprovador_ponto_gestor),
+      aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh)
     };
 
     const [result] = await conn.query(`
@@ -8412,7 +8425,9 @@ app.put('/api/perfis/:id', async (req, res) => {
         jornada = ?,
         vinculo_jornada = ?,
         solicitacoes = ?,
-        cadastro_equipamento = ?
+        cadastro_equipamento = ?,
+        aprovador_ponto_gestor = ?,
+        aprovador_ponto_rh = ?
       WHERE id = ?
     `, [
       depois.nome,
@@ -8456,6 +8471,8 @@ app.put('/api/perfis/:id', async (req, res) => {
       depois.vinculo_jornada,
       depois.solicitacoes,
       depois.cadastro_equipamento,
+      depois.aprovador_ponto_gestor,
+      depois.aprovador_ponto_rh,
       id
     ]);
 
@@ -8506,7 +8523,7 @@ app.put('/api/perfis/:id', async (req, res) => {
   }
 });
 
-// LISTAR LOGS DO PERFIL
+
 app.get('/api/perfis/:id/logs', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -8545,6 +8562,9 @@ app.get('/api/perfis/:id/logs', async (req, res) => {
     });
   }
 });
+
+// ============================
+
 
 
 // permissões
@@ -8813,6 +8833,8 @@ app.get('/api/estoque/produto/:idProduto/saldo/:idLocalAlmoxarifado', async (req
     if (conn) conn.release();
   }
 });
+
+
 
 // GET api/clima-links
 app.get('/api/clima-links', async (req, res) => {
@@ -18808,14 +18830,36 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
 
     const vinculo = Array.isArray(vinculos) && vinculos.length ? vinculos[0] : null;
 
+    const podeVerTodos =
+      normalizarSimNao(vinculo?.PODE_VER_PONTO_TODOS, 'nao') === 'sim';
+
     const podeUnidade =
       normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_UNIDADE, 'nao') === 'sim';
+
     const podeFilhos =
       normalizarSimNao(vinculo?.PODE_VER_TODOS_PONTOS_FILHOS, 'nao') === 'sim';
 
     let idsPermitidos = [usuarioLogadoId];
 
-    if (vinculo?.ID_SETOR_ORGANOGRAMA && (podeUnidade || podeFilhos)) {
+    if (podeVerTodos) {
+      const [todosUsuariosRows] = await pool.query(`
+        SELECT DISTINCT U.id, U.nome
+        FROM SF_USUARIO U
+        WHERE U.EMAIL IS NOT NULL
+          AND U.EMAIL <> ''
+          AND U.status <> 'Desativado'
+          AND COALESCE(U.BATE_PONTO, 0) = 1
+        ORDER BY U.nome ASC
+      `);
+
+      idsPermitidos = todosUsuariosRows
+        .map((item) => somenteNumeros(item?.id))
+        .filter(Boolean);
+
+      if (!idsPermitidos.includes(usuarioLogadoId)) {
+        idsPermitidos.push(usuarioLogadoId);
+      }
+    } else if (vinculo?.ID_SETOR_ORGANOGRAMA && (podeUnidade || podeFilhos)) {
       let setoresIds = [Number(vinculo.ID_SETOR_ORGANOGRAMA)].filter(Boolean);
 
       if (podeFilhos) {
@@ -18873,6 +18917,7 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
         data: dataIso,
         usuarioLogadoId,
         permissoes: {
+          podeVerTodos: false,
           podeVerTodosPontosUnidade: false,
           podeVerTodosPontosFilhos: false,
           fallbackSomenteProprio: true
@@ -18933,9 +18978,10 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
         data: dataIso,
         usuarioLogadoId,
         permissoes: {
+          podeVerTodos,
           podeVerTodosPontosUnidade: podeUnidade,
           podeVerTodosPontosFilhos: podeFilhos,
-          fallbackSomenteProprio: !podeUnidade && !podeFilhos
+          fallbackSomenteProprio: !podeVerTodos && !podeUnidade && !podeFilhos
         },
         items: []
       });
@@ -19096,9 +19142,10 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
       feriado: !!feriadoInfo?.ehFeriado,
       observacoesFeriado: Array.isArray(feriadoInfo?.observacoes) ? feriadoInfo.observacoes : [],
       permissoes: {
+        podeVerTodos,
         podeVerTodosPontosUnidade: podeUnidade,
         podeVerTodosPontosFilhos: podeFilhos,
-        fallbackSomenteProprio: !podeUnidade && !podeFilhos
+        fallbackSomenteProprio: !podeVerTodos && !podeUnidade && !podeFilhos
       },
       items
     });
@@ -19637,7 +19684,7 @@ app.get('/api/solicitacoes/justificativas-ponto/:id', async (req, res) => {
     if (!id || Number.isNaN(id)) {
       return res.status(400).json({
         success: false,
-        message: 'ID inválido.'
+        message: 'ID inválido - Teste 01.'
       });
     }
 
@@ -20024,6 +20071,243 @@ app.get('/api/debug/justificativas-arquivos', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Erro ao listar arquivos.',
+      error: err.message
+    });
+  }
+});
+
+app.patch('/api/solicitacoes/justificativas-ponto/:id/status', async (req, res) => {
+  let conn;
+
+  try {
+    const id = Number(req.params.id || 0);
+    const perfilAcao = String(req.body?.perfil || '').trim().toUpperCase();
+    const status = String(req.body?.status || '').trim().toUpperCase();
+    const observacao = String(req.body?.observacao || '').trim();
+
+    const usuarioId = Number(
+      req.usuario?.id ||
+      req.user?.id ||
+      req.session?.usuario?.id ||
+      req.session?.user?.id ||
+      req.body?.usuario ||
+      req.headers['x-usuario-id'] ||
+      req.headers['x-user-id'] ||
+      0
+    );
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID da justificativa inválido.'
+      });
+    }
+
+    if (!usuarioId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Usuário logado não identificado.'
+      });
+    }
+
+    if (!['GESTOR', 'RH'].includes(perfilAcao)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Perfil de aprovação inválido.'
+      });
+    }
+
+    if (!['PENDENTE', 'EM_ANALISE', 'APROVADO', 'REJEITADO'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status inválido.'
+      });
+    }
+
+    conn = await pool.getConnection();
+
+    const [permissaoRows] = await conn.query(`
+      SELECT
+        u.ID AS usuario_id,
+        u.NOME AS usuario_nome,
+        u.PERFIL AS perfil,
+        COALESCE(p.aprovador_ponto_gestor, 0) AS aprovador_ponto_gestor,
+        COALESCE(p.aprovador_ponto_rh, 0) AS aprovador_ponto_rh
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON UPPER(TRIM(p.nome)) = UPPER(TRIM(u.perfil))
+      WHERE u.ID = ?
+      LIMIT 1
+    `, [usuarioId]);
+
+    if (!permissaoRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado.'
+      });
+    }
+
+    const permissao = permissaoRows[0];
+    const podeAprovarComoGestor = Number(permissao.aprovador_ponto_gestor) === 1;
+    const podeAprovarComoRh = Number(permissao.aprovador_ponto_rh) === 1;
+
+    if (perfilAcao === 'GESTOR' && !podeAprovarComoGestor) {
+      return res.status(403).json({
+        success: false,
+        message: 'Você não possui permissão para aprovar justificativas como Gestor.'
+      });
+    }
+
+    if (perfilAcao === 'RH' && !podeAprovarComoRh) {
+      return res.status(403).json({
+        success: false,
+        message: 'Você não possui permissão para aprovar justificativas como RH.'
+      });
+    }
+
+    const [justificativaRows] = await conn.query(`
+      SELECT
+        ID,
+        STATUS_GESTOR,
+        STATUS_RH
+      FROM SF_SOLICITACAO_JUSTIFICATIVA_PONTO
+      WHERE ID = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!justificativaRows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Justificativa não encontrada.'
+      });
+    }
+
+    const itemAtual = justificativaRows[0];
+    const statusGestorAtual = String(itemAtual.STATUS_GESTOR || 'PENDENTE').trim().toUpperCase();
+    const statusRhAtual = String(itemAtual.STATUS_RH || 'PENDENTE').trim().toUpperCase();
+
+    if (perfilAcao === 'RH' && statusGestorAtual !== 'APROVADO') {
+      return res.status(400).json({
+        success: false,
+        message: 'O RH só pode atuar após a aprovação do Gestor.'
+      });
+    }
+
+    if (perfilAcao === 'GESTOR' && statusGestorAtual === 'APROVADO' && statusRhAtual === 'APROVADO') {
+      return res.status(400).json({
+        success: false,
+        message: 'A solicitação já foi concluída e não pode mais ser alterada.'
+      });
+    }
+
+    if (perfilAcao === 'RH' && statusRhAtual === 'APROVADO') {
+      return res.status(400).json({
+        success: false,
+        message: 'A aprovação do RH já foi concluída para esta solicitação.'
+      });
+    }
+
+    if (perfilAcao === 'GESTOR') {
+      await conn.query(`
+        UPDATE SF_SOLICITACAO_JUSTIFICATIVA_PONTO
+        SET
+          STATUS_GESTOR = ?,
+          OBSERVACAO_GESTOR = ?,
+          GESTOR_USUARIO = ?,
+          GESTOR_DATA = NOW()
+        WHERE ID = ?
+      `, [status, observacao || null, String(permissao.usuario_nome || usuarioId), id]);
+    } else {
+      await conn.query(`
+        UPDATE SF_SOLICITACAO_JUSTIFICATIVA_PONTO
+        SET
+          STATUS_RH = ?,
+          OBSERVACAO_RH = ?,
+          RH_USUARIO = ?,
+          RH_DATA = NOW()
+        WHERE ID = ?
+      `, [status, observacao || null, String(permissao.usuario_nome || usuarioId), id]);
+    }
+
+    return res.json({
+      success: true,
+      message: `Status ${perfilAcao} atualizado com sucesso.`,
+      permissoes: {
+        usuarioId,
+        perfilUsuario: permissao.perfil || '',
+        podeAprovarComoGestor,
+        podeAprovarComoRh
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao atualizar status da justificativa:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar status da justificativa.',
+      error: error.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.get('/api/solicitacoes/justificativas-ponto-permissoes/:usuarioId', async (req, res) => {
+  try {
+    const usuarioId = Number(req.params.usuarioId);
+
+    if (!usuarioId) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do usuário inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        u.ID AS usuario_id,
+        u.NOME AS usuario_nome,
+        u.PERFIL AS perfil,
+        p.aprovador_ponto_gestor,
+        p.aprovador_ponto_rh
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON p.nome = u.PERFIL
+      WHERE u.ID = ?
+      LIMIT 1
+    `, [usuarioId]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado.'
+      });
+    }
+
+    const item = rows[0];
+
+    const aprovadorPontoGestor = Number(item.aprovador_ponto_gestor) === 1;
+    const aprovadorPontoRh = Number(item.aprovador_ponto_rh) === 1;
+
+    return res.json({
+      success: true,
+      permissoes: {
+        aprovadorPontoGestor,
+        aprovadorPontoRh
+      },
+      item: {
+        usuario_id: item.usuario_id,
+        usuario_nome: item.usuario_nome,
+        perfil: item.perfil,
+        aprovador_ponto_gestor: aprovadorPontoGestor ? 1 : 0,
+        aprovador_ponto_rh: aprovadorPontoRh ? 1 : 0
+      }
+    });
+  } catch (err) {
+    console.error('Erro ao validar permissões de justificativa de ponto:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao validar permissões de justificativa de ponto.',
       error: err.message
     });
   }
