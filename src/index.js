@@ -10776,7 +10776,7 @@ app.post('/api/reservas-carro/:id/recusar', async (req, res) => {
 
     const statusReserva = normalizarStatusReserva(reserva.status_solicitacao);
 
-    if (statusReserva !== 'PENDENTE FROTA' && statusReserva !== 'PENDENTE GESTOR') {
+    if (statusReserva !== 'PENDENTE' && statusReserva !== 'PENDENTE') {
       await conn.rollback();
       return res.status(400).json({
         success: false,
