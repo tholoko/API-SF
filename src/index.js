@@ -1167,20 +1167,29 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 app.get('/api/agendamentos/sala/dia', async (req, res) => {
   try {
     const { data } = req.query;
+
     const [rows] = await pool.query(
       `
       SELECT
-        id,
-        sala,
-        inicio,
-        fim,
-        motivo,
-        usuario_agendamento,
-        data_agendamento
-      FROM SF_AGENDAMENTO
-      WHERE status = 'Agendado'
-        AND DATE(inicio) = COALESCE(?, CURDATE())
-      ORDER BY inicio ASC
+        a.id,
+        a.sala,
+        a.inicio,
+        a.fim,
+        a.motivo,
+        a.usuario_agendamento,
+        a.data_agendamento,
+        COALESCE(
+          GROUP_CONCAT(DISTINCT p.email ORDER BY p.email SEPARATOR ', '),
+          ''
+        ) AS participantes_emails
+      FROM SF_AGENDAMENTO a
+      LEFT JOIN SF_AGENDAMENTO_PARTICIPANTE p
+        ON p.id_agendamento = a.id
+      WHERE a.status = 'Agendado'
+        AND DATE(a.inicio) = COALESCE(?, CURDATE())
+      GROUP BY
+        a.id, a.sala, a.inicio, a.fim, a.motivo, a.usuario_agendamento, a.data_agendamento
+      ORDER BY a.inicio ASC
       `,
       [data || null]
     );
@@ -1188,7 +1197,11 @@ app.get('/api/agendamentos/sala/dia', async (req, res) => {
     return res.json({ success: true, items: rows });
   } catch (err) {
     console.error('Erro /api/agendamentos/sala/dia:', err);
-    res.status(500).json({ success: false, message: 'Erro interno no servidor.', error: err.message });
+    res.status(500).json({
+      success: false,
+      message: 'Erro interno no servidor.',
+      error: err.message
+    });
   }
 });
 
