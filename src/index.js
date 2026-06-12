@@ -979,7 +979,15 @@ app.post('/api/agendamentos/sala', async (req, res) => {
   const conn = await pool.getConnection();
 
   try {
-    const { sala, inicio, fim, motivo, usuario, participantes } = req.body;
+    const {
+      sala,
+      inicio,
+      fim,
+      motivo,
+      usuario,
+      participantes,
+      emails_externos
+    } = req.body;
 
     if (!sala || !inicio || !fim || !motivo || !usuario) {
       return res.status(400).json({
@@ -996,6 +1004,12 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     const ids = Array.isArray(participantes)
       ? participantes.map(Number).filter(Number.isFinite)
+      : [];
+
+    const emailsExternos = Array.isArray(emails_externos)
+      ? emails_externos
+          .map(e => String(e || '').trim().toLowerCase())
+          .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
       : [];
 
     await conn.beginTransaction();
@@ -1028,6 +1042,14 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       );
     }
 
+    for (const email of emailsExternos) {
+      await conn.query(
+        `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
+         VALUES (?, NULL, ?, ?)`,
+        [idAgendamento, email, email]
+      );
+    }
+
     for (const p of convidados) {
       const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
 
@@ -1042,29 +1064,38 @@ app.post('/api/agendamentos/sala', async (req, res) => {
            ?, ?, ?, ?,
            ?, ?, ?, ?, ?, 0,
            NOW())`,
-        [
-          idAgendamento, p.id, p.email, p.nome,
-          sala, inicio, fim, motivo, uid
-        ]
+        [idAgendamento, p.id, p.email, p.nome, sala, inicio, fim, motivo, uid]
+      );
+    }
+
+    for (const email of emailsExternos) {
+      const uid = `${idAgendamento}-${email}@sociedadefranciosi`;
+
+      await conn.query(
+        `INSERT INTO SF_EMAIL_QUEUE
+          (tipo, status, tentativas, max_tentativas,
+           id_agendamento, id_usuario, email, nome,
+           sala, inicio, fim, motivo, uid, sequence,
+           created_at)
+         VALUES
+          ('CONVITE_SALA', 'PENDENTE', 0, 5,
+           ?, NULL, ?, ?,
+           ?, ?, ?, ?, ?, 0,
+           NOW())`,
+        [idAgendamento, email, email, sala, inicio, fim, motivo, uid]
       );
     }
 
     await conn.commit();
 
-    if (!convidados.length) {
-      return res.json({
-        success: true,
-        message: 'Agendamento salvo (sem participantes selecionados).',
-        id: idAgendamento,
-        filaEmail: { total: 0, enfileirados: 0 }
-      });
-    }
-
     return res.json({
       success: true,
       message: 'Agendamento salvo. Convites enfileirados para envio.',
       id: idAgendamento,
-      filaEmail: { total: convidados.length, enfileirados: convidados.length }
+      filaEmail: {
+        total: convidados.length + emailsExternos.length,
+        enfileirados: convidados.length + emailsExternos.length
+      }
     });
   } catch (err) {
     try { await conn.rollback(); } catch {}
