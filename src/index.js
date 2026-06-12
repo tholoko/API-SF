@@ -978,6 +978,8 @@ app.post('/api/agendamentos/sala/verificar', async (req, res) => {
 app.post('/api/agendamentos/sala', async (req, res) => {
   const conn = await pool.getConnection();
 
+  console.log('[AGENDAMENTO_SALA] Iniciando requisição');
+
   try {
     const {
       sala,
@@ -989,7 +991,18 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       emails_externos
     } = req.body;
 
+    console.log('[AGENDAMENTO_SALA] Body recebido:', {
+      sala,
+      inicio,
+      fim,
+      motivo,
+      usuario,
+      participantesCount: Array.isArray(participantes) ? participantes.length : 0,
+      emailsExternosCount: Array.isArray(emails_externos) ? emails_externos.length : 0
+    });
+
     if (!sala || !inicio || !fim || !motivo || !usuario) {
+      console.log('[AGENDAMENTO_SALA] Validação falhou: campos obrigatórios ausentes');
       return res.status(400).json({
         success: false,
         message: 'sala, inicio, fim, motivo e usuario são obrigatórios.'
@@ -999,6 +1012,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     const ini = new Date(inicio);
     const end = new Date(fim);
     if (!(end > ini)) {
+      console.log('[AGENDAMENTO_SALA] Validação falhou: fim <= inicio');
       return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
     }
 
@@ -1012,7 +1026,13 @@ app.post('/api/agendamentos/sala', async (req, res) => {
           .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
       : [];
 
+    console.log('[AGENDAMENTO_SALA] Dados normalizados:', {
+      ids,
+      emailsExternos
+    });
+
     await conn.beginTransaction();
+    console.log('[AGENDAMENTO_SALA] Transaction iniciada');
 
     const [ins] = await conn.query(
       `INSERT INTO SF_AGENDAMENTO (sala, inicio, fim, motivo, usuario_agendamento, status, data_agendamento)
@@ -1021,9 +1041,12 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     );
 
     const idAgendamento = ins.insertId;
+    console.log('[AGENDAMENTO_SALA] Agendamento inserido:', { idAgendamento });
 
     let convidados = [];
     if (ids.length) {
+      console.log('[AGENDAMENTO_SALA] Buscando usuários cadastrados:', ids);
+
       const [u] = await conn.query(
         `SELECT id, nome, email
            FROM SF_USUARIO
@@ -1031,10 +1054,20 @@ app.post('/api/agendamentos/sala', async (req, res) => {
             AND email IS NOT NULL AND email <> ''`,
         [ids]
       );
+
       convidados = u;
+      console.log('[AGENDAMENTO_SALA] Usuários encontrados:', convidados.length);
+    } else {
+      console.log('[AGENDAMENTO_SALA] Nenhum usuário cadastrado selecionado');
     }
 
     for (const p of convidados) {
+      console.log('[AGENDAMENTO_SALA] Inserindo participante cadastrado:', {
+        id_usuario: p.id,
+        nome: p.nome,
+        email: p.email
+      });
+
       await conn.query(
         `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
          VALUES (?, ?, ?, ?)`,
@@ -1043,6 +1076,8 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     }
 
     for (const email of emailsExternos) {
+      console.log('[AGENDAMENTO_SALA] Inserindo participante externo:', { email });
+
       await conn.query(
         `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
          VALUES (?, NULL, ?, ?)`,
@@ -1052,6 +1087,12 @@ app.post('/api/agendamentos/sala', async (req, res) => {
 
     for (const p of convidados) {
       const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
+
+      console.log('[AGENDAMENTO_SALA] Enfileirando email cadastrado:', {
+        id_usuario: p.id,
+        email: p.email,
+        uid
+      });
 
       await conn.query(
         `INSERT INTO SF_EMAIL_QUEUE
@@ -1071,6 +1112,11 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     for (const email of emailsExternos) {
       const uid = `${idAgendamento}-${email}@sociedadefranciosi`;
 
+      console.log('[AGENDAMENTO_SALA] Enfileirando email externo:', {
+        email,
+        uid
+      });
+
       await conn.query(
         `INSERT INTO SF_EMAIL_QUEUE
           (tipo, status, tentativas, max_tentativas,
@@ -1087,6 +1133,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     }
 
     await conn.commit();
+    console.log('[AGENDAMENTO_SALA] Transaction commit realizada com sucesso');
 
     return res.json({
       success: true,
@@ -1098,7 +1145,14 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       }
     });
   } catch (err) {
-    try { await conn.rollback(); } catch {}
+    console.error('[AGENDAMENTO_SALA] ERRO:', err);
+    try {
+      await conn.rollback();
+      console.log('[AGENDAMENTO_SALA] Rollback executado');
+    } catch (rbErr) {
+      console.error('[AGENDAMENTO_SALA] Falha no rollback:', rbErr);
+    }
+
     return res.status(500).json({
       success: false,
       message: 'Erro ao salvar agendamento.',
@@ -1106,6 +1160,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     });
   } finally {
     conn.release();
+    console.log('[AGENDAMENTO_SALA] Connection liberada');
   }
 });
 
