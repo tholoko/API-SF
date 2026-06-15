@@ -1392,7 +1392,6 @@ function soNumeros(v) {
   return String(v ?? '').replace(/\D+/g, '');
 }
 
-
 function normalizarEmailNullable(v) {
   const s = String(v ?? '').trim().toLowerCase();
   return s || null;
@@ -1432,6 +1431,9 @@ app.get('/api/gestao-usuarios/cpf/:cpf', async (req, res) => {
         DATA_ADMISSAO AS dataadmissao,
         CENTRO_CUSTO AS localtrabalho,
         LOCAL_TRABALHO AS unidadetrabalho,
+        BATE_PONTO AS bateponto,
+        PERMITE_SALA_REUNIAO_GRANDE AS permitesalareuniaogrande,
+        DATA_INICIO_BATE_PONTO AS datainiciobateponto,
         STATUS AS status,
         CPF AS cpf,
         RG AS rg,
@@ -1442,6 +1444,10 @@ app.get('/api/gestao-usuarios/cpf/:cpf', async (req, res) => {
         ESTADO_CIVIL AS estadocivil,
         TELEFONE_PESSOAL AS telefonepessoal,
         EMAIL_PESSOAL AS emailpessoal,
+        ENDERECO_RESIDENCIAL AS enderecoresidencial,
+        CONTATO_EMERGENCIA_NOME AS contatoemergencianome,
+        CONTATO_EMERGENCIA_PARENTESCO AS contatoemergenciaparentesco,
+        CONTATO_EMERGENCIA_TELEFONE AS contatoemergenciatelefone,
         APELIDO AS apelido,
         NUMERO_CALCADO AS numerocalcado,
         TAMANHO_CAMISA AS tamanhocamisa,
@@ -1530,6 +1536,7 @@ app.post('/api/gestao-usuarios-centro-custo', async (req, res) => {
   }
 });
 
+
 app.get('/api/usuarios', async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -1545,6 +1552,7 @@ app.get('/api/usuarios', async (req, res) => {
         FUNCAO AS funcao,
         DATA_ADMISSAO AS data_admissao,
         BATE_PONTO AS bate_ponto,
+        PERMITE_SALA_REUNIAO_GRANDE AS permite_sala_reuniao_grande,
         DATA_INICIO_BATE_PONTO AS data_inicio_bate_ponto,
         LOCAL_TRABALHO AS local_trabalho,
         MUST_CHANGE_PASSWORD AS must_change_password,
@@ -1557,6 +1565,10 @@ app.get('/api/usuarios', async (req, res) => {
         ESTADO_CIVIL AS estado_civil,
         TELEFONE_PESSOAL AS telefone_pessoal,
         EMAIL_PESSOAL AS email_pessoal,
+        ENDERECO_RESIDENCIAL AS endereco_residencial,
+        CONTATO_EMERGENCIA_NOME AS contato_emergencia_nome,
+        CONTATO_EMERGENCIA_PARENTESCO AS contato_emergencia_parentesco,
+        CONTATO_EMERGENCIA_TELEFONE AS contato_emergencia_telefone,
         APELIDO AS apelido,
         NUMERO_CALCADO AS numero_calcado,
         TAMANHO_CAMISA AS tamanho_camisa,
@@ -1672,6 +1684,12 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
     const data_admissao = nullableDate(req.body?.dataadmissao || req.body?.data_admissao);
 
     const bate_ponto = Number(req.body?.bateponto ?? req.body?.bate_ponto ?? 0) ? 1 : 0;
+    const permite_sala_reuniao_grande = Number(
+      req.body?.permitesalareuniaogrande ??
+      req.body?.permite_sala_reuniao_grande ??
+      0
+    ) ? 1 : 0;
+
     let data_inicio_bate_ponto = nullableDate(
       req.body?.datainiciobateponto || req.body?.data_inicio_bate_ponto
     );
@@ -1700,6 +1718,25 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
 
     const emailPessoalBruto = texto(req.body?.email_pessoal || req.body?.emailpessoal);
     const email_pessoal = emailPessoalBruto ? normalizarEmail(emailPessoalBruto) : null;
+
+    const endereco_residencial = texto(
+      req.body?.enderecoresidencial || req.body?.endereco_residencial
+    );
+
+    const contato_emergencia_nome = titleCaseNome(
+      req.body?.contatoemergencianome || req.body?.contato_emergencia_nome
+    );
+
+    const contatoEmergenciaParentescoBruto = texto(
+      req.body?.contatoemergenciaparentesco || req.body?.contato_emergencia_parentesco
+    );
+    const contato_emergencia_parentesco = contatoEmergenciaParentescoBruto
+      ? contatoEmergenciaParentescoBruto.toUpperCase()
+      : null;
+
+    const contato_emergencia_telefone = somenteNumeros(
+      req.body?.contatoemergenciatelefone || req.body?.contato_emergencia_telefone
+    );
 
     const foto = texto(req.body?.foto);
     const apelido = texto(req.body?.apelido);
@@ -1814,6 +1851,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         FUNCAO,
         DATA_ADMISSAO,
         BATE_PONTO,
+        PERMITE_SALA_REUNIAO_GRANDE,
         DATA_INICIO_BATE_PONTO,
         CENTRO_CUSTO,
         LOCAL_TRABALHO,
@@ -1828,6 +1866,10 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         ESTADO_CIVIL,
         TELEFONE_PESSOAL,
         EMAIL_PESSOAL,
+        ENDERECO_RESIDENCIAL,
+        CONTATO_EMERGENCIA_NOME,
+        CONTATO_EMERGENCIA_PARENTESCO,
+        CONTATO_EMERGENCIA_TELEFONE,
         FOTO,
         APELIDO,
         NUMERO_CALCADO,
@@ -1838,7 +1880,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
         QUANTIDADE_FILHOS,
         FILHOS,
         MUST_CHANGE_PASSWORD
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `, [
       nome,
       email,
@@ -1849,6 +1891,7 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
       funcao || null,
       data_admissao,
       bate_ponto,
+      permite_sala_reuniao_grande,
       data_inicio_bate_ponto,
       centro_custo || null,
       local_trabalho || null,
@@ -1863,6 +1906,10 @@ app.post('/api/gestao-usuarios-adicionar', async (req, res) => {
       estado_civil || null,
       telefone_pessoal || null,
       email_pessoal || null,
+      endereco_residencial || null,
+      contato_emergencia_nome || null,
+      contato_emergencia_parentesco || null,
+      contato_emergencia_telefone || null,
       foto || null,
       apelido || null,
       Number.isFinite(numero_calcado) ? numero_calcado : null,
@@ -1916,6 +1963,12 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
     const data_admissao = nullableDate(req.body?.dataadmissao || req.body?.data_admissao);
 
     const bate_ponto = Number(req.body?.bateponto ?? req.body?.bate_ponto ?? 0) ? 1 : 0;
+    const permite_sala_reuniao_grande = Number(
+      req.body?.permitesalareuniaogrande ??
+      req.body?.permite_sala_reuniao_grande ??
+      0
+    ) ? 1 : 0;
+
     let data_inicio_bate_ponto = nullableDate(
       req.body?.datainiciobateponto || req.body?.data_inicio_bate_ponto
     );
@@ -1944,6 +1997,25 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
 
     const email_pessoal_bruto = req.body?.email_pessoal ?? req.body?.emailpessoal;
     const email_pessoal = texto(email_pessoal_bruto) ? normalizarEmail(email_pessoal_bruto) : null;
+
+    const endereco_residencial = texto(
+      req.body?.enderecoresidencial || req.body?.endereco_residencial
+    );
+
+    const contato_emergencia_nome = titleCaseNome(
+      req.body?.contatoemergencianome || req.body?.contato_emergencia_nome
+    );
+
+    const contatoEmergenciaParentescoBruto = texto(
+      req.body?.contatoemergenciaparentesco || req.body?.contato_emergencia_parentesco
+    );
+    const contato_emergencia_parentesco = contatoEmergenciaParentescoBruto
+      ? contatoEmergenciaParentescoBruto.toUpperCase()
+      : null;
+
+    const contato_emergencia_telefone = somenteNumeros(
+      req.body?.contatoemergenciatelefone || req.body?.contato_emergencia_telefone
+    );
 
     const foto = req.body?.foto;
     const apelido = texto(req.body?.apelido);
@@ -2068,6 +2140,7 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
              FUNCAO = ?,
              DATA_ADMISSAO = ?,
              BATE_PONTO = ?,
+             PERMITE_SALA_REUNIAO_GRANDE = ?,
              DATA_INICIO_BATE_PONTO = ?,
              CENTRO_CUSTO = ?,
              LOCAL_TRABALHO = ?,
@@ -2082,6 +2155,10 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
              ESTADO_CIVIL = ?,
              TELEFONE_PESSOAL = ?,
              EMAIL_PESSOAL = ?,
+             ENDERECO_RESIDENCIAL = ?,
+             CONTATO_EMERGENCIA_NOME = ?,
+             CONTATO_EMERGENCIA_PARENTESCO = ?,
+             CONTATO_EMERGENCIA_TELEFONE = ?,
              FOTO = ?,
              APELIDO = ?,
              NUMERO_CALCADO = ?,
@@ -2101,6 +2178,7 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
       funcao || null,
       data_admissao,
       bate_ponto,
+      permite_sala_reuniao_grande,
       data_inicio_bate_ponto,
       centro_custo || null,
       local_trabalho || null,
@@ -2115,6 +2193,10 @@ app.put('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
       estado_civil || null,
       telefone_pessoal || null,
       email_pessoal || null,
+      endereco_residencial || null,
+      contato_emergencia_nome || null,
+      contato_emergencia_parentesco || null,
+      contato_emergencia_telefone || null,
       fotoFinal,
       apelido || null,
       Number.isFinite(numero_calcado) ? numero_calcado : null,
@@ -2188,6 +2270,7 @@ app.get('/api/gestao-usuarios', async (req, res) => {
         FUNCAO,
         DATA_ADMISSAO AS DATAADMISSAO,
         BATE_PONTO AS BATEPONTO,
+        PERMITE_SALA_REUNIAO_GRANDE AS PERMITESALAREUNIAOGRANDE,
         DATA_INICIO_BATE_PONTO AS DATAINICIOBATEPONTO,
         CENTRO_CUSTO AS LOCALTRABALHO,
         LOCAL_TRABALHO AS UNIDADETRABALHO,
@@ -2202,6 +2285,10 @@ app.get('/api/gestao-usuarios', async (req, res) => {
         ESTADO_CIVIL AS ESTADOCIVIL,
         TELEFONE_PESSOAL AS TELEFONEPESSOAL,
         EMAIL_PESSOAL AS EMAILPESSOAL,
+        ENDERECO_RESIDENCIAL AS ENDERECORESIDENCIAL,
+        CONTATO_EMERGENCIA_NOME AS CONTATOEMERGENCIANOME,
+        CONTATO_EMERGENCIA_PARENTESCO AS CONTATOEMERGENCIAPARENTESCO,
+        CONTATO_EMERGENCIA_TELEFONE AS CONTATOEMERGENCIATELEFONE,
         FOTO,
         APELIDO,
         NUMERO_CALCADO AS NUMEROCALCADO,
@@ -2256,6 +2343,7 @@ app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
          FUNCAO,
          DATA_ADMISSAO AS DATAADMISSAO,
          BATE_PONTO AS BATEPONTO,
+         PERMITE_SALA_REUNIAO_GRANDE AS PERMITESALAREUNIAOGRANDE,
          DATA_INICIO_BATE_PONTO AS DATAINICIOBATEPONTO,
          CENTRO_CUSTO AS LOCALTRABALHO,
          LOCAL_TRABALHO AS UNIDADETRABALHO,
@@ -2270,6 +2358,10 @@ app.get('/api/gestao-usuarios/:id(\\d+)', async (req, res) => {
          ESTADO_CIVIL AS ESTADOCIVIL,
          TELEFONE_PESSOAL AS TELEFONEPESSOAL,
          EMAIL_PESSOAL AS EMAILPESSOAL,
+         ENDERECO_RESIDENCIAL AS ENDERECORESIDENCIAL,
+         CONTATO_EMERGENCIA_NOME AS CONTATOEMERGENCIANOME,
+         CONTATO_EMERGENCIA_PARENTESCO AS CONTATOEMERGENCIAPARENTESCO,
+         CONTATO_EMERGENCIA_TELEFONE AS CONTATOEMERGENCIATELEFONE,
          FOTO,
          APELIDO,
          NUMERO_CALCADO AS NUMEROCALCADO,
