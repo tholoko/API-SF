@@ -10483,13 +10483,7 @@ app.post('/api/reservas-carro/:id/aprovar', async (req, res) => {
 
     console.log(reserva.status_solicitacao)
 
-    if (reserva.status_solicitacao !== 'PENDENTE') {
-      await conn.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'Somente reservas pendentes podem ser aprovadas.'
-      });
-    }
+
 
     const [rowsUsuario] = await conn.query(`
       SELECT
