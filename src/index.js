@@ -10483,7 +10483,13 @@ app.post('/api/reservas-carro/:id/aprovar', async (req, res) => {
 
     console.log(reserva.status_solicitacao)
 
-
+    if (reserva.status_solicitacao !== 'PENDENTE') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente reservas pendentes podem ser aprovadas.'
+      });
+    }
 
     const [rowsUsuario] = await conn.query(`
       SELECT
@@ -10731,7 +10737,13 @@ app.post('/api/reservas-carro-formulario/:id/aprovar', async (req, res) => {
     }
 
 
-
+    if (normalizarStatusReserva(reserva.status_solicitacao) !== 'PENDENTE FROTA') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente reservas pendentes podem ser aprovadas.'
+      });
+    }
 
     if (Number(reserva.termo_aceito || 0) !== 1) {
       await conn.rollback();
@@ -11002,6 +11014,136 @@ app.post('/api/reservas-carro/:id/recusar', async (req, res) => {
         motivo_recusa = ?,
         usuario_recusa = ?,
         data_recusa = NOW()
+      WHERE id = ?
+    `, [motivoRecusa, usuarioRecusa, idReserva]);
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Reserva recusada com sucesso.'
+    });
+  } catch (err) {
+    if (conn) {
+      try { await conn.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao recusar reserva:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao recusar reserva.',
+      error: err.message
+    });
+  } finally {
+    if (conn) conn.release();
+  }
+});
+
+app.post('/api/reservas-carro/:id/refazerdevolucao', async (req, res) => {
+  let conn;
+
+  try {
+    const idReserva = Number(req.params.id);
+    const usuarioRecusa = normalizarTexto(
+      req.body?.usuarioRecusa ||
+      req.headers['x-usuario'] ||
+      req.headers['x-user']
+    );
+    const motivoRecusa = normalizarTexto(req.body?.motivoRecusa);
+
+    if (!idReserva) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe um id de reserva válido.'
+      });
+    }
+
+    if (!usuarioRecusa) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o usuário que está recusando a reserva.'
+      });
+    }
+
+    if (!motivoRecusa) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o motivo da recusa.'
+      });
+    }
+
+    conn = await pool.getConnection();
+    await conn.query("SET time_zone = '-03:00'");
+    await conn.beginTransaction();
+
+    const [rowsReserva] = await conn.query(`
+      SELECT
+        id,
+        status_solicitacao
+      FROM SF_RESERVA_CARRO
+      WHERE id = ?
+      LIMIT 1
+    `, [idReserva]);
+
+    const reserva = rowsReserva?.[0];
+
+    if (!reserva) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Reserva não encontrada.'
+      });
+    }
+
+    const statusReserva = normalizarStatusReserva(reserva.status_solicitacao);
+
+    if (statusReserva !== 'AGUARDANDO_CONFIRMACAO') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente reservas AGUARDANDO_CONFIRMACAO de devolução podem ser recusadas.'
+      });
+    }
+
+    const [usuarioRows] = await conn.query(`
+      SELECT
+        u.ID,
+        u.NOME,
+        u.PERFIL,
+        p.aprovar_reserva_carro
+      FROM SF_USUARIO u
+      LEFT JOIN SF_PERFIL p
+        ON UPPER(TRIM(p.nome)) = UPPER(TRIM(u.PERFIL))
+      WHERE UPPER(TRIM(u.NOME)) = UPPER(TRIM(?))
+      LIMIT 1
+    `, [usuarioRecusa]);
+
+    if (!usuarioRows.length) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Usuário solicitante não encontrado ou sem perfil válido.'
+      });
+    }
+
+    const usuarioDb = usuarioRows[0];
+    const podeAprovarOuRecusar = Number(usuarioDb.aprovar_reserva_carro) === 1;
+
+    if (!podeAprovarOuRecusar) {
+      await conn.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para recusar esta reserva.'
+      });
+    }
+
+    await conn.query(`
+      UPDATE SF_RESERVA_CARRO
+      SET
+        status_solicitacao = 'REFAZER_DEVOLUCAO',
+        motivo_refazer = ?,
+        usuario_refazer = ?,
+        data_refazer = NOW()
       WHERE id = ?
     `, [motivoRecusa, usuarioRecusa, idReserva]);
 
