@@ -10967,6 +10967,13 @@ app.post('/api/reservas-carro/:id/recusar', async (req, res) => {
 
     const statusReserva = normalizarStatusReserva(reserva.status_solicitacao);
 
+    if (statusReserva !== 'PENDENTE' && statusReserva !== 'PENDENTE FROTA') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente reservas pendentes de frota ou gestor podem ser recusadas.'
+      });
+    }
 
     const [usuarioRows] = await conn.query(`
       SELECT
