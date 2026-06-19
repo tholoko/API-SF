@@ -9687,6 +9687,9 @@ app.get('/api/reservas-carro/:id', async (req, res) => {
         rc.aprovador_gestor,
         rc.data_aprovacao_gestor,
         rc.veiculo_id,
+        rc.motivo_refazer,
+        rc.usuario_refazer,
+        rc.data_refazer,
 
         rc.termo_aceito,
         rc.data_aceite_termo,
@@ -10483,7 +10486,13 @@ app.post('/api/reservas-carro/:id/aprovar', async (req, res) => {
 
     console.log(reserva.status_solicitacao)
 
-
+    if (reserva.status_solicitacao !== 'PENDENTE' && reserva.status_solicitacao !== 'PENDENTE FROTA') {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente reservas pendentes podem ser aprovadas.'
+      });
+    }
 
     const [rowsUsuario] = await conn.query(`
       SELECT
@@ -11764,11 +11773,11 @@ app.post('/api/reservas-carro/:id/devolucao', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Reserva não encontrada.' });
     }
 
-    if (normalizarStatusReserva(reserva.status_solicitacao) !== 'APROVADA') {
+    if (!['APROVADA', 'REFAZER_DEVOLUCAO'].includes(normalizarStatusReserva(reserva.status_solicitacao))) {
       await conn.rollback();
       return res.status(400).json({
         success: false,
-        message: 'Somente reservas aprovadas podem solicitar devolução.'
+        message: 'Somente reservas aprovadas ou com refazer devolução podem solicitar devolução.'
       });
     }
 
