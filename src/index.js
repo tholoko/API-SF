@@ -20662,6 +20662,8 @@ app.get("/api/marketing/imagens-inicial", async (req, res) => {
       FROM SF_MARKETING_IMAGEM
       WHERE ATIVO = 1
         AND EXIBIR_NO_PAINEL = 1
+        AND (DATA_INICIO IS NULL OR DATA_INICIO <= CURDATE())
+        AND (DATA_FIM IS NULL OR DATA_FIM >= CURDATE())
       ORDER BY ORDEM ASC, ID ASC
     `);
 
