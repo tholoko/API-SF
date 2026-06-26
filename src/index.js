@@ -8187,6 +8187,7 @@ app.get('/api/perfis', async (req, res) => {
         jornada,
         vinculo_jornada,
         solicitacoes,
+        solicitacoes_fazendas,
         cadastro_equipamento,
         aprovador_ponto_gestor,
         aprovador_ponto_rh
@@ -8259,6 +8260,7 @@ app.get('/api/perfis/:id', async (req, res) => {
         jornada,
         vinculo_jornada,
         solicitacoes,
+        solicitacoes_fazendas,
         cadastro_equipamento,
         aprovador_ponto_gestor,
         aprovador_ponto_rh
@@ -8346,6 +8348,7 @@ app.post('/api/perfis', async (req, res) => {
       jornada: bit(req.body?.jornada),
       vinculo_jornada: bit(req.body?.vinculo_jornada),
       solicitacoes: bit(req.body?.solicitacoes),
+      solicitacoes_fazendas: bit(req.body?.solicitacoes_fazendas),
       cadastro_equipamento: bit(req.body?.cadastro_equipamento),
       aprovador_ponto_gestor: bit(req.body?.aprovador_ponto_gestor),
       aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh)
@@ -8393,10 +8396,11 @@ app.post('/api/perfis', async (req, res) => {
         jornada,
         vinculo_jornada,
         solicitacoes,
+        solicitacoes_fazendas,
         cadastro_equipamento,
         aprovador_ponto_gestor,
         aprovador_ponto_rh
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       payloadDepois.nome,
       payloadDepois.pedidos,
@@ -8438,6 +8442,7 @@ app.post('/api/perfis', async (req, res) => {
       payloadDepois.jornada,
       payloadDepois.vinculo_jornada,
       payloadDepois.solicitacoes,
+      payloadDepois.solicitacoes_fazendas,
       payloadDepois.cadastro_equipamento,
       payloadDepois.aprovador_ponto_gestor,
       payloadDepois.aprovador_ponto_rh
@@ -8569,6 +8574,7 @@ app.put('/api/perfis/:id', async (req, res) => {
       jornada: bit(req.body?.jornada),
       vinculo_jornada: bit(req.body?.vinculo_jornada),
       solicitacoes: bit(req.body?.solicitacoes),
+      solicitacoes_fazendas: bit(req.body?.solicitacoes_fazendas),
       cadastro_equipamento: bit(req.body?.cadastro_equipamento),
       aprovador_ponto_gestor: bit(req.body?.aprovador_ponto_gestor),
       aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh)
@@ -8616,6 +8622,7 @@ app.put('/api/perfis/:id', async (req, res) => {
         jornada = ?,
         vinculo_jornada = ?,
         solicitacoes = ?,
+        solicitacoes_fazendas = ?,
         cadastro_equipamento = ?,
         aprovador_ponto_gestor = ?,
         aprovador_ponto_rh = ?
@@ -8661,6 +8668,7 @@ app.put('/api/perfis/:id', async (req, res) => {
       depois.jornada,
       depois.vinculo_jornada,
       depois.solicitacoes,
+      depois.solicitacoes_fazendas,
       depois.cadastro_equipamento,
       depois.aprovador_ponto_gestor,
       depois.aprovador_ponto_rh,
@@ -8845,6 +8853,7 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         COALESCE(p.jornada, 0) AS jornada,
         COALESCE(p.vinculo_jornada, 0) AS vinculo_jornada,
         COALESCE(p.solicitacoes, 0) AS solicitacoes,
+        COALESCE(p.solicitacoes_fazendas, 0) AS solicitacoes_fazendas,
         COALESCE(p.cadastro_equipamento, 0) AS cadastro_equipamento
 
       FROM SF_USUARIO u
@@ -8884,6 +8893,7 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         jornada: Number(item.jornada ?? 0),
         vinculojornada: Number(item.vinculo_jornada ?? 0),
         solicitacoes: Number(item.solicitacoes ?? 0),
+        solicitacoes_fazendas: Number(item.solicitacoes_fazendas ?? 0),
         cadastroequipamento: Number(item.cadastro_equipamento ?? 0)
       }
     };
@@ -19185,10 +19195,48 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
       if (!idsPermitidos.includes(usuarioLogadoId)) {
         idsPermitidos.push(usuarioLogadoId);
       }
-    } else if (vinculo?.ID_SETOR_ORGANOGRAMA && (podeUnidade || podeFilhos)) {
-      let setoresIds = [Number(vinculo.ID_SETOR_ORGANOGRAMA)].filter(Boolean);
+    } else {
+      const idsPorUnidade = [];
+      const idsPorFilhos = [];
 
-      if (podeFilhos) {
+      if (podeUnidade) {
+        const [usuarioLocalRows] = await pool.query(`
+          SELECT
+            id,
+            LOCAL_TRABALHO
+          FROM SF_USUARIO
+          WHERE id = ?
+          LIMIT 1
+        `, [usuarioLogadoId]);
+
+        const usuarioLocal = Array.isArray(usuarioLocalRows) && usuarioLocalRows.length
+          ? usuarioLocalRows[0]
+          : null;
+
+        const localTrabalhoLogado = textoLimpo(usuarioLocal?.LOCAL_TRABALHO);
+
+        if (localTrabalhoLogado) {
+          const [usuariosMesmoLocalRows] = await pool.query(`
+            SELECT DISTINCT U.id
+            FROM SF_USUARIO U
+            WHERE U.EMAIL IS NOT NULL
+              AND U.EMAIL <> ''
+              AND U.status <> 'Desativado'
+              AND COALESCE(U.BATE_PONTO, 0) = 1
+              AND UPPER(TRIM(COALESCE(U.LOCAL_TRABALHO, ''))) = UPPER(TRIM(?))
+          `, [localTrabalhoLogado]);
+
+          idsPorUnidade.push(
+            ...usuariosMesmoLocalRows
+              .map((item) => somenteNumeros(item?.id))
+              .filter(Boolean)
+          );
+        }
+      }
+
+      if (podeFilhos && vinculo?.ID_SETOR_ORGANOGRAMA) {
+        let setoresIds = [Number(vinculo.ID_SETOR_ORGANOGRAMA)].filter(Boolean);
+
         const visitados = new Set();
         const fila = [...setoresIds];
 
@@ -19214,25 +19262,31 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
         }
 
         setoresIds = [...new Set(setoresIds)];
-      }
 
-      if (setoresIds.length) {
-        const placeholdersSetores = setoresIds.map(() => '?').join(', ');
-        const [usuariosPermitidosRows] = await pool.query(`
-          SELECT DISTINCT ID_USUARIO
-          FROM SF_ORGANOGRAMA_USUARIO_SETOR
-          WHERE ID_SETOR_ORGANOGRAMA IN (${placeholdersSetores})
-            AND COALESCE(STATUS, 1) = 1
-        `, setoresIds);
+        if (setoresIds.length) {
+          const placeholdersSetores = setoresIds.map(() => '?').join(', ');
+          const [usuariosPermitidosRows] = await pool.query(`
+            SELECT DISTINCT ID_USUARIO
+            FROM SF_ORGANOGRAMA_USUARIO_SETOR
+            WHERE ID_SETOR_ORGANOGRAMA IN (${placeholdersSetores})
+              AND COALESCE(STATUS, 1) = 1
+          `, setoresIds);
 
-        idsPermitidos = usuariosPermitidosRows
-          .map((item) => somenteNumeros(item?.ID_USUARIO))
-          .filter(Boolean);
-
-        if (!idsPermitidos.includes(usuarioLogadoId)) {
-          idsPermitidos.push(usuarioLogadoId);
+          idsPorFilhos.push(
+            ...usuariosPermitidosRows
+              .map((item) => somenteNumeros(item?.ID_USUARIO))
+              .filter(Boolean)
+          );
         }
       }
+
+      idsPermitidos = [
+        usuarioLogadoId,
+        ...idsPorUnidade,
+        ...idsPorFilhos
+      ].filter(Boolean);
+
+      idsPermitidos = [...new Set(idsPermitidos)];
     }
 
     idsPermitidos = [...new Set(idsPermitidos)];
@@ -19262,6 +19316,7 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
         U.EMAIL AS email,
         U.status,
         U.setor,
+        U.LOCAL_TRABALHO AS local_trabalho,
         U.FUNCAO AS funcao,
         U.CPF AS cpf,
         U.BATE_PONTO AS bate_ponto,
@@ -19424,6 +19479,7 @@ app.get('/api/solicitacoes/usuarios-dia', async (req, res) => {
         nome: String(usuario?.nome ?? '').trim(),
         email: String(usuario?.email ?? '').trim(),
         setor: String(usuario?.setor ?? '').trim(),
+        localTrabalho: String(usuario?.local_trabalho ?? '').trim(),
         funcao: String(usuario?.funcao ?? '').trim(),
         cpf: cpfUsuario,
         batePonto,
@@ -20639,39 +20695,1390 @@ app.get('/api/solicitacoes/justificativas-ponto-permissoes/:usuarioId', async (r
   }
 });
 
-app.get("/api/marketing/imagens-inicial", async (req, res) => {
-  try {
-    const [rows] = await pool.query(`
-      SELECT
-        ID,
-        NOME_ARQUIVO,
-        URL,
-        TITULO,
-        DESCRICAO,
-        CARD,
-        ATIVO,
-        EXIBIR_NO_PAINEL,
-        DATA_INICIO,
-        DATA_FIM,
-        RECORRENCIA,
-        APENAS_UMA_VEZ,
-        ULTIMA_EXIBICAO_EM,
-        ORDEM,
-        DIA_EXIBICAO,
-        MES_EXIBICAO
-      FROM SF_MARKETING_IMAGEM
-      WHERE ATIVO = 1
-        AND EXIBIR_NO_PAINEL = 1
-      ORDER BY ORDEM ASC, ID ASC
-    `);
+// Justificativas Fazendas
 
-    res.json(rows);
+app.get('/api/solicitacoes-fazendas/usuarios-permitidos', async (req, res) => {
+  try {
+    const somenteNumeros = (valor) => String(valor ?? '').replace(/\D+/g, '').trim();
+
+    const idUsuarioLogado = somenteNumeros(
+      req.usuario?.id ||
+      req.user?.id ||
+      req.session?.usuario?.id ||
+      req.session?.user?.id ||
+      req.headers['x-usuario-id'] ||
+      req.headers['x-user-id'] ||
+      req.query?.usuarioLogadoId ||
+      req.query?.idusuario
+    );
+
+    if (!idUsuarioLogado) {
+      return res.status(400).json({
+        success: false,
+        message: 'Informe o id do usuário logado.'
+      });
+    }
+
+    const sql = `
+      WITH RECURSIVE
+      usuario_logado AS (
+          SELECT
+              u.id,
+              u.nome,
+              u.perfil,
+              u.BATE_PONTO,
+              u.LOCAL_TRABALHO
+          FROM SF_USUARIO u
+          WHERE u.id = ?
+      ),
+      perfil_logado AS (
+          SELECT
+              p.id,
+              p.nome,
+              p.aprovador_ponto_gestor,
+              p.aprovador_ponto_rh
+          FROM SF_PERFIL p
+          INNER JOIN usuario_logado ul
+              ON TRIM(ul.perfil) = TRIM(p.nome)
+      ),
+      vinculos_usuario AS (
+          SELECT
+              ous.ID_USUARIO,
+              ous.ID_SETOR_ORGANOGRAMA,
+              ous.PODE_VER_PONTO_TODOS,
+              ous.PODE_VER_TODOS_PONTOS_UNIDADE,
+              ous.PODE_VER_TODOS_PONTOS_FILHOS
+          FROM SF_ORGANOGRAMA_USUARIO_SETOR ous
+          INNER JOIN usuario_logado ul
+              ON ul.id = ous.ID_USUARIO
+          WHERE ous.STATUS = 1
+      ),
+      tem_permissao_aprovador AS (
+          SELECT
+              CASE
+                  WHEN COALESCE(MAX(pl.aprovador_ponto_gestor), 0) = 1
+                    OR COALESCE(MAX(pl.aprovador_ponto_rh), 0) = 1
+                  THEN 1 ELSE 0
+              END AS permitido
+          FROM perfil_logado pl
+      ),
+      setores_filhos AS (
+          SELECT
+              vu.ID_SETOR_ORGANOGRAMA AS id_setor
+          FROM vinculos_usuario vu
+          WHERE UPPER(COALESCE(vu.PODE_VER_TODOS_PONTOS_FILHOS, 'nao')) IN ('SIM','S')
+
+          UNION ALL
+
+          SELECT
+              o.id_setor_filho
+          FROM SF_ORGANOGRAMA o
+          INNER JOIN setores_filhos sf
+              ON o.id_setor_pai = sf.id_setor
+          WHERE o.status = 1
+      ),
+      usuarios_filhos AS (
+          SELECT DISTINCT
+              ous.ID_USUARIO
+          FROM SF_ORGANOGRAMA_USUARIO_SETOR ous
+          INNER JOIN setores_filhos sf
+              ON sf.id_setor = ous.ID_SETOR_ORGANOGRAMA
+          WHERE ous.STATUS = 1
+      ),
+      usuarios_todos AS (
+          SELECT u.id, u.nome
+          FROM SF_USUARIO u
+          WHERE u.BATE_PONTO = 1
+      ),
+      usuarios_mesma_unidade AS (
+          SELECT u.id, u.nome
+          FROM SF_USUARIO u
+          INNER JOIN usuario_logado ul
+              ON u.LOCAL_TRABALHO = ul.LOCAL_TRABALHO
+          WHERE u.BATE_PONTO = 1
+      ),
+      usuarios_filhos_com_ponto AS (
+          SELECT DISTINCT u.id, u.nome
+          FROM SF_USUARIO u
+          INNER JOIN usuarios_filhos uf
+              ON uf.ID_USUARIO = u.id
+          WHERE u.BATE_PONTO = 1
+      ),
+      usuario_proprio AS (
+          SELECT u.id, u.nome
+          FROM SF_USUARIO u
+          INNER JOIN usuario_logado ul
+              ON ul.id = u.id
+          WHERE u.BATE_PONTO = 1
+      )
+      SELECT DISTINCT id, nome
+      FROM (
+          SELECT ut.id, ut.nome
+          FROM usuarios_todos ut
+          WHERE EXISTS (
+              SELECT 1
+              FROM vinculos_usuario vu
+              CROSS JOIN tem_permissao_aprovador tpa
+              WHERE tpa.permitido = 1
+                AND UPPER(COALESCE(vu.PODE_VER_PONTO_TODOS, 'nao')) IN ('SIM','S')
+          )
+
+          UNION
+
+          SELECT umu.id, umu.nome
+          FROM usuarios_mesma_unidade umu
+          WHERE EXISTS (
+              SELECT 1
+              FROM vinculos_usuario vu
+              CROSS JOIN tem_permissao_aprovador tpa
+              WHERE tpa.permitido = 1
+                AND UPPER(COALESCE(vu.PODE_VER_TODOS_PONTOS_UNIDADE, 'nao')) IN ('SIM','S')
+          )
+
+          UNION
+
+          SELECT ufp.id, ufp.nome
+          FROM usuarios_filhos_com_ponto ufp
+          WHERE EXISTS (
+              SELECT 1
+              FROM vinculos_usuario vu
+              CROSS JOIN tem_permissao_aprovador tpa
+              WHERE tpa.permitido = 1
+                AND UPPER(COALESCE(vu.PODE_VER_TODOS_PONTOS_FILHOS, 'nao')) IN ('SIM','S')
+          )
+
+          UNION
+
+          SELECT up.id, up.nome
+          FROM usuario_proprio up
+          WHERE NOT EXISTS (
+              SELECT 1
+              FROM vinculos_usuario vu
+              CROSS JOIN tem_permissao_aprovador tpa
+              WHERE tpa.permitido = 1
+                AND (
+                    UPPER(COALESCE(vu.PODE_VER_PONTO_TODOS, 'nao')) IN ('SIM','S')
+                 OR UPPER(COALESCE(vu.PODE_VER_TODOS_PONTOS_UNIDADE, 'nao')) IN ('SIM','S')
+                 OR UPPER(COALESCE(vu.PODE_VER_TODOS_PONTOS_FILHOS, 'nao')) IN ('SIM','S')
+                )
+          )
+      ) base
+      ORDER BY nome
+    `;
+
+    const [rows] = await pool.query(sql, [idUsuarioLogado]);
+
+    return res.json({
+      success: true,
+      usuarioLogadoId: idUsuarioLogado,
+      total: Array.isArray(rows) ? rows.length : 0,
+      items: Array.isArray(rows)
+        ? rows.map(item => ({
+            id: String(item.id ?? '').trim(),
+            nome: String(item.nome ?? '').trim()
+          }))
+        : []
+    });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Erro ao buscar imagens de marketing" });
+    console.error('Erro em /api/solicitacoes-fazendas/usuarios-permitidos:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao consultar usuários permitidos.',
+      error: error.message
+    });
   }
 });
 
+
+
+// =====================
+// SOLICITAÇÕES FAZENDA
+// =====================
+
+const PASTA_SOLICITACOES_FAZENDA = path.join(DIRETORIO_VOLUME_anexos, 'solicitacoes-fazenda');
+fs.mkdirSync(PASTA_SOLICITACOES_FAZENDA, { recursive: true });
+
+app.use('/anexos/solicitacoes-fazenda', express.static(PASTA_SOLICITACOES_FAZENDA));
+
+function apenasNomeArquivoSeguroSLFZ(nome = '') {
+  return String(nome)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w.\-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function gerarCodigoSolicitacaoFazenda() {
+  const agora = new Date();
+  const y = agora.getFullYear();
+  const m = String(agora.getMonth() + 1).padStart(2, '0');
+  const d = String(agora.getDate()).padStart(2, '0');
+  const t = Date.now().toString().slice(-6);
+  return `SF-${y}${m}${d}-${t}`;
+}
+
+const storageSolicitacoesFazenda = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, PASTA_SOLICITACOES_FAZENDA),
+  filename: (req, file, cb) => {
+    const original = apenasNomeArquivoSeguroSLFZ(file.originalname || 'arquivo');
+    const ext = path.extname(original);
+    const nomeBase = path.basename(original, ext).slice(0, 80);
+    const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    cb(null, `${nomeBase}-${unico}${ext}`);
+  }
+});
+
+const uploadSolicitacaoFazenda = multer({
+  storage: storageSolicitacoesFazenda,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+function paraInt(v, padrao = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : padrao;
+}
+
+function validarTipoSolicitacao(tipo) {
+  const tipos = [
+    'FALTA',
+    'ATRASO',
+    'HORAEXTRA',
+    'SAIDAANTECIPADA',
+    'ESQUECEUBATIDA',
+    'ATESTADO',
+    'FAZENDA',
+    'FOLGA',
+    'DESCONTARBANCO',
+    'OUTROS'
+  ];
+  return tipos.includes(tipo);
+}
+
+function validarCamposPorTipo({
+  tipoSolicitacao,
+  dataReferencia,
+  horaReferencia,
+  dataHoraInicial,
+  dataHoraFinal,
+  quantidadeHoras,
+  quantidadeMinutos,
+  batidas,
+  reqFile,
+  anexoExistente = false
+}) {
+  if (['FALTA', 'ATESTADO', 'FOLGA'].includes(tipoSolicitacao)) {
+    if (!dataHoraInicial || !dataHoraFinal) {
+      return 'Informe data e hora inicial e final.';
+    }
+  }
+
+  if (tipoSolicitacao === 'ATRASO') {
+    if (!dataReferencia || !horaReferencia) {
+      return 'Informe o dia e o horário do atraso.';
+    }
+  }
+
+  if (tipoSolicitacao === 'HORAEXTRA') {
+    if (!dataReferencia) {
+      return 'Informe a data da hora extra.';
+    }
+    if (quantidadeHoras < 0 || quantidadeMinutos < 0) {
+      return 'Horas e minutos devem ser valores positivos.';
+    }
+  }
+
+  if (['SAIDAANTECIPADA', 'DESCONTARBANCO'].includes(tipoSolicitacao)) {
+    if (!dataReferencia || !horaReferencia) {
+      return 'Informe a data e a hora.';
+    }
+  }
+
+  if (tipoSolicitacao === 'ESQUECEUBATIDA' && !batidas.length) {
+    return 'Informe ao menos uma batida.';
+  }
+
+  if (tipoSolicitacao === 'ATESTADO' && !reqFile && !anexoExistente) {
+    return 'Anexo é obrigatório para atestado.';
+  }
+
+  return null;
+}
+
+function mapearSolicitacao(row) {
+  return {
+    id: row.id,
+    codigo: row.codigo,
+    usuarioId: row.usuario_id,
+    usuarioNome: row.usuario_nome,
+    fazenda: row.usuario_nome,
+    responsavel: row.responsavel,
+    tipoSolicitacao: row.tipo_solicitacao,
+    descricao: row.descricao,
+    dataReferencia: row.data_referencia,
+    horaReferencia: row.hora_referencia,
+    dataHoraInicial: row.data_hora_inicial,
+    dataHoraFinal: row.data_hora_final,
+    quantidadeHoras: row.quantidade_horas,
+    quantidadeMinutos: row.quantidade_minutos,
+    status: row.status,
+    criadoPorId: row.criado_por_id,
+    criadoPorNome: row.criado_por_nome,
+    criadoEm: row.criado_em,
+    atualizadoEm: row.atualizado_em,
+
+    aprovadoGestorPorId: row.aprovado_gestor_por_id,
+    aprovadoGestorPorNome: row.aprovado_gestor_por_nome,
+    aprovadoGestorEm: row.aprovado_gestor_em,
+
+    aprovadoRhPorId: row.aprovado_rh_por_id,
+    aprovadoRhPorNome: row.aprovado_rh_por_nome,
+    aprovadoRhEm: row.aprovado_rh_em,
+
+    recusadoPorId: row.recusado_por_id,
+    recusadoPorNome: row.recusado_por_nome,
+    recusadoEm: row.recusado_em,
+    motivoRecusa: row.motivo_recusa
+  };
+}
+
+app.get('/api/solicitacoes-fazendas', async (req, res) => {
+  try {
+    const usuarioLogadoId = paraInt(req.query.usuarioLogadoId, 0);
+
+    const sql = `
+      SELECT
+        sf.*
+      FROM SF_SOLICITACAO_FAZENDA sf
+      WHERE (? = 0 OR sf.criado_por_id = ? OR sf.usuario_id = ?)
+      ORDER BY sf.id DESC
+    `;
+
+    const [rows] = await pool.query(sql, [
+      usuarioLogadoId,
+      usuarioLogadoId,
+      usuarioLogadoId
+    ]);
+
+    return res.json({
+      success: true,
+      items: rows.map(mapearSolicitacao)
+    });
+  } catch (err) {
+    console.error('Erro ao listar solicitações da fazenda:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar solicitações da fazenda.',
+      error: err.message
+    });
+  }
+});
+
+app.get('/api/solicitacoes-fazendas/:id', async (req, res) => {
+  try {
+    const id = paraInt(req.params.id, 0);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT * FROM SF_SOLICITACAO_FAZENDA WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Solicitação não encontrada.'
+      });
+    }
+
+    const item = mapearSolicitacao(rows[0]);
+
+    const [anexos] = await pool.query(
+      `
+        SELECT
+          id,
+          solicitacao_id,
+          anexo_referencia,
+          nome_arquivo,
+          caminho_arquivo,
+          mime_arquivo,
+          tamanho_arquivo,
+          criado_em
+        FROM SF_SOLICITACAO_FAZENDA_ANEXO
+        WHERE solicitacao_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    const [batidas] = await pool.query(
+      `
+        SELECT
+          id,
+          solicitacao_id,
+          data_hora,
+          criado_em
+        FROM SF_SOLICITACAO_FAZENDA_BATIDA
+        WHERE solicitacao_id = ?
+        ORDER BY data_hora ASC, id ASC
+      `,
+      [id]
+    );
+
+    item.anexo = anexos.length ? {
+      id: anexos[0].id,
+      anexoReferencia: anexos[0].anexo_referencia,
+      nomeArquivo: anexos[0].nome_arquivo,
+      caminhoArquivo: anexos[0].caminho_arquivo,
+      mimeArquivo: anexos[0].mime_arquivo,
+      tamanhoArquivo: anexos[0].tamanho_arquivo,
+      criadoEm: anexos[0].criado_em
+    } : null;
+
+    item.batidas = batidas.map(b => String(b.data_hora).slice(0, 16));
+
+    return res.json({
+      success: true,
+      item
+    });
+  } catch (err) {
+    console.error('Erro ao buscar solicitação da fazenda:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar solicitação da fazenda.',
+      error: err.message
+    });
+  }
+});
+
+app.post('/api/solicitacoes-fazendas',
+  uploadSolicitacaoFazenda.single('arquivo'),
+  async (req, res) => {
+    let connection;
+
+    try {
+      const usuarioId = paraInt(req.body.usuarioId, 0);
+      const usuarioNome = normalizarTexto(req.body.usuarioNome);
+      const responsavel = normalizarTexto(req.body.responsavel);
+      const tipoSolicitacao = normalizarTexto(req.body.tipoSolicitacao);
+      const descricao = normalizarTexto(req.body.descricao);
+      const criadoPorId = paraInt(req.body.usuarioLogadoId, 0);
+      const criadoPorNome = normalizarTexto(req.body.usuarioLogadoNome);
+
+      const dataReferencia = normalizarTexto(req.body.dataReferencia) || null;
+      const horaReferencia = normalizarTexto(req.body.horaReferencia) || null;
+      const dataHoraInicial = normalizarTexto(req.body.dataHoraInicial) || null;
+      const dataHoraFinal = normalizarTexto(req.body.dataHoraFinal) || null;
+      const quantidadeHoras = paraInt(req.body.quantidadeHoras, 0);
+      const quantidadeMinutos = paraInt(req.body.quantidadeMinutos, 0);
+
+      let batidas = req.body['batidas[]'] ?? req.body.batidas ?? [];
+      if (!Array.isArray(batidas)) batidas = batidas ? [batidas] : [];
+      batidas = batidas.map(v => normalizarTexto(v)).filter(Boolean);
+
+      if (!usuarioId) {
+        return res.status(400).json({ success: false, message: 'Usuário é obrigatório.' });
+      }
+
+      if (!usuarioNome) {
+        return res.status(400).json({ success: false, message: 'Nome do usuário é obrigatório.' });
+      }
+
+      if (!responsavel) {
+        return res.status(400).json({ success: false, message: 'Responsável é obrigatório.' });
+      }
+
+      if (!tipoSolicitacao || !validarTipoSolicitacao(tipoSolicitacao)) {
+        return res.status(400).json({ success: false, message: 'Tipo de solicitação inválido.' });
+      }
+
+      if (!descricao) {
+        return res.status(400).json({ success: false, message: 'Descrição é obrigatória.' });
+      }
+
+      if (!criadoPorId) {
+        return res.status(400).json({ success: false, message: 'Usuário logado não informado.' });
+      }
+
+      const erroValidacaoTipo = validarCamposPorTipo({
+        tipoSolicitacao,
+        dataReferencia,
+        horaReferencia,
+        dataHoraInicial,
+        dataHoraFinal,
+        quantidadeHoras,
+        quantidadeMinutos,
+        batidas,
+        reqFile: req.file,
+        anexoExistente: false
+      });
+
+      if (erroValidacaoTipo) {
+        return res.status(400).json({ success: false, message: erroValidacaoTipo });
+      }
+
+      const codigo = gerarCodigoSolicitacaoFazenda();
+
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+
+      const [result] = await connection.query(
+        `
+          INSERT INTO SF_SOLICITACAO_FAZENDA (
+            codigo,
+            usuario_id,
+            usuario_nome,
+            responsavel,
+            tipo_solicitacao,
+            descricao,
+            data_referencia,
+            hora_referencia,
+            data_hora_inicial,
+            data_hora_final,
+            quantidade_horas,
+            quantidade_minutos,
+            status,
+            criado_por_id,
+            criado_por_nome
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDENTE GESTOR', ?, ?)
+        `,
+        [
+          codigo,
+          usuarioId,
+          usuarioNome,
+          responsavel,
+          tipoSolicitacao,
+          descricao,
+          dataReferencia,
+          horaReferencia,
+          dataHoraInicial,
+          dataHoraFinal,
+          quantidadeHoras,
+          quantidadeMinutos,
+          criadoPorId,
+          criadoPorNome
+        ]
+      );
+
+      const solicitacaoId = result.insertId;
+
+      if (req.file) {
+        await connection.query(
+          `
+            INSERT INTO SF_SOLICITACAO_FAZENDA_ANEXO (
+              solicitacao_id,
+              anexo_referencia,
+              nome_arquivo,
+              caminho_arquivo,
+              mime_arquivo,
+              tamanho_arquivo
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `,
+          [
+            solicitacaoId,
+            req.file.originalname,
+            req.file.filename,
+            `/anexos/solicitacoes-fazenda/${encodeURIComponent(req.file.filename)}`,
+            req.file.mimetype,
+            req.file.size
+          ]
+        );
+      }
+
+      if (batidas.length) {
+        const valoresBatidas = batidas.map(dataHora => [solicitacaoId, dataHora]);
+        await connection.query(
+          `INSERT INTO SF_SOLICITACAO_FAZENDA_BATIDA (solicitacao_id, data_hora) VALUES ?`,
+          [valoresBatidas]
+        );
+      }
+
+      await connection.commit();
+
+      return res.status(201).json({
+        success: true,
+        message: 'Solicitação salva com sucesso.',
+        item: {
+          id: solicitacaoId,
+          codigo,
+          usuarioId,
+          usuarioNome,
+          responsavel,
+          tipoSolicitacao,
+          descricao,
+          status: 'PENDENTE'
+        }
+      });
+    } catch (err) {
+      if (connection) {
+        try { await connection.rollback(); } catch (_) {}
+      }
+
+      console.error('Erro ao salvar solicitação da fazenda:', err);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Erro ao salvar solicitação da fazenda.',
+        error: err.message
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+
+app.put('/api/solicitacoes-fazendas/:id',
+  uploadSolicitacaoFazenda.single('arquivo'),
+  async (req, res) => {
+    let connection;
+
+    try {
+      const id = paraInt(req.params.id, 0);
+
+      if (!id) {
+        return res.status(400).json({
+          success: false,
+          message: 'ID inválido.'
+        });
+      }
+
+      const usuarioId = paraInt(req.body.usuarioId, 0);
+      const usuarioNome = normalizarTexto(req.body.usuarioNome);
+      const responsavel = normalizarTexto(req.body.responsavel);
+      const tipoSolicitacao = normalizarTexto(req.body.tipoSolicitacao);
+      const descricao = normalizarTexto(req.body.descricao);
+      const criadoPorId = paraInt(req.body.usuarioLogadoId, 0);
+      const criadoPorNome = normalizarTexto(req.body.usuarioLogadoNome);
+
+      const dataReferencia = normalizarTexto(req.body.dataReferencia) || null;
+      const horaReferencia = normalizarTexto(req.body.horaReferencia) || null;
+      const dataHoraInicial = normalizarTexto(req.body.dataHoraInicial) || null;
+      const dataHoraFinal = normalizarTexto(req.body.dataHoraFinal) || null;
+      const quantidadeHoras = paraInt(req.body.quantidadeHoras, 0);
+      const quantidadeMinutos = paraInt(req.body.quantidadeMinutos, 0);
+
+      let batidas = req.body['batidas[]'] ?? req.body.batidas ?? [];
+      if (!Array.isArray(batidas)) batidas = batidas ? [batidas] : [];
+      batidas = batidas.map(v => normalizarTexto(v)).filter(Boolean);
+
+      if (!usuarioId) {
+        return res.status(400).json({ success: false, message: 'Usuário é obrigatório.' });
+      }
+
+      if (!usuarioNome) {
+        return res.status(400).json({ success: false, message: 'Nome do usuário é obrigatório.' });
+      }
+
+      if (!responsavel) {
+        return res.status(400).json({ success: false, message: 'Responsável é obrigatório.' });
+      }
+
+      if (!tipoSolicitacao || !validarTipoSolicitacao(tipoSolicitacao)) {
+        return res.status(400).json({ success: false, message: 'Tipo de solicitação inválido.' });
+      }
+
+      if (!descricao) {
+        return res.status(400).json({ success: false, message: 'Descrição é obrigatória.' });
+      }
+
+      if (!criadoPorId) {
+        return res.status(400).json({ success: false, message: 'Usuário logado não informado.' });
+      }
+
+      connection = await pool.getConnection();
+      await connection.beginTransaction();
+
+      const [existentes] = await connection.query(
+        `SELECT * FROM SF_SOLICITACAO_FAZENDA WHERE id = ? LIMIT 1`,
+        [id]
+      );
+
+      if (!existentes.length) {
+        await connection.rollback();
+        return res.status(404).json({
+          success: false,
+          message: 'Solicitação não encontrada.'
+        });
+      }
+
+      const [anexosExistentes] = await connection.query(
+        `
+          SELECT id, nome_arquivo
+          FROM SF_SOLICITACAO_FAZENDA_ANEXO
+          WHERE solicitacao_id = ?
+          ORDER BY id DESC
+        `,
+        [id]
+      );
+
+      const erroValidacaoTipo = validarCamposPorTipo({
+        tipoSolicitacao,
+        dataReferencia,
+        horaReferencia,
+        dataHoraInicial,
+        dataHoraFinal,
+        quantidadeHoras,
+        quantidadeMinutos,
+        batidas,
+        reqFile: req.file,
+        anexoExistente: anexosExistentes.length > 0
+      });
+
+      if (erroValidacaoTipo) {
+        await connection.rollback();
+        return res.status(400).json({ success: false, message: erroValidacaoTipo });
+      }
+
+      await connection.query(
+        `
+          UPDATE SF_SOLICITACAO_FAZENDA
+          SET
+            usuario_id = ?,
+            usuario_nome = ?,
+            responsavel = ?,
+            tipo_solicitacao = ?,
+            descricao = ?,
+            data_referencia = ?,
+            hora_referencia = ?,
+            data_hora_inicial = ?,
+            data_hora_final = ?,
+            quantidade_horas = ?,
+            quantidade_minutos = ?,
+            criado_por_id = ?,
+            criado_por_nome = ?,
+            atualizado_em = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `,
+        [
+          usuarioId,
+          usuarioNome,
+          responsavel,
+          tipoSolicitacao,
+          descricao,
+          dataReferencia,
+          horaReferencia,
+          dataHoraInicial,
+          dataHoraFinal,
+          quantidadeHoras,
+          quantidadeMinutos,
+          criadoPorId,
+          criadoPorNome,
+          id
+        ]
+      );
+
+      await connection.query(
+        `DELETE FROM SF_SOLICITACAO_FAZENDA_BATIDA WHERE solicitacao_id = ?`,
+        [id]
+      );
+
+      if (batidas.length) {
+        const valoresBatidas = batidas.map(dataHora => [id, dataHora]);
+        await connection.query(
+          `INSERT INTO SF_SOLICITACAO_FAZENDA_BATIDA (solicitacao_id, data_hora) VALUES ?`,
+          [valoresBatidas]
+        );
+      }
+
+      if (req.file) {
+        await connection.query(
+          `DELETE FROM SF_SOLICITACAO_FAZENDA_ANEXO WHERE solicitacao_id = ?`,
+          [id]
+        );
+
+        await connection.query(
+          `
+            INSERT INTO SF_SOLICITACAO_FAZENDA_ANEXO (
+              solicitacao_id,
+              anexo_referencia,
+              nome_arquivo,
+              caminho_arquivo,
+              mime_arquivo,
+              tamanho_arquivo
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `,
+          [
+            id,
+            req.file.originalname,
+            req.file.filename,
+            `/anexos/solicitacoes-fazenda/${encodeURIComponent(req.file.filename)}`,
+            req.file.mimetype,
+            req.file.size
+          ]
+        );
+      }
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message: 'Solicitação atualizada com sucesso.',
+        item: {
+          id,
+          usuarioId,
+          usuarioNome,
+          responsavel,
+          tipoSolicitacao,
+          descricao
+        }
+      });
+    } catch (err) {
+      if (connection) {
+        try { await connection.rollback(); } catch (_) {}
+      }
+
+      console.error('Erro ao atualizar solicitação da fazenda:', err);
+
+      return res.status(500).json({
+        success: false,
+        message: 'Erro ao atualizar solicitação da fazenda.',
+        error: err.message
+      });
+    } finally {
+      if (connection) connection.release();
+    }
+  }
+);
+
+app.get('/api/solicitacoes-fazendas/usuarios-permitidos', async (req, res) => {
+  try {
+    const usuarioLogadoId = paraInt(req.query.usuarioLogadoId, 0);
+
+    if (!usuarioLogadoId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário logado não informado.'
+      });
+    }
+
+    // Ajuste esta query conforme sua regra real de permissão
+    const [rows] = await pool.query(
+      `
+        SELECT
+          u.id,
+          u.nome
+        FROM SF_USUARIO u
+        WHERE u.ativo = 'S'
+        ORDER BY u.nome ASC
+      `
+    );
+
+    return res.json({
+      success: true,
+      items: rows.map(row => ({
+        id: row.id,
+        nome: row.nome
+      }))
+    });
+  } catch (err) {
+    console.error('Erro ao carregar usuários permitidos:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao carregar usuários permitidos.',
+      error: err.message
+    });
+  }
+});
+
+app.delete('/api/solicitacoes-fazendas/:id', async (req, res) => {
+  let connection;
+
+  try {
+    const id = paraInt(req.params.id, 0);
+    const usuarioLogadoId = paraInt(
+      req.headers['x-usuario-logado-id'] ||
+      req.query.usuarioLogadoId ||
+      req.body?.usuarioLogadoId,
+      0
+    );
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    if (!usuarioLogadoId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário logado não informado.'
+      });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query(
+      `
+        SELECT
+          id,
+          usuario_id,
+          criado_por_id,
+          status
+        FROM SF_SOLICITACAO_FAZENDA
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!rows.length) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Solicitação não encontrada.'
+      });
+    }
+
+    const solicitacao = rows[0];
+
+    if (paraInt(solicitacao.criado_por_id, 0) !== usuarioLogadoId) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para excluir esta solicitação.'
+      });
+    }
+
+    if (String(solicitacao.status || '').toUpperCase() !== 'PENDENTE GESTOR') {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente solicitações pendentes podem ser excluídas.'
+      });
+    }
+
+    const [anexos] = await connection.query(
+      `
+        SELECT
+          id,
+          nome_arquivo
+        FROM SF_SOLICITACAO_FAZENDA_ANEXO
+        WHERE solicitacao_id = ?
+      `,
+      [id]
+    );
+
+    await connection.query(
+      `DELETE FROM SF_SOLICITACAO_FAZENDA_BATIDA WHERE solicitacao_id = ?`,
+      [id]
+    );
+
+    await connection.query(
+      `DELETE FROM SF_SOLICITACAO_FAZENDA_ANEXO WHERE solicitacao_id = ?`,
+      [id]
+    );
+
+    await connection.query(
+      `DELETE FROM SF_SOLICITACAO_FAZENDA WHERE id = ?`,
+      [id]
+    );
+
+    await connection.commit();
+
+    for (const anexo of anexos) {
+      try {
+        const caminhoArquivo = path.join(PASTA_SOLICITACOES_FAZENDA, anexo.nome_arquivo);
+        if (fs.existsSync(caminhoArquivo)) {
+          fs.unlinkSync(caminhoArquivo);
+        }
+      } catch (erroArquivo) {
+        console.error('Erro ao remover arquivo físico do anexo da solicitação:', erroArquivo);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Solicitação excluída com sucesso.'
+    });
+  } catch (err) {
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao excluir solicitação da fazenda:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir solicitação da fazenda.',
+      error: err.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+app.post('/api/solicitacoes-fazendas/:id/aprovar', async (req, res) => {
+  let connection;
+
+  try {
+    const id = paraInt(req.params.id, 0);
+    const usuarioLogadoId = paraInt(
+      req.headers['x-usuario-logado-id'] ||
+      req.query.usuarioLogadoId ||
+      req.body?.usuarioLogadoId,
+      0
+    );
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID inválido.'
+      });
+    }
+
+    if (!usuarioLogadoId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Usuário logado não informado.'
+      });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [rowsSolicitacao] = await connection.query(
+      `
+        SELECT
+          id,
+          codigo,
+          status
+        FROM SF_SOLICITACAO_FAZENDA
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!rowsSolicitacao.length) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Solicitação não encontrada.'
+      });
+    }
+
+    const solicitacao = rowsSolicitacao[0];
+    const statusAtual = String(solicitacao.status || '').trim().toUpperCase();
+
+    if (statusAtual !== 'PENDENTE GESTOR' && statusAtual !== 'PENDENTE RH') {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente solicitações pendentes de aprovação podem ser aprovadas.'
+      });
+    }
+
+    const [rowsUsuario] = await connection.query(
+      `
+        SELECT
+          id,
+          nome,
+          perfil
+        FROM SF_USUARIO
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [usuarioLogadoId]
+    );
+
+    if (!rowsUsuario.length) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário logado não encontrado.'
+      });
+    }
+
+    const usuarioLogado = rowsUsuario[0];
+    const perfilNome = String(usuarioLogado.perfil || '').trim();
+
+    if (!perfilNome) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'O usuário logado não possui perfil vinculado.'
+      });
+    }
+
+    const [rowsPerfil] = await connection.query(
+      `
+        SELECT
+          id,
+          nome,
+          aprovador_ponto_gestor,
+          aprovador_ponto_rh
+        FROM SF_PERFIL
+        WHERE nome = ?
+        LIMIT 1
+      `,
+      [perfilNome]
+    );
+
+    if (!rowsPerfil.length) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Perfil do usuário não encontrado para aprovação.'
+      });
+    }
+
+    const perfil = rowsPerfil[0];
+    const podeAprovarComoGestor = Number(perfil.aprovador_ponto_gestor || 0) === 1;
+    const podeAprovarComoRh = Number(perfil.aprovador_ponto_rh || 0) === 1;
+
+    if (statusAtual === 'PENDENTE GESTOR') {
+      if (!podeAprovarComoGestor) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: 'Você não tem permissão para aprovar solicitações pendentes do gestor.'
+        });
+      }
+
+      await connection.query(
+        `
+          UPDATE SF_SOLICITACAO_FAZENDA
+          SET
+            status = 'PENDENTE RH',
+            aprovado_gestor_por_id = ?,
+            aprovado_gestor_por_nome = ?,
+            aprovado_gestor_em = NOW()
+          WHERE id = ?
+        `,
+        [usuarioLogado.id, usuarioLogado.nome, id]
+      );
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message: 'Solicitação aprovada pelo gestor e enviada para o RH.'
+      });
+    }
+
+    if (statusAtual === 'PENDENTE RH') {
+      if (!podeAprovarComoRh) {
+        await connection.rollback();
+        return res.status(403).json({
+          success: false,
+          message: 'Você não tem permissão para aprovar solicitações pendentes do RH.'
+        });
+      }
+
+      await connection.query(
+        `
+          UPDATE SF_SOLICITACAO_FAZENDA
+          SET
+            status = 'REGISTRADO',
+            aprovado_rh_por_id = ?,
+            aprovado_rh_por_nome = ?,
+            aprovado_rh_em = NOW()
+          WHERE id = ?
+        `,
+        [usuarioLogado.id, usuarioLogado.nome, id]
+      );
+
+      await connection.commit();
+
+      return res.json({
+        success: true,
+        message: 'Solicitação aprovada pelo RH e registrada com sucesso.'
+      });
+    }
+
+    await connection.rollback();
+
+    return res.status(400).json({
+      success: false,
+      message: 'Status da solicitação inválido para aprovação.'
+    });
+  } catch (err) {
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao aprovar solicitação da fazenda:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao aprovar solicitação da fazenda.',
+      error: err.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
+
+app.post('/api/solicitacoes-fazendas/:id/recusar', async (req, res) => {
+  let connection;
+
+  try {
+    const id = paraInt(req.params.id, 0);
+    const usuarioLogadoId = paraInt(
+      req.headers['x-usuario-logado-id'] ||
+      req.query.usuarioLogadoId ||
+      req.body?.usuarioLogadoId,
+      0
+    );
+    const motivoRecusa = String(req.body?.motivoRecusa || '').trim();
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID inválido.' });
+    }
+
+    if (!usuarioLogadoId) {
+      return res.status(400).json({ success: false, message: 'Usuário logado não informado.' });
+    }
+
+    if (!motivoRecusa) {
+      return res.status(400).json({ success: false, message: 'O motivo da recusa é obrigatório.' });
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [rowsSolicitacao] = await connection.query(
+      `
+        SELECT id, codigo, status
+        FROM SF_SOLICITACAO_FAZENDA
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!rowsSolicitacao.length) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Solicitação não encontrada.'
+      });
+    }
+
+    const solicitacao = rowsSolicitacao[0];
+    const statusAtual = String(solicitacao.status || '').trim().toUpperCase();
+
+    if (statusAtual !== 'PENDENTE GESTOR' && statusAtual !== 'PENDENTE RH') {
+      await connection.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Somente solicitações pendentes do gestor ou do RH podem ser recusadas.'
+      });
+    }
+
+    const [rowsUsuario] = await connection.query(
+      `
+        SELECT id, nome, perfil
+        FROM SF_USUARIO
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [usuarioLogadoId]
+    );
+
+    if (!rowsUsuario.length) {
+      await connection.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário logado não encontrado.'
+      });
+    }
+
+    const usuarioLogado = rowsUsuario[0];
+    const perfilNome = String(usuarioLogado.perfil || '').trim();
+
+    if (!perfilNome) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'O usuário logado não possui perfil vinculado.'
+      });
+    }
+
+    const [rowsPerfil] = await connection.query(
+      `
+        SELECT nome, aprovador_ponto_gestor, aprovador_ponto_rh
+        FROM SF_PERFIL
+        WHERE nome = ?
+        LIMIT 1
+      `,
+      [perfilNome]
+    );
+
+    if (!rowsPerfil.length) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Perfil do usuário não encontrado.'
+      });
+    }
+
+    const perfil = rowsPerfil[0];
+    const podeRecusarComoGestor = Number(perfil.aprovador_ponto_gestor || 0) === 1;
+    const podeRecusarComoRh = Number(perfil.aprovador_ponto_rh || 0) === 1;
+
+    if (statusAtual === 'PENDENTE GESTOR' && !podeRecusarComoGestor) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para recusar solicitações com status PENDENTE GESTOR.'
+      });
+    }
+
+    if (statusAtual === 'PENDENTE RH' && !podeRecusarComoRh) {
+      await connection.rollback();
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para recusar solicitações com status PENDENTE RH.'
+      });
+    }
+
+    await connection.query(
+      `
+        UPDATE SF_SOLICITACAO_FAZENDA
+        SET
+          status = 'RECUSADA',
+          recusado_por_id = ?,
+          recusado_por_nome = ?,
+          recusado_em = NOW(),
+          motivo_recusa = ?
+        WHERE id = ?
+      `,
+      [usuarioLogado.id, usuarioLogado.nome, motivoRecusa, id]
+    );
+
+    await connection.commit();
+
+    return res.json({
+      success: true,
+      message: 'Solicitação recusada com sucesso.'
+    });
+  } catch (err) {
+    if (connection) {
+      try { await connection.rollback(); } catch (_) {}
+    }
+
+    console.error('Erro ao recusar solicitação da fazenda:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao recusar solicitação da fazenda.',
+      error: err.message
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+});
 
 // =====================
 // Inicia servidor (sempre por último)
