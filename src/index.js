@@ -22045,6 +22045,39 @@ app.post('/api/solicitacoes-fazendas/:id/recusar', async (req, res) => {
   }
 });
 
+app.get("/api/marketing/imagens-inicial", async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        ID,
+        NOME_ARQUIVO,
+        URL,
+        TITULO,
+        DESCRICAO,
+        CARD,
+        ATIVO,
+        EXIBIR_NO_PAINEL,
+        DATA_INICIO,
+        DATA_FIM,
+        RECORRENCIA,
+        APENAS_UMA_VEZ,
+        ULTIMA_EXIBICAO_EM,
+        ORDEM,
+        DIA_EXIBICAO,
+        MES_EXIBICAO
+      FROM SF_MARKETING_IMAGEM
+      WHERE ATIVO = 1
+        AND EXIBIR_NO_PAINEL = 1
+      ORDER BY ORDEM ASC, ID ASC
+    `);
+
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Erro ao buscar imagens de marketing" });
+  }
+});
+
 // =====================
 // Inicia servidor (sempre por último)
 // =====================
