@@ -8190,7 +8190,22 @@ app.get('/api/perfis', async (req, res) => {
         solicitacoes_fazendas,
         cadastro_equipamento,
         aprovador_ponto_gestor,
-        aprovador_ponto_rh
+        aprovador_ponto_rh,
+        gov_dashboard,
+        gov_historico,
+        gov_rh,
+        gov_fin,
+        gov_com,
+        gov_log,
+        gov_prod,
+        gov_qual,
+        gov_ti,
+        gov_jur,
+        gov_dir,
+        gov_compras,
+        gov_mkt,
+        gov_cont,
+        gov_fiscal_setor
       FROM SF_PERFIL
       ORDER BY nome ASC
     `);
@@ -8263,7 +8278,22 @@ app.get('/api/perfis/:id', async (req, res) => {
         solicitacoes_fazendas,
         cadastro_equipamento,
         aprovador_ponto_gestor,
-        aprovador_ponto_rh
+        aprovador_ponto_rh,
+        gov_dashboard,
+        gov_historico,
+        gov_rh,
+        gov_fin,
+        gov_com,
+        gov_log,
+        gov_prod,
+        gov_qual,
+        gov_ti,
+        gov_jur,
+        gov_dir,
+        gov_compras,
+        gov_mkt,
+        gov_cont,
+        gov_fiscal_setor
       FROM SF_PERFIL
       WHERE id = ?
       LIMIT 1
@@ -8351,67 +8381,92 @@ app.post('/api/perfis', async (req, res) => {
       solicitacoes_fazendas: bit(req.body?.solicitacoes_fazendas),
       cadastro_equipamento: bit(req.body?.cadastro_equipamento),
       aprovador_ponto_gestor: bit(req.body?.aprovador_ponto_gestor),
-      aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh)
+      aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh),
+      gov_dashboard: bit(req.body?.gov_dashboard),
+      gov_historico: bit(req.body?.gov_historico),
+      gov_rh: bit(req.body?.gov_rh),
+      gov_fin: bit(req.body?.gov_fin),
+      gov_com: bit(req.body?.gov_com),
+      gov_log: bit(req.body?.gov_log),
+      gov_prod: bit(req.body?.gov_prod),
+      gov_qual: bit(req.body?.gov_qual),
+      gov_ti: bit(req.body?.gov_ti),
+      gov_jur: bit(req.body?.gov_jur),
+      gov_dir: bit(req.body?.gov_dir),
+      gov_compras: bit(req.body?.gov_compras),
+      gov_mkt: bit(req.body?.gov_mkt),
+      gov_cont: bit(req.body?.gov_cont),
+      gov_fiscal_setor: bit(req.body?.gov_fiscal_setor)
     };
 
+    const colunas = [
+      'nome',
+      'pedidos',
+      'pedidos_dashboard_geral',
+      'pedidos_dashboard_minha',
+      'pedidos_supervisor',
+      'pedidos_incluir',
+      'pedidos_editar',
+      'pedidos_excluir',
+      'clientes',
+      'clientes_incluir',
+      'clientes_editar',
+      'clientes_excluir',
+      'marketing',
+      'email_automaticos',
+      'agendar_sala_reuniao',
+      'excluir_agendamento_sala_reuniao',
+      'reservar_carro',
+      'aprovar_reserva_carro',
+      'aprovar_reserva_carro_gestor',
+      'excluir_reserva_carro',
+      'gestao_usuarios',
+      'gestao_usuarios_cadastro',
+      'gestao_usuarios_incluir',
+      'gestao_usuarios_editar',
+      'gestao_usuarios_excluir',
+      'estoque',
+      'estoque_almoxarifado',
+      'estoque_fazenda',
+      'estoque_cadastrar',
+      'estoque_transferir',
+      'estoque_receber',
+      'perfil_acesso',
+      'monitor_ping',
+      'fiscal',
+      'dfe_certificado',
+      'recursos_humanos',
+      'cadastro_calendario',
+      'jornada',
+      'vinculo_jornada',
+      'solicitacoes',
+      'solicitacoes_fazendas',
+      'cadastro_equipamento',
+      'aprovador_ponto_gestor',
+      'aprovador_ponto_rh',
+      'gov_dashboard',
+      'gov_historico',
+      'gov_rh',
+      'gov_fin',
+      'gov_com',
+      'gov_log',
+      'gov_prod',
+      'gov_qual',
+      'gov_ti',
+      'gov_jur',
+      'gov_dir',
+      'gov_compras',
+      'gov_mkt',
+      'gov_cont',
+      'gov_fiscal_setor'
+    ];
+
+    const valores = colunas.map(col => payloadDepois[col]);
+
     const [result] = await conn.query(`
-      INSERT INTO SF_PERFIL (
-        nome, pedidos, pedidos_dashboard_geral, pedidos_dashboard_minha,
-        pedidos_supervisor, recursos_humanos, cadastro_calendario, jornada,
-        vinculo_jornada, solicitacoes, solicitacoes_fazendas, cadastro_equipamento,
-        aprovar_reserva_carro, aprovador_ponto_gestor, aprovar_reserva_carro_gestor,
-        excluir_reserva_carro, gestao_usuarios, gestao_usuarios_cadastro,
-        gestao_usuarios_incluir, gestao_usuarios_editar, gestao_usuarios_excluir,
-        estoque, estoque_almoxarifado, estoque_fazenda, estoque_cadastrar,
-        estoque_transferir, estoque_receber, perfil_acesso, monitor_ping,
-        fiscal, dfe_certificado, aprovador_ponto_rh
-      ) VALUES (${Array(32).fill('?').join(', ')})
-    `, [
-      payloadDepois.nome,
-      payloadDepois.pedidos,
-      payloadDepois.pedidos_dashboard_geral,
-      payloadDepois.pedidos_dashboard_minha,
-      payloadDepois.pedidos_supervisor,
-      payloadDepois.pedidos_incluir,
-      payloadDepois.pedidos_editar,
-      payloadDepois.pedidos_excluir,
-      payloadDepois.clientes,
-      payloadDepois.clientes_incluir,
-      payloadDepois.clientes_editar,
-      payloadDepois.clientes_excluir,
-      payloadDepois.marketing,
-      payloadDepois.email_automaticos,
-      payloadDepois.agendar_sala_reuniao,
-      payloadDepois.excluir_agendamento_sala_reuniao,
-      payloadDepois.reservar_carro,
-      payloadDepois.aprovar_reserva_carro,
-      payloadDepois.aprovar_reserva_carro_gestor,
-      payloadDepois.excluir_reserva_carro,
-      payloadDepois.gestao_usuarios,
-      payloadDepois.gestao_usuarios_cadastro,
-      payloadDepois.gestao_usuarios_incluir,
-      payloadDepois.gestao_usuarios_editar,
-      payloadDepois.gestao_usuarios_excluir,
-      payloadDepois.estoque,
-      payloadDepois.estoque_almoxarifado,
-      payloadDepois.estoque_fazenda,
-      payloadDepois.estoque_cadastrar,
-      payloadDepois.estoque_transferir,
-      payloadDepois.estoque_receber,
-      payloadDepois.perfil_acesso,
-      payloadDepois.monitor_ping,
-      payloadDepois.fiscal,
-      payloadDepois.dfe_certificado,
-      payloadDepois.recursos_humanos,
-      payloadDepois.cadastro_calendario,
-      payloadDepois.jornada,
-      payloadDepois.vinculo_jornada,
-      payloadDepois.solicitacoes,
-      payloadDepois.solicitacoes_fazendas,
-      payloadDepois.cadastro_equipamento,
-      payloadDepois.aprovador_ponto_gestor,
-      payloadDepois.aprovador_ponto_rh
-    ]);
+      INSERT INTO SF_PERFIL (${colunas.join(', ')})
+      VALUES (${colunas.map(() => '?').join(', ')})
+    `, valores);
 
     const idPerfil = Number(result?.insertId || 0);
 
@@ -8542,103 +8597,94 @@ app.put('/api/perfis/:id', async (req, res) => {
       solicitacoes_fazendas: bit(req.body?.solicitacoes_fazendas),
       cadastro_equipamento: bit(req.body?.cadastro_equipamento),
       aprovador_ponto_gestor: bit(req.body?.aprovador_ponto_gestor),
-      aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh)
+      aprovador_ponto_rh: bit(req.body?.aprovador_ponto_rh),
+      gov_dashboard: bit(req.body?.gov_dashboard),
+      gov_historico: bit(req.body?.gov_historico),
+      gov_rh: bit(req.body?.gov_rh),
+      gov_fin: bit(req.body?.gov_fin),
+      gov_com: bit(req.body?.gov_com),
+      gov_log: bit(req.body?.gov_log),
+      gov_prod: bit(req.body?.gov_prod),
+      gov_qual: bit(req.body?.gov_qual),
+      gov_ti: bit(req.body?.gov_ti),
+      gov_jur: bit(req.body?.gov_jur),
+      gov_dir: bit(req.body?.gov_dir),
+      gov_compras: bit(req.body?.gov_compras),
+      gov_mkt: bit(req.body?.gov_mkt),
+      gov_cont: bit(req.body?.gov_cont),
+      gov_fiscal_setor: bit(req.body?.gov_fiscal_setor)
     };
+
+    const colunas = [
+      'nome',
+      'pedidos',
+      'pedidos_dashboard_geral',
+      'pedidos_dashboard_minha',
+      'pedidos_supervisor',
+      'pedidos_incluir',
+      'pedidos_editar',
+      'pedidos_excluir',
+      'clientes',
+      'clientes_incluir',
+      'clientes_editar',
+      'clientes_excluir',
+      'marketing',
+      'email_automaticos',
+      'agendar_sala_reuniao',
+      'excluir_agendamento_sala_reuniao',
+      'reservar_carro',
+      'aprovar_reserva_carro',
+      'aprovar_reserva_carro_gestor',
+      'excluir_reserva_carro',
+      'gestao_usuarios',
+      'gestao_usuarios_cadastro',
+      'gestao_usuarios_incluir',
+      'gestao_usuarios_editar',
+      'gestao_usuarios_excluir',
+      'estoque',
+      'estoque_almoxarifado',
+      'estoque_fazenda',
+      'estoque_cadastrar',
+      'estoque_transferir',
+      'estoque_receber',
+      'perfil_acesso',
+      'monitor_ping',
+      'fiscal',
+      'dfe_certificado',
+      'recursos_humanos',
+      'cadastro_calendario',
+      'jornada',
+      'vinculo_jornada',
+      'solicitacoes',
+      'solicitacoes_fazendas',
+      'cadastro_equipamento',
+      'aprovador_ponto_gestor',
+      'aprovador_ponto_rh',
+      'gov_dashboard',
+      'gov_historico',
+      'gov_rh',
+      'gov_fin',
+      'gov_com',
+      'gov_log',
+      'gov_prod',
+      'gov_qual',
+      'gov_ti',
+      'gov_jur',
+      'gov_dir',
+      'gov_compras',
+      'gov_mkt',
+      'gov_cont',
+      'gov_fiscal_setor'
+    ];
+
+    const setClause = colunas.map(col => `${col} = ?`).join(', ');
+    const valores = colunas.map(col => depois[col]);
 
     const [result] = await conn.query(`
       UPDATE SF_PERFIL SET
-        nome = ?,
-        pedidos = ?,
-        pedidos_dashboard_geral = ?,
-        pedidos_dashboard_minha = ?,
-        pedidos_supervisor = ?,
-        pedidos_incluir = ?,
-        pedidos_editar = ?,
-        pedidos_excluir = ?,
-        clientes = ?,
-        clientes_incluir = ?,
-        clientes_editar = ?,
-        clientes_excluir = ?,
-        marketing = ?,
-        email_automaticos = ?,
-        agendar_sala_reuniao = ?,
-        excluir_agendamento_sala_reuniao = ?,
-        reservar_carro = ?,
-        aprovar_reserva_carro = ?,
-        aprovar_reserva_carro_gestor = ?,
-        excluir_reserva_carro = ?,
-        gestao_usuarios = ?,
-        gestao_usuarios_cadastro = ?,
-        gestao_usuarios_incluir = ?,
-        gestao_usuarios_editar = ?,
-        gestao_usuarios_excluir = ?,
-        estoque = ?,
-        estoque_almoxarifado = ?,
-        estoque_fazenda = ?,
-        estoque_cadastrar = ?,
-        estoque_transferir = ?,
-        estoque_receber = ?,
-        perfil_acesso = ?,
-        monitor_ping = ?,
-        fiscal = ?,
-        dfe_certificado = ?,
-        recursos_humanos = ?,
-        cadastro_calendario = ?,
-        jornada = ?,
-        vinculo_jornada = ?,
-        solicitacoes = ?,
-        solicitacoes_fazendas = ?,
-        cadastro_equipamento = ?,
-        aprovador_ponto_gestor = ?,
-        aprovador_ponto_rh = ?
+        ${setClause}
       WHERE id = ?
-    `, [
-      depois.nome,
-      depois.pedidos,
-      depois.pedidos_dashboard_geral,
-      depois.pedidos_dashboard_minha,
-      depois.pedidos_supervisor,
-      depois.pedidos_incluir,
-      depois.pedidos_editar,
-      depois.pedidos_excluir,
-      depois.clientes,
-      depois.clientes_incluir,
-      depois.clientes_editar,
-      depois.clientes_excluir,
-      depois.marketing,
-      depois.email_automaticos,
-      depois.agendar_sala_reuniao,
-      depois.excluir_agendamento_sala_reuniao,
-      depois.reservar_carro,
-      depois.aprovar_reserva_carro,
-      depois.aprovar_reserva_carro_gestor,
-      depois.excluir_reserva_carro,
-      depois.gestao_usuarios,
-      depois.gestao_usuarios_cadastro,
-      depois.gestao_usuarios_incluir,
-      depois.gestao_usuarios_editar,
-      depois.gestao_usuarios_excluir,
-      depois.estoque,
-      depois.estoque_almoxarifado,
-      depois.estoque_fazenda,
-      depois.estoque_cadastrar,
-      depois.estoque_transferir,
-      depois.estoque_receber,
-      depois.perfil_acesso,
-      depois.monitor_ping,
-      depois.fiscal,
-      depois.dfe_certificado,
-      depois.recursos_humanos,
-      depois.cadastro_calendario,
-      depois.jornada,
-      depois.vinculo_jornada,
-      depois.solicitacoes,
-      depois.solicitacoes_fazendas,
-      depois.cadastro_equipamento,
-      depois.aprovador_ponto_gestor,
-      depois.aprovador_ponto_rh,
-      id
-    ]);
+    `, [...valores, id]);
 
     if (result.affectedRows === 0) {
       await conn.rollback();
@@ -8786,7 +8832,6 @@ app.get('/api/permissoes/agendar-sala/:usuarioId', async (req, res) => {
   }
 });
 
-// permissão menu lateral
 app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
   try {
     const usuarioId = Number(req.params.usuarioId);
@@ -8803,6 +8848,7 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         u.ID AS usuario_id,
         u.NOME AS usuario_nome,
         u.PERFIL AS perfil,
+
         COALESCE(p.pedidos, 0) AS pedidos,
         COALESCE(p.clientes, 0) AS clientes,
         COALESCE(p.marketing, 0) AS marketing,
@@ -8819,7 +8865,23 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         COALESCE(p.vinculo_jornada, 0) AS vinculo_jornada,
         COALESCE(p.solicitacoes, 0) AS solicitacoes,
         COALESCE(p.solicitacoes_fazendas, 0) AS solicitacoes_fazendas,
-        COALESCE(p.cadastro_equipamento, 0) AS cadastro_equipamento
+        COALESCE(p.cadastro_equipamento, 0) AS cadastro_equipamento,
+
+        COALESCE(p.gov_dashboard, 0) AS gov_dashboard,
+        COALESCE(p.gov_historico, 0) AS gov_historico,
+        COALESCE(p.gov_rh, 0) AS gov_rh,
+        COALESCE(p.gov_fin, 0) AS gov_fin,
+        COALESCE(p.gov_com, 0) AS gov_com,
+        COALESCE(p.gov_log, 0) AS gov_log,
+        COALESCE(p.gov_prod, 0) AS gov_prod,
+        COALESCE(p.gov_qual, 0) AS gov_qual,
+        COALESCE(p.gov_ti, 0) AS gov_ti,
+        COALESCE(p.gov_jur, 0) AS gov_jur,
+        COALESCE(p.gov_dir, 0) AS gov_dir,
+        COALESCE(p.gov_compras, 0) AS gov_compras,
+        COALESCE(p.gov_mkt, 0) AS gov_mkt,
+        COALESCE(p.gov_cont, 0) AS gov_cont,
+        COALESCE(p.gov_fiscal_setor, 0) AS gov_fiscal_setor
 
       FROM SF_USUARIO u
       LEFT JOIN SF_PERFIL p ON p.nome = u.perfil
@@ -8859,7 +8921,23 @@ app.get('/api/permissoes/menu/:usuarioId', async (req, res) => {
         vinculojornada: Number(item.vinculo_jornada ?? 0),
         solicitacoes: Number(item.solicitacoes ?? 0),
         solicitacoes_fazendas: Number(item.solicitacoes_fazendas ?? 0),
-        cadastroequipamento: Number(item.cadastro_equipamento ?? 0)
+        cadastroequipamento: Number(item.cadastro_equipamento ?? 0),
+
+        govdashboard: Number(item.gov_dashboard ?? 0),
+        govhistorico: Number(item.gov_historico ?? 0),
+        govrh: Number(item.gov_rh ?? 0),
+        govfin: Number(item.gov_fin ?? 0),
+        govcom: Number(item.gov_com ?? 0),
+        govlog: Number(item.gov_log ?? 0),
+        govprod: Number(item.gov_prod ?? 0),
+        govqual: Number(item.gov_qual ?? 0),
+        govti: Number(item.gov_ti ?? 0),
+        govjur: Number(item.gov_jur ?? 0),
+        govdir: Number(item.gov_dir ?? 0),
+        govcompras: Number(item.gov_compras ?? 0),
+        govmkt: Number(item.gov_mkt ?? 0),
+        govcont: Number(item.gov_cont ?? 0),
+        govfiscalsetor: Number(item.gov_fiscal_setor ?? 0)
       }
     };
 
@@ -22075,6 +22153,911 @@ app.get("/api/marketing/imagens-inicial", async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Erro ao buscar imagens de marketing" });
+  }
+});
+
+// ====================== //
+// Governança Documental  //
+// Backend corrigido      //
+// ====================== //
+
+const GOV_TIPOS_SIGLA = {
+  'Política': 'POL',
+  'Processo': 'PRO',
+  'Procedimento': 'PRC',
+  'Instrução de Trabalho': 'IT',
+  'Manual': 'MAN'
+};
+
+const GOV_AREAS_SIGLA = {
+  govrh: 'RH',
+  govfin: 'FI',
+  govcom: 'CO',
+  govlog: 'LG',
+  govprod: 'PD',
+  govqual: 'QL',
+  govti: 'TI',
+  govjur: 'JU',
+  govdir: 'DR',
+  govcompras: 'CP',
+  govmkt: 'MK',
+  govcont: 'CT',
+  govfiscalsetor: 'FS'
+};
+
+const GOV_STATUS_VALIDOS = [
+  'Pendente',
+  'Em Revisão',
+  'Alterado',
+  'Aprovado',
+  'Implantado',
+  'Desatualizado'
+];
+
+const GOV_EMPRESAS_VALIDAS = [
+  'Franciosi Sementes',
+  'Sociedade Franciosi',
+  'Ambas'
+];
+
+const GOV_ESCOPOS_VALIDOS = [
+  'Empresa',
+  'Setor',
+  'Unidade',
+  'Corporativo'
+];
+
+const GOV_PRIORIDADES_VALIDAS = [
+  'Baixa',
+  'Média',
+  'Alta'
+];
+
+const GOV_CRITICIDADES_VALIDAS = [
+  'Baixa',
+  'Média',
+  'Alta',
+  'Crítica'
+];
+
+const govTexto = (v, max = null) => {
+  if (v === undefined || v === null) return '';
+  const txt = String(v).trim();
+  return max ? txt.slice(0, max) : txt;
+};
+
+const govNullable = (v, max = null) => {
+  const txt = govTexto(v, max);
+  return txt || null;
+};
+
+const govDate = (v) => {
+  const txt = govTexto(v, 10);
+  if (!txt) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(txt) ? txt : null;
+};
+
+const govMapRow = (row) => ({
+  id: row.id,
+  codigo: row.codigo,
+  tipo: row.tipo,
+  areaId: row.area_id,
+  titulo: row.titulo,
+  descricao: row.descricao,
+  objetivo: row.objetivo,
+  empresa: row.empresa,
+  escopo: row.escopo,
+  prioridade: row.prioridade,
+  criticidade: row.criticidade,
+  status: row.status,
+  versao: row.versao,
+  responsavel: row.responsavel,
+  aprovador: row.aprovador,
+  dataCriacao: row.data_criacao,
+  dataUltimaRevisao: row.data_ultima_revisao,
+  proximaRevisao: row.proxima_revisao,
+  proposito: row.proposito,
+  aplicacao: row.aplicacao,
+  responsabilidades: row.responsabilidades,
+  conceitos: row.conceitos,
+  conformidadesLegais: row.conformidades_legais,
+  comunicacaoTreinamentos: row.comunicacao_treinamentos,
+  diretrizesGerais: row.diretrizes_gerais,
+  monitoramentoAvaliacao: row.monitoramento_avaliacao,
+  gestaoConsequencia: row.gestao_consequencia,
+  objetivoPolitica: row.objetivo_politica,
+  abrangencia: row.abrangencia,
+  diretrizes: row.diretrizes,
+  definicoes: row.definicoes,
+  linkDocumento: row.link_documento,
+  arquivoUrl: row.arquivo_url,
+  arquivoNome: row.arquivo_nome,
+  observacoes: row.observacoes,
+  criadoEm: row.criado_em,
+  atualizadoEm: row.atualizado_em
+});
+
+const govCamposDoc = [
+  'codigo',
+  'tipo',
+  'area_id',
+  'titulo',
+  'descricao',
+  'objetivo',
+  'empresa',
+  'escopo',
+  'prioridade',
+  'criticidade',
+  'status',
+  'versao',
+  'responsavel',
+  'aprovador',
+  'data_criacao',
+  'data_ultima_revisao',
+  'proxima_revisao',
+  'proposito',
+  'aplicacao',
+  'responsabilidades',
+  'conceitos',
+  'conformidades_legais',
+  'comunicacao_treinamentos',
+  'diretrizes_gerais',
+  'monitoramento_avaliacao',
+  'gestao_consequencia',
+  'objetivo_politica',
+  'abrangencia',
+  'diretrizes',
+  'definicoes',
+  'link_documento',
+  'arquivo_url',
+  'arquivo_nome',
+  'observacoes'
+];
+
+function govPayloadDocumento(body = {}) {
+  return {
+    codigo: govTexto(body.codigo, 30),
+    tipo: govTexto(body.tipo, 80),
+    area_id: govTexto(body.areaId, 50),
+    titulo: govTexto(body.titulo, 200),
+    descricao: govNullable(body.descricao, 500),
+    objetivo: govNullable(body.objetivo, 500),
+    empresa: govTexto(body.empresa, 100),
+    escopo: govNullable(body.escopo, 50),
+    prioridade: govNullable(body.prioridade, 30),
+    criticidade: govNullable(body.criticidade, 30),
+    status: govTexto(body.status, 50),
+    versao: govNullable(body.versao, 20),
+    responsavel: govTexto(body.responsavel, 100),
+    aprovador: govNullable(body.aprovador, 100),
+    data_criacao: govDate(body.dataCriacao),
+    data_ultima_revisao: govDate(body.dataUltimaRevisao),
+    proxima_revisao: govDate(body.proximaRevisao),
+    proposito: govNullable(body.proposito),
+    aplicacao: govNullable(body.aplicacao),
+    responsabilidades: govNullable(body.responsabilidades),
+    conceitos: govNullable(body.conceitos),
+    conformidades_legais: govNullable(body.conformidadesLegais),
+    comunicacao_treinamentos: govNullable(body.comunicacaoTreinamentos),
+    diretrizes_gerais: govNullable(body.diretrizesGerais),
+    monitoramento_avaliacao: govNullable(body.monitoramentoAvaliacao),
+    gestao_consequencia: govNullable(body.gestaoConsequencia),
+    objetivo_politica: govNullable(body.objetivoPolitica),
+    abrangencia: govNullable(body.abrangencia),
+    diretrizes: govNullable(body.diretrizes),
+    definicoes: govNullable(body.definicoes),
+    link_documento: govNullable(body.linkDocumento, 500),
+    arquivo_url: govNullable(body.arquivoUrl, 500),
+    arquivo_nome: govNullable(body.arquivoNome, 255),
+    observacoes: govNullable(body.observacoes)
+  };
+}
+
+function govValidarPayload(payload) {
+  if (!payload.codigo) return 'Código é obrigatório.';
+  if (!payload.tipo) return 'Tipo é obrigatório.';
+  if (!payload.area_id) return 'Área é obrigatória.';
+  if (!payload.titulo) return 'Título é obrigatório.';
+  if (!payload.responsavel) return 'Responsável é obrigatório.';
+  if (!payload.proxima_revisao) return 'Próxima revisão é obrigatória.';
+
+  if (!GOV_TIPOS_SIGLA[payload.tipo]) {
+    return 'Tipo documental inválido.';
+  }
+
+  if (!GOV_AREAS_SIGLA[payload.area_id]) {
+    return 'Área inválida.';
+  }
+
+  if (payload.status && !GOV_STATUS_VALIDOS.includes(payload.status)) {
+    return 'Status inválido.';
+  }
+
+  if (payload.empresa && !GOV_EMPRESAS_VALIDAS.includes(payload.empresa)) {
+    return 'Empresa inválida.';
+  }
+
+  if (payload.escopo && !GOV_ESCOPOS_VALIDOS.includes(payload.escopo)) {
+    return 'Escopo inválido.';
+  }
+
+  if (payload.prioridade && !GOV_PRIORIDADES_VALIDAS.includes(payload.prioridade)) {
+    return 'Prioridade inválida.';
+  }
+
+  if (payload.criticidade && !GOV_CRITICIDADES_VALIDAS.includes(payload.criticidade)) {
+    return 'Criticidade inválida.';
+  }
+
+  return null;
+}
+
+function govMontarPrefixo(tipo, areaId) {
+  const siglaTipo = GOV_TIPOS_SIGLA[tipo];
+  const siglaArea = GOV_AREAS_SIGLA[areaId];
+  if (!siglaTipo || !siglaArea) return null;
+  return `${siglaTipo}-${siglaArea}`;
+}
+
+async function govBuscarDocumentoPorId(conn, id) {
+  const [rows] = await conn.query(`
+    SELECT *
+    FROM SF_GOV_DOCUMENTO
+    WHERE id = ?
+    LIMIT 1
+  `, [id]);
+
+  return rows[0] || null;
+}
+
+async function govBuscarDocumentoPorCodigo(conn, codigo, ignoreId = null) {
+  const params = [codigo];
+  let sql = `
+    SELECT id, codigo
+    FROM SF_GOV_DOCUMENTO
+    WHERE codigo = ?
+  `;
+
+  if (ignoreId) {
+    sql += ` AND id <> ?`;
+    params.push(ignoreId);
+  }
+
+  sql += ` LIMIT 1`;
+
+  const [rows] = await conn.query(sql, params);
+  return rows[0] || null;
+}
+
+// LISTAR DOCUMENTOS
+app.get('/api/governanca/documentos', async (req, res) => {
+  try {
+    const areaId = govTexto(req.query?.areaId, 50);
+    const status = govTexto(req.query?.status, 50);
+
+    const where = [];
+    const params = [];
+
+    if (areaId) {
+      where.push('area_id = ?');
+      params.push(areaId);
+    }
+
+    if (status) {
+      where.push('status = ?');
+      params.push(status);
+    }
+
+    const sql = `
+      SELECT *
+      FROM SF_GOV_DOCUMENTO
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY id DESC
+    `;
+
+    const [rows] = await pool.query(sql, params);
+
+    return res.json({
+      success: true,
+      items: rows.map(govMapRow)
+    });
+  } catch (err) {
+    console.error('Erro /api/governanca/documentos GET', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar documentos.',
+      error: err.message
+    });
+  }
+});
+
+// BUSCAR DOCUMENTO
+app.get('/api/governanca/documentos/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do documento inválido.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT *
+      FROM SF_GOV_DOCUMENTO
+      WHERE id = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Documento não encontrado.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      item: govMapRow(rows[0])
+    });
+  } catch (err) {
+    console.error('Erro /api/governanca/documentos/:id GET', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao buscar documento.',
+      error: err.message
+    });
+  }
+});
+
+// HISTÓRICO
+app.get('/api/governanca/historico', async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        l.id,
+        l.id_documento AS docId,
+        d.titulo AS docTitulo,
+        l.acao,
+        l.campo,
+        l.antes,
+        l.depois,
+        l.usuario_id AS usuarioId,
+        l.usuario_nome AS usuarioNome,
+        l.criado_em AS data
+      FROM SF_GOV_DOCUMENTO_LOG l
+      INNER JOIN SF_GOV_DOCUMENTO d ON d.id = l.id_documento
+      ORDER BY l.id DESC
+      LIMIT 500
+    `);
+
+    return res.json({
+      success: true,
+      items: rows
+    });
+  } catch (err) {
+    console.error('Erro /api/governanca/historico GET', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao listar histórico.',
+      error: err.message
+    });
+  }
+});
+
+// GERAR PRÓXIMO CÓDIGO
+app.get('/api/governanca/proximo-codigo', async (req, res) => {
+  try {
+    const tipo = govTexto(req.query?.tipo, 80);
+    const areaId = govTexto(req.query?.areaId, 50);
+
+    if (!tipo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tipo é obrigatório.'
+      });
+    }
+
+    if (!areaId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Área é obrigatória.'
+      });
+    }
+
+    const prefixo = govMontarPrefixo(tipo, areaId);
+
+    if (!prefixo) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tipo ou área inválidos para geração do código.'
+      });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT codigo
+      FROM SF_GOV_DOCUMENTO
+      WHERE codigo LIKE CONCAT(?, '-%')
+      ORDER BY id DESC
+    `, [prefixo]);
+
+    let maior = 0;
+    const regex = new RegExp(`^${prefixo}-(\\d{4,})$`);
+
+    for (const row of rows) {
+      const codigo = String(row.codigo || '').trim();
+      const match = codigo.match(regex);
+      if (!match) continue;
+
+      const numero = parseInt(match[1], 10);
+      if (numero > maior) maior = numero;
+    }
+
+    const codigo = `${prefixo}-${String(maior + 1).padStart(4, '0')}`;
+
+    return res.json({
+      success: true,
+      codigo
+    });
+  } catch (err) {
+    console.error('Erro /api/governanca/proximo-codigo GET', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao gerar próximo código.',
+      error: err.message
+    });
+  }
+});
+
+// CRIAR DOCUMENTO
+app.post('/api/governanca/documentos', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const usuarioId = req.body?.usuario_id ?? null;
+    const usuarioNome = govNullable(req.body?.usuario_nome, 150);
+    const payload = govPayloadDocumento(req.body);
+
+    if (!payload.status) {
+      payload.status = 'Pendente';
+    }
+
+    if (!payload.empresa) {
+      payload.empresa = 'Ambas';
+    }
+
+    const erroValidacao = govValidarPayload(payload);
+    if (erroValidacao) {
+      return res.status(400).json({
+        success: false,
+        message: erroValidacao
+      });
+    }
+
+    const prefixoEsperado = govMontarPrefixo(payload.tipo, payload.area_id);
+    if (!payload.codigo.startsWith(`${prefixoEsperado}-`)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Código incompatível com o tipo e a área informados.'
+      });
+    }
+
+    await conn.beginTransaction();
+
+    const existente = await govBuscarDocumentoPorCodigo(conn, payload.codigo);
+    if (existente) {
+      await conn.rollback();
+      return res.status(409).json({
+        success: false,
+        message: 'Já existe um documento com este código.'
+      });
+    }
+
+    const valores = govCamposDoc.map(col => payload[col]);
+
+    const [result] = await conn.query(`
+      INSERT INTO SF_GOV_DOCUMENTO (${govCamposDoc.join(', ')})
+      VALUES (${govCamposDoc.map(() => '?').join(', ')})
+    `, valores);
+
+    const idDocumento = Number(result?.insertId || 0);
+
+    if (!idDocumento) {
+      throw new Error('Não foi possível obter o ID do documento criado.');
+    }
+
+    await conn.query(`
+      INSERT INTO SF_GOV_DOCUMENTO_LOG (
+        id_documento,
+        acao,
+        campo,
+        antes,
+        depois,
+        usuario_id,
+        usuario_nome
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      idDocumento,
+      'CRIACAO',
+      null,
+      null,
+      JSON.stringify(payload),
+      usuarioId,
+      usuarioNome
+    ]);
+
+    const salvo = await govBuscarDocumentoPorId(conn, idDocumento);
+
+    await conn.commit();
+
+    return res.status(201).json({
+      success: true,
+      item: govMapRow(salvo),
+      message: 'Documento criado com sucesso.'
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/governanca/documentos POST', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao criar documento.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+// ATUALIZAR DOCUMENTO
+app.put('/api/governanca/documentos/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const id = Number(req.params.id);
+    const usuarioId = req.body?.usuario_id ?? null;
+    const usuarioNome = govNullable(req.body?.usuario_nome, 150);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do documento inválido.'
+      });
+    }
+
+    await conn.beginTransaction();
+
+    const antes = await govBuscarDocumentoPorId(conn, id);
+
+    if (!antes) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Documento não encontrado.'
+      });
+    }
+
+    const depois = govPayloadDocumento(req.body);
+
+    const erroValidacao = govValidarPayload(depois);
+    if (erroValidacao) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: erroValidacao
+      });
+    }
+
+    const prefixoEsperado = govMontarPrefixo(depois.tipo, depois.area_id);
+    if (!depois.codigo.startsWith(`${prefixoEsperado}-`)) {
+      await conn.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Código incompatível com o tipo e a área informados.'
+      });
+    }
+
+    const codigoEmUso = await govBuscarDocumentoPorCodigo(conn, depois.codigo, id);
+    if (codigoEmUso) {
+      await conn.rollback();
+      return res.status(409).json({
+        success: false,
+        message: 'Já existe outro documento com este código.'
+      });
+    }
+
+    const setClause = govCamposDoc.map(col => `${col} = ?`).join(', ');
+    const valores = govCamposDoc.map(col => depois[col]);
+
+    const [result] = await conn.query(`
+      UPDATE SF_GOV_DOCUMENTO
+      SET ${setClause}
+      WHERE id = ?
+    `, [...valores, id]);
+
+    if (result.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Documento não encontrado para atualização.'
+      });
+    }
+
+    for (const campo of govCamposDoc) {
+      const antesVal = antes[campo] ?? null;
+      const depoisVal = depois[campo] ?? null;
+
+      if (String(antesVal ?? '') !== String(depoisVal ?? '')) {
+        await conn.query(`
+          INSERT INTO SF_GOV_DOCUMENTO_LOG (
+            id_documento,
+            acao,
+            campo,
+            antes,
+            depois,
+            usuario_id,
+            usuario_nome
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [
+          id,
+          'ALTERACAO',
+          campo,
+          antesVal !== null ? String(antesVal) : null,
+          depoisVal !== null ? String(depoisVal) : null,
+          usuarioId,
+          usuarioNome
+        ]);
+      }
+    }
+
+    const salvo = await govBuscarDocumentoPorId(conn, id);
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      item: govMapRow(salvo),
+      message: 'Documento atualizado com sucesso.'
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/governanca/documentos/:id PUT', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao atualizar documento.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+// EXCLUIR DOCUMENTO
+app.delete('/api/governanca/documentos/:id', async (req, res) => {
+  const conn = await pool.getConnection();
+
+  try {
+    const id = Number(req.params.id);
+    const usuarioId = req.body?.usuario_id ?? null;
+    const usuarioNome = govNullable(req.body?.usuario_nome, 150);
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: 'ID do documento inválido.'
+      });
+    }
+
+    await conn.beginTransaction();
+
+    const doc = await govBuscarDocumentoPorId(conn, id);
+
+    if (!doc) {
+      await conn.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Documento não encontrado.'
+      });
+    }
+
+    await conn.query(`
+      INSERT INTO SF_GOV_DOCUMENTO_LOG (
+        id_documento,
+        acao,
+        campo,
+        antes,
+        depois,
+        usuario_id,
+        usuario_nome
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [
+      id,
+      'EXCLUSAO',
+      null,
+      JSON.stringify(doc),
+      null,
+      usuarioId,
+      usuarioNome
+    ]);
+
+    await conn.query(`
+      DELETE FROM SF_GOV_DOCUMENTO
+      WHERE id = ?
+    `, [id]);
+
+    await conn.commit();
+
+    return res.json({
+      success: true,
+      message: 'Documento excluído com sucesso.'
+    });
+  } catch (err) {
+    try { await conn.rollback(); } catch {}
+    console.error('Erro /api/governanca/documentos/:id DELETE', err);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Erro ao excluir documento.',
+      error: err.message
+    });
+  } finally {
+    conn.release();
+  }
+});
+
+const PASTA_GOV_ANEXOS = path.join(DIRETORIO_VOLUME_anexos, 'governanca-documental');
+fs.mkdirSync(PASTA_GOV_ANEXOS, { recursive: true });
+
+app.use('/anexos/governanca-documental', express.static(PASTA_GOV_ANEXOS));
+
+function apenasNomeArquivoSeguroGov(nome = '') {
+  return String(nome)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w.\-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+const storageGovAnexos = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, PASTA_GOV_ANEXOS),
+  filename: (req, file, cb) => {
+    const original = apenasNomeArquivoSeguroGov(file.originalname || 'arquivo');
+    const ext = path.extname(original);
+    const base = path.basename(original, ext).slice(0, 80);
+    const unico = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    cb(null, `${base}-${unico}${ext}`);
+  }
+});
+
+const uploadGovAnexo = multer({
+  storage: storageGovAnexos,
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
+
+app.get('/api/governanca/documentos/:id/anexos', async (req, res) => {
+  try {
+    const idDocumento = Number(req.params.id);
+
+    if (!idDocumento) {
+      return res.status(400).json({ success: false, message: 'ID do documento inválido.' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT
+        id,
+        id_documento AS idDocumento,
+        tipo,
+        nome,
+        descricao,
+        url,
+        nome_arquivo AS nomeArquivo,
+        criado_em AS criadoEm,
+        atualizado_em AS atualizadoEm
+      FROM SF_GOV_DOCUMENTO_ANEXO
+      WHERE id_documento = ?
+      ORDER BY id DESC
+    `, [idDocumento]);
+
+    return res.json({ success: true, items: rows });
+  } catch (err) {
+    console.error('Erro ao listar anexos', err);
+    return res.status(500).json({ success: false, message: 'Erro ao listar anexos.', error: err.message });
+  }
+});
+
+app.put('/api/governanca/anexos/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const nome = govTexto(req.body?.nome, 255);
+    const descricao = govNullable(req.body?.descricao, 255);
+    const tipo = govTexto(req.body?.tipo, 20);
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID do anexo inválido.' });
+    }
+
+    await pool.query(`
+      UPDATE SF_GOV_DOCUMENTO_ANEXO
+      SET nome = ?, descricao = ?, tipo = ?
+      WHERE id = ?
+    `, [
+      nome,
+      descricao,
+      tipo === 'REFERENCIA' ? 'REFERENCIA' : 'ANEXO',
+      id
+    ]);
+
+    const [rows] = await pool.query(`
+      SELECT
+        id,
+        id_documento AS idDocumento,
+        tipo,
+        nome,
+        descricao,
+        url,
+        nome_arquivo AS nomeArquivo,
+        criado_em AS criadoEm,
+        atualizado_em AS atualizadoEm
+      FROM SF_GOV_DOCUMENTO_ANEXO
+      WHERE id = ?
+      LIMIT 1
+    `, [id]);
+
+    return res.json({
+      success: true,
+      item: rows[0],
+      message: 'Anexo atualizado com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao editar anexo', err);
+    return res.status(500).json({ success: false, message: 'Erro ao editar anexo.', error: err.message });
+  }
+});
+
+app.delete('/api/governanca/anexos/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'ID do anexo inválido.' });
+    }
+
+    const [rows] = await pool.query(`
+      SELECT *
+      FROM SF_GOV_DOCUMENTO_ANEXO
+      WHERE id = ?
+      LIMIT 1
+    `, [id]);
+
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Anexo não encontrado.' });
+    }
+
+    const anexo = rows[0];
+
+    await pool.query(`
+      DELETE FROM SF_GOV_DOCUMENTO_ANEXO
+      WHERE id = ?
+    `, [id]);
+
+    if (anexo.url) {
+      const nomeArquivo = path.basename(anexo.url);
+      const caminhoArquivo = path.join(PASTA_GOV_ANEXOS, nomeArquivo);
+      if (fs.existsSync(caminhoArquivo)) {
+        fs.unlinkSync(caminhoArquivo);
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: 'Anexo excluído com sucesso.'
+    });
+  } catch (err) {
+    console.error('Erro ao excluir anexo', err);
+    return res.status(500).json({ success: false, message: 'Erro ao excluir anexo.', error: err.message });
   }
 });
 
