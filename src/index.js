@@ -21090,19 +21090,48 @@ app.get('/api/solicitacoes-fazendas', async (req, res) => {
   try {
     const usuarioLogadoId = paraInt(req.query.usuarioLogadoId, 0);
 
+    const usuarioPermitidoIdsRaw = Array.isArray(req.query.usuarioPermitidoId)
+      ? req.query.usuarioPermitidoId
+      : req.query.usuarioPermitidoId
+        ? [req.query.usuarioPermitidoId]
+        : [];
+
+    const usuarioPermitidoIds = [
+      ...new Set(
+        usuarioPermitidoIdsRaw
+          .map(valor => paraInt(valor, 0))
+          .filter(id => id > 0)
+      )
+    ];
+
+    if (usuarioLogadoId > 0 && !usuarioPermitidoIds.includes(usuarioLogadoId)) {
+      usuarioPermitidoIds.push(usuarioLogadoId);
+    }
+
+    console.log('usuarioLogadoId:', usuarioLogadoId);
+    console.log('usuarioPermitidoIds:', usuarioPermitidoIds);
+
+    if (!usuarioPermitidoIds.length) {
+      return res.json({
+        success: true,
+        items: []
+      });
+    }
+
+    const placeholders = usuarioPermitidoIds.map(() => '?').join(',');
+
     const sql = `
       SELECT
         sf.*
       FROM SF_SOLICITACAO_FAZENDA sf
-      WHERE (? = 0 OR sf.criado_por_id = ? OR sf.usuario_id = ?)
+      WHERE sf.usuario_id IN (${placeholders})
+         OR sf.criado_por_id IN (${placeholders})
       ORDER BY sf.id DESC
     `;
 
-    const [rows] = await pool.query(sql, [
-      usuarioLogadoId,
-      usuarioLogadoId,
-      usuarioLogadoId
-    ]);
+    const params = [...usuarioPermitidoIds, ...usuarioPermitidoIds];
+
+    const [rows] = await pool.query(sql, params);
 
     return res.json({
       success: true,
