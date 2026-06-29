@@ -21108,15 +21108,23 @@ app.get('/api/solicitacoes-fazendas', async (req, res) => {
       usuarioPermitidoIds.push(usuarioLogadoId);
     }
 
+    console.log('='.repeat(80));
+    console.log('[GET /api/solicitacoes-fazendas] Início');
     console.log('usuarioLogadoId:', usuarioLogadoId);
-    console.log('usuarioPermitidoIds:', usuarioPermitidoIds);
+    console.log('req.query:', req.query);
+    console.log('usuarioPermitidoIdsRaw:', usuarioPermitidoIdsRaw);
+    console.log('usuarioPermitidoIds normalizados:', usuarioPermitidoIds);
 
     if (!usuarioPermitidoIds.length) {
+      console.log('[GET /api/solicitacoes-fazendas] Nenhum usuário permitido recebido.');
       return res.json({
         success: true,
         items: []
       });
     }
+
+    console.log('[GET /api/solicitacoes-fazendas] Usuários recebidos do front:');
+    console.table(usuarioPermitidoIds.map(id => ({ usuarioPermitidoId: id })));
 
     const placeholders = usuarioPermitidoIds.map(() => '?').join(',');
 
@@ -21131,11 +21139,54 @@ app.get('/api/solicitacoes-fazendas', async (req, res) => {
 
     const params = [...usuarioPermitidoIds, ...usuarioPermitidoIds];
 
+    console.log('[GET /api/solicitacoes-fazendas] SQL:');
+    console.log(sql);
+    console.log('[GET /api/solicitacoes-fazendas] Params:', params);
+
     const [rows] = await pool.query(sql, params);
+
+    const items = rows.map(mapearSolicitacao);
+
+    console.log('[GET /api/solicitacoes-fazendas] Total de solicitações encontradas no banco:', rows.length);
+
+    if (rows.length) {
+      console.log('[GET /api/solicitacoes-fazendas] Solicitações brutas encontradas:');
+      console.table(
+        rows.map(item => ({
+          id: item.id,
+          usuario_id: item.usuario_id,
+          criado_por_id: item.criado_por_id,
+          tipo_solicitacao: item.tipo_solicitacao,
+          status: item.status,
+          responsavel: item.responsavel
+        }))
+      );
+    } else {
+      console.log('[GET /api/solicitacoes-fazendas] Nenhuma solicitação encontrada no banco.');
+    }
+
+    console.log('[GET /api/solicitacoes-fazendas] Total de solicitações enviadas ao frontend:', items.length);
+
+    if (items.length) {
+      console.log('[GET /api/solicitacoes-fazendas] Solicitações enviadas ao frontend:');
+      console.table(
+        items.map(item => ({
+          id: item.id,
+          usuarioId: item.usuarioId,
+          usuarioNome: item.usuarioNome,
+          responsavel: item.responsavel,
+          tipoSolicitacao: item.tipoSolicitacao,
+          status: item.status
+        }))
+      );
+    }
+
+    console.log('[GET /api/solicitacoes-fazendas] Fim');
+    console.log('='.repeat(80));
 
     return res.json({
       success: true,
-      items: rows.map(mapearSolicitacao)
+      items
     });
   } catch (err) {
     console.error('Erro ao listar solicitações da fazenda:', err);
