@@ -978,7 +978,6 @@ app.post('/api/agendamentos/sala/verificar', async (req, res) => {
 app.post('/api/agendamentos/sala', async (req, res) => {
   const conn = await pool.getConnection();
 
-  console.log('[AGENDAMENTO_SALA] Iniciando requisição');
 
   try {
     const {
@@ -991,18 +990,9 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       emails_externos
     } = req.body;
 
-    console.log('[AGENDAMENTO_SALA] Body recebido:', {
-      sala,
-      inicio,
-      fim,
-      motivo,
-      usuario,
-      participantesCount: Array.isArray(participantes) ? participantes.length : 0,
-      emailsExternosCount: Array.isArray(emails_externos) ? emails_externos.length : 0
-    });
+
 
     if (!sala || !inicio || !fim || !motivo || !usuario) {
-      console.log('[AGENDAMENTO_SALA] Validação falhou: campos obrigatórios ausentes');
       return res.status(400).json({
         success: false,
         message: 'sala, inicio, fim, motivo e usuario são obrigatórios.'
@@ -1012,7 +1002,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     const ini = new Date(inicio);
     const end = new Date(fim);
     if (!(end > ini)) {
-      console.log('[AGENDAMENTO_SALA] Validação falhou: fim <= inicio');
       return res.status(400).json({ success: false, message: 'fim deve ser maior que inicio.' });
     }
 
@@ -1026,13 +1015,9 @@ app.post('/api/agendamentos/sala', async (req, res) => {
           .filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
       : [];
 
-    console.log('[AGENDAMENTO_SALA] Dados normalizados:', {
-      ids,
-      emailsExternos
-    });
+
 
     await conn.beginTransaction();
-    console.log('[AGENDAMENTO_SALA] Transaction iniciada');
 
     const [ins] = await conn.query(
       `INSERT INTO SF_AGENDAMENTO (sala, inicio, fim, motivo, usuario_agendamento, status, data_agendamento)
@@ -1041,11 +1026,9 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     );
 
     const idAgendamento = ins.insertId;
-    console.log('[AGENDAMENTO_SALA] Agendamento inserido:', { idAgendamento });
 
     let convidados = [];
     if (ids.length) {
-      console.log('[AGENDAMENTO_SALA] Buscando usuários cadastrados:', ids);
 
       const [u] = await conn.query(
         `SELECT id, nome, email
@@ -1056,17 +1039,11 @@ app.post('/api/agendamentos/sala', async (req, res) => {
       );
 
       convidados = u;
-      console.log('[AGENDAMENTO_SALA] Usuários encontrados:', convidados.length);
     } else {
-      console.log('[AGENDAMENTO_SALA] Nenhum usuário cadastrado selecionado');
     }
 
     for (const p of convidados) {
-      console.log('[AGENDAMENTO_SALA] Inserindo participante cadastrado:', {
-        id_usuario: p.id,
-        nome: p.nome,
-        email: p.email
-      });
+
 
       await conn.query(
         `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
@@ -1076,7 +1053,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     }
 
     for (const email of emailsExternos) {
-      console.log('[AGENDAMENTO_SALA] Inserindo participante externo:', { email });
 
       await conn.query(
         `INSERT INTO SF_AGENDAMENTO_PARTICIPANTE (id_agendamento, id_usuario, nome, email)
@@ -1088,11 +1064,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     for (const p of convidados) {
       const uid = `${idAgendamento}-${p.id}@sociedadefranciosi`;
 
-      console.log('[AGENDAMENTO_SALA] Enfileirando email cadastrado:', {
-        id_usuario: p.id,
-        email: p.email,
-        uid
-      });
+
 
       await conn.query(
         `INSERT INTO SF_EMAIL_QUEUE
@@ -1112,10 +1084,7 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     for (const email of emailsExternos) {
       const uid = `${idAgendamento}-${email}@sociedadefranciosi`;
 
-      console.log('[AGENDAMENTO_SALA] Enfileirando email externo:', {
-        email,
-        uid
-      });
+
 
       await conn.query(
         `INSERT INTO SF_EMAIL_QUEUE
@@ -1133,7 +1102,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     }
 
     await conn.commit();
-    console.log('[AGENDAMENTO_SALA] Transaction commit realizada com sucesso');
 
     return res.json({
       success: true,
@@ -1148,7 +1116,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     console.error('[AGENDAMENTO_SALA] ERRO:', err);
     try {
       await conn.rollback();
-      console.log('[AGENDAMENTO_SALA] Rollback executado');
     } catch (rbErr) {
       console.error('[AGENDAMENTO_SALA] Falha no rollback:', rbErr);
     }
@@ -1160,7 +1127,6 @@ app.post('/api/agendamentos/sala', async (req, res) => {
     });
   } finally {
     conn.release();
-    console.log('[AGENDAMENTO_SALA] Connection liberada');
   }
 });
 
@@ -10537,7 +10503,6 @@ app.post('/api/reservas-carro/:id/aprovar', async (req, res) => {
       });
     }
 
-    console.log(reserva.status_solicitacao)
 
     if (reserva.status_solicitacao !== 'PENDENTE' && reserva.status_solicitacao !== 'PENDENTE FROTA') {
       await conn.rollback();
@@ -21112,16 +21077,9 @@ app.get('/api/solicitacoes-fazendas', async (req, res) => {
       usuarioPermitidoIds.push(usuarioLogadoId);
     }
 
-    console.log('='.repeat(80));
-    console.log('[GET /api/solicitacoes-fazendas] Início');
-    console.log('usuarioLogadoId:', usuarioLogadoId);
-    console.log('req.query:', req.query);
-    console.log('usuarioPermitidoIdQuery:', usuarioPermitidoIdQuery);
-    console.log('usuarioPermitidoIdsRaw:', usuarioPermitidoIdsRaw);
-    console.log('usuarioPermitidoIds normalizados:', usuarioPermitidoIds);
+
 
     if (!usuarioPermitidoIds.length) {
-      console.log('[GET /api/solicitacoes-fazendas] Nenhum usuário permitido recebido.');
       return res.json({
         success: true,
         items: []
@@ -21143,31 +21101,13 @@ app.get('/api/solicitacoes-fazendas', async (req, res) => {
 
     const params = [...usuarioPermitidoIds, ...usuarioPermitidoIds];
 
-    console.log('[GET /api/solicitacoes-fazendas] SQL:');
-    console.log(sql);
-    console.log('[GET /api/solicitacoes-fazendas] Params:', params);
+
 
     const [rows] = await pool.query(sql, params);
     const items = rows.map(mapearSolicitacao);
 
-    console.log('[GET /api/solicitacoes-fazendas] Total de solicitações encontradas no banco:', rows.length);
 
-    if (rows.length) {
-      console.table(rows.map(item => ({
-        id: item.id,
-        codigo: item.codigo,
-        usuario_id: item.usuario_id,
-        usuario_nome: item.usuario_nome,
-        criado_por_id: item.criado_por_id,
-        criado_por_nome: item.criado_por_nome,
-        tipo_solicitacao: item.tipo_solicitacao,
-        status: item.status
-      })));
-    } else {
-      console.log('[GET /api/solicitacoes-fazendas] Nenhuma solicitação encontrada no banco.');
-    }
 
-    console.log('[GET /api/solicitacoes-fazendas] Total de solicitações enviadas ao frontend:', items.length);
 
     return res.json({
       success: true,
