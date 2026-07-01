@@ -21051,6 +21051,43 @@ function mapearSolicitacao(row) {
   };
 }
 
+function normalizarDateTimeLocalParaMySQL(valor) {
+  if (!valor) return null;
+
+  const texto = String(valor).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(texto)) {
+    return texto.replace('T', ' ') + ':00';
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(texto)) {
+    return texto.replace('T', ' ');
+  }
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(texto)) {
+    return texto + ':00';
+  }
+
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(texto)) {
+    return texto;
+  }
+
+  return texto;
+}
+
+function formatarMySQLDateTimeParaInput(valor) {
+  if (!valor) return '';
+
+  const texto = String(valor).trim();
+  const match = texto.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?/);
+
+  if (match) {
+    return `${match[1]}T${match[2]}`;
+  }
+
+  return texto;
+}
+
 app.get('/api/solicitacoes-fazendas', async (req, res) => {
   try {
     const usuarioLogadoId = paraInt(req.query.usuarioLogadoId, 0);
@@ -21181,6 +21218,9 @@ app.get('/api/solicitacoes-fazendas/:id', async (req, res) => {
       [id]
     );
 
+    item.dataHoraInicial = formatarMySQLDateTimeParaInput(item.dataHoraInicial);
+    item.dataHoraFinal = formatarMySQLDateTimeParaInput(item.dataHoraFinal);
+
     item.anexo = anexos.length ? {
       id: anexos[0].id,
       anexoReferencia: anexos[0].anexo_referencia,
@@ -21191,7 +21231,9 @@ app.get('/api/solicitacoes-fazendas/:id', async (req, res) => {
       criadoEm: anexos[0].criado_em
     } : null;
 
-    item.batidas = batidas.map(b => String(b.data_hora).slice(0, 16));
+    item.batidas = batidas.map(b =>
+      formatarMySQLDateTimeParaInput(b.data_hora)
+    );
 
     return res.json({
       success: true,
@@ -21223,14 +21265,16 @@ app.post('/api/solicitacoes-fazendas',
 
       const dataReferencia = normalizarTexto(req.body.dataReferencia) || null;
       const horaReferencia = normalizarTexto(req.body.horaReferencia) || null;
-      const dataHoraInicial = normalizarTexto(req.body.dataHoraInicial) || null;
-      const dataHoraFinal = normalizarTexto(req.body.dataHoraFinal) || null;
+      const dataHoraInicial = normalizarDateTimeLocalParaMySQL(req.body.dataHoraInicial) || null;
+      const dataHoraFinal = normalizarDateTimeLocalParaMySQL(req.body.dataHoraFinal) || null;
       const quantidadeHoras = paraInt(req.body.quantidadeHoras, 0);
       const quantidadeMinutos = paraInt(req.body.quantidadeMinutos, 0);
 
       let batidas = req.body['batidas[]'] ?? req.body.batidas ?? [];
       if (!Array.isArray(batidas)) batidas = batidas ? [batidas] : [];
-      batidas = batidas.map(v => normalizarTexto(v)).filter(Boolean);
+      batidas = batidas
+        .map(v => normalizarDateTimeLocalParaMySQL(normalizarTexto(v)))
+        .filter(Boolean);
 
       if (!usuarioId) {
         return res.status(400).json({ success: false, message: 'Usuário é obrigatório.' });
@@ -21362,7 +21406,12 @@ app.post('/api/solicitacoes-fazendas',
           responsavel,
           tipoSolicitacao,
           descricao,
-          status: 'PENDENTE'
+          dataReferencia,
+          horaReferencia,
+          dataHoraInicial: formatarMySQLDateTimeParaInput(dataHoraInicial),
+          dataHoraFinal: formatarMySQLDateTimeParaInput(dataHoraFinal),
+          batidas: batidas.map(formatarMySQLDateTimeParaInput),
+          status: 'PENDENTE GESTOR'
         }
       });
     } catch (err) {
@@ -21408,14 +21457,16 @@ app.put('/api/solicitacoes-fazendas/:id',
 
       const dataReferencia = normalizarTexto(req.body.dataReferencia) || null;
       const horaReferencia = normalizarTexto(req.body.horaReferencia) || null;
-      const dataHoraInicial = normalizarTexto(req.body.dataHoraInicial) || null;
-      const dataHoraFinal = normalizarTexto(req.body.dataHoraFinal) || null;
+      const dataHoraInicial = normalizarDateTimeLocalParaMySQL(req.body.dataHoraInicial) || null;
+      const dataHoraFinal = normalizarDateTimeLocalParaMySQL(req.body.dataHoraFinal) || null;
       const quantidadeHoras = paraInt(req.body.quantidadeHoras, 0);
       const quantidadeMinutos = paraInt(req.body.quantidadeMinutos, 0);
 
       let batidas = req.body['batidas[]'] ?? req.body.batidas ?? [];
       if (!Array.isArray(batidas)) batidas = batidas ? [batidas] : [];
-      batidas = batidas.map(v => normalizarTexto(v)).filter(Boolean);
+      batidas = batidas
+        .map(v => normalizarDateTimeLocalParaMySQL(normalizarTexto(v)))
+        .filter(Boolean);
 
       if (!usuarioId) {
         return res.status(400).json({ success: false, message: 'Usuário é obrigatório.' });
@@ -21575,7 +21626,12 @@ app.put('/api/solicitacoes-fazendas/:id',
           usuarioNome,
           responsavel,
           tipoSolicitacao,
-          descricao
+          descricao,
+          dataReferencia,
+          horaReferencia,
+          dataHoraInicial: formatarMySQLDateTimeParaInput(dataHoraInicial),
+          dataHoraFinal: formatarMySQLDateTimeParaInput(dataHoraFinal),
+          batidas: batidas.map(formatarMySQLDateTimeParaInput)
         }
       });
     } catch (err) {
